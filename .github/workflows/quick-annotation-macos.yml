@@ -36,7 +36,7 @@ jobs:
           arch: clang_64
           cache: true
       - name: Install build tools
-        run: brew install cmake ninja pkgconf
+        run: brew install cmake ninja pkgconf clang-format
       - name: Configure Qt location
         run: echo "Qt6_DIR=$QT_ROOT_DIR/lib/cmake/Qt6" >> "$GITHUB_ENV"
       - name: Restore dependency cache
