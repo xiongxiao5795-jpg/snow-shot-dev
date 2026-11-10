@@ -138,12 +138,6 @@ jobs:
         run: |
           cmake --install build/snow-shot-macos-arm64-debug --component SnowShot --prefix "$RUNNER_TEMP/snow-shot"
           "$RUNNER_TEMP/snow-shot/snow_shot.app/Contents/MacOS/snow_shot" --startup-probe
-          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/snow-shot/snow_shot.app" "$RUNNER_TEMP/snow-shot-debug-macos-arm64.zip"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: snow-shot-debug-macos-arm64
-          path: ${{ runner.temp }}/snow-shot-debug-macos-arm64.zip
-          if-no-files-found: error
       - name: Require native canvas checks to pass
         if: steps.native-checks.outcome == 'failure'
         run: exit 1

@@ -1058,6 +1058,7 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
     {u"global_shortcuts/quick_annotation_toolbar", emptyArrayDefault(),
      ConfigurationValueKind::StringList, nullptr, nullptr, 2},
     {u"quick_annotation/last_tool", stringDefault(u"brush"), ConfigurationValueKind::String},
+    {u"quick_annotation/options", emptyObjectDefault(), ConfigurationValueKind::Structured},
     {u"global_shortcuts/stitch_selected_images", emptyArrayDefault(),
      ConfigurationValueKind::StringList, nullptr, nullptr, 2},
     {u"global_shortcuts/split_selected_images", emptyArrayDefault(),

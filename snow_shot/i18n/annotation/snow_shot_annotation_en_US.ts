@@ -1698,8 +1698,20 @@
     <context>
         <name>snow_shot::presentation::QuickAnnotationController</name>
         <message>
+            <source> s</source>
+            <translation> s</translation>
+        </message>
+        <message>
             <source>Arrow</source>
             <translation>Arrow</translation>
+        </message>
+        <message>
+            <source>Black</source>
+            <translation>Black</translation>
+        </message>
+        <message>
+            <source>Blue</source>
+            <translation>Blue</translation>
         </message>
         <message>
             <source>Brush</source>
@@ -1714,8 +1726,36 @@
             <translation>Ellipse</translation>
         </message>
         <message>
+            <source>Green</source>
+            <translation>Green</translation>
+        </message>
+        <message>
+            <source>Hold time in seconds</source>
+            <translation>Hold time in seconds</translation>
+        </message>
+        <message>
+            <source>Orange</source>
+            <translation>Orange</translation>
+        </message>
+        <message>
             <source>Rectangle</source>
             <translation>Rectangle</translation>
+        </message>
+        <message>
+            <source>Red</source>
+            <translation>Red</translation>
+        </message>
+        <message>
+            <source>Stroke color</source>
+            <translation>Stroke color</translation>
+        </message>
+        <message>
+            <source>Stroke width</source>
+            <translation>Stroke width</translation>
+        </message>
+        <message>
+            <source>White</source>
+            <translation>White</translation>
         </message>
     </context>
 </TS>

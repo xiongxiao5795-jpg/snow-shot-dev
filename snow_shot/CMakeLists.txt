@@ -2070,6 +2070,7 @@ set(PROJECT_CXX_SOURCES
     src/presentation/globalcanvas/globalcanvascontroller.cpp
     src/presentation/globalcanvas/globalcanvasplatform.cpp
     include/snow_shot/presentation/quickannotationcontroller.h
+    src/presentation/quickannotation/quickannotationoptions.h
     src/presentation/quickannotation/quickannotationcontroller.cpp
     src/presentation/pinned/screenshotpinnedresizegeometry.cpp
     src/presentation/pinned/screenshotpinnedrestoregeometry.cpp
@@ -7383,6 +7384,7 @@ if(SNOW_SHOT_BUILD_TESTS)
         src/presentation/globalcanvas/globalcanvascontroller.cpp
         src/presentation/globalcanvas/globalcanvasplatform.cpp
         include/snow_shot/presentation/quickannotationcontroller.h
+        src/presentation/quickannotation/quickannotationoptions.h
         src/presentation/quickannotation/quickannotationcontroller.cpp
         src/platform/physicalcursor.cpp
         include/snow_shot/presentation/screenshotfloatingtoolpalettewindow.h

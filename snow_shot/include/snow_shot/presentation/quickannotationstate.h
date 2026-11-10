@@ -46,8 +46,8 @@ class QuickAnnotationState final {
     }
 
     // Input is elapsed monotonic milliseconds since the mark was committed.
-    [[nodiscard]] static double opacity(std::int64_t elapsedMs) {
-        constexpr std::int64_t holdMs = 3000;
+    [[nodiscard]] static double opacity(std::int64_t elapsedMs, std::int64_t holdMs = 1500) {
+        holdMs = std::clamp<std::int64_t>(holdMs, 0, 30000);
         constexpr std::int64_t fadeMs = 600;
         const auto fadeElapsed = std::clamp(elapsedMs, holdMs, holdMs + fadeMs) - holdMs;
         return 1.0 - static_cast<double>(fadeElapsed) / static_cast<double>(fadeMs);
