@@ -1638,7 +1638,7 @@ if name == 'openssl':
         self.assertIn('if ! xcodebuild -version >/dev/null 2>&1; then', builder)
         self.assertIn('xcrun --show-sdk-path', builder)
         self.assertIn('qt_apple_options+=(-DQT_NO_XCODE_MIN_VERSION_CHECK=ON)', builder)
-        self.assertIn('"${qt_apple_options[@]}"', builder)
+        self.assertIn('${qt_apple_options[@]+"${qt_apple_options[@]}"}', builder)
         self.assertIn('qt_deployment_target="$snow_qt_deployment_target"', builder)
         self.assertIn('-DCMAKE_OSX_DEPLOYMENT_TARGET="$qt_deployment_target"', builder)
         self.assertIn('-DFEATURE_dup3=OFF', builder)

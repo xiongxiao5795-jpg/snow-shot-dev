@@ -31,6 +31,12 @@ jobs:
           test "$(uname -m)" = arm64
           xcrun --find metal || xcodebuild -downloadComponent MetalToolchain
           xcrun metal --version
+      - name: Check static Qt build script on system Bash
+        run: |
+          python3 scripts/test-macos-build-support.py \
+            MacOSBuildScripts.test_static_native_qt_keeps_normal_tool_detection \
+            MacOSBuildScripts.test_static_x64_qt_uses_rosetta_tools_with_a_fresh_cache \
+            MacOSBuildScripts.test_static_qt_builder_supports_command_line_tools_without_full_xcode
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
