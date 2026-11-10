@@ -23,6 +23,8 @@ Repository and workflow permissions can affect a sync; verify the resulting comm
 GitHub Actions runs the quick-annotation state, canvas, shortcuts, settings, and native macOS
 checks on the feature branch. The release job builds only the Full edition and uses compiler
 caches; commits containing `[skip release]` run the checks without starting a Release package.
+The `snow-shot-quick-annotation-state-tests` and `snow-shot-quick-annotation-options-tests`
+targets can also be built and run independently for focused checks.
 The first compatible Release run must populate its cache. Automated offscreen tests cannot replace
 manual checks of real mouse pass-through, display layouts, shortcut conflicts, and meeting-app
 screen sharing on macOS.

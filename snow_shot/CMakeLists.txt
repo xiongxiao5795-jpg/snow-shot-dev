@@ -7375,6 +7375,14 @@ if(SNOW_SHOT_BUILD_TESTS)
     add_test(NAME snow-shot-quick-annotation-state-tests COMMAND snow-shot-quick-annotation-state-tests)
     set_tests_properties(snow-shot-quick-annotation-state-tests PROPERTIES LABELS "unit" TIMEOUT 30)
 
+    add_executable(snow-shot-quick-annotation-options-tests tests/quick_annotation_options_tests.cpp)
+    target_link_libraries(snow-shot-quick-annotation-options-tests PRIVATE Qt6::Gui)
+    add_test(NAME snow-shot-quick-annotation-options-tests
+        COMMAND snow-shot-quick-annotation-options-tests)
+    set_tests_properties(snow-shot-quick-annotation-options-tests PROPERTIES
+        LABELS "unit" TIMEOUT 30
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
     add_executable(snow-shot-global-canvas-tests
         tests/global_canvas_tests.cpp
         tests/global_canvas_laser_tests.cpp
