@@ -2781,10 +2781,10 @@ void globalShortcutActionsHaveStableContracts() {
                 trayGroups.at(2).id == QStringLiteral("screen-recording") &&
                 trayGroups.at(2).options.size() == 3 &&
                 trayGroups.at(3).id == QStringLiteral("other") &&
-                trayGroups.at(3).options.size() == 8 + WINDOW_TOPMOST_ACTION_COUNT &&
+                trayGroups.at(3).options.size() == 9 + WINDOW_TOPMOST_ACTION_COUNT &&
                 trayGroups.at(4).id == QStringLiteral("system") &&
                 trayGroups.at(4).options.size() == 4 &&
-                trayOptionIds.size() == 32 + WINDOW_TOPMOST_ACTION_COUNT &&
+                trayOptionIds.size() == 33 + WINDOW_TOPMOST_ACTION_COUNT &&
                 trayOptionIds.at(6) == QStringLiteral("quick.screenshot-scrolling") &&
                 trayOptionIds.at(8) == QStringLiteral("quick.screenshot-save") &&
                 trayOptionIds.at(9) == QStringLiteral("quick.screenshot-quick-save") &&
@@ -2798,28 +2798,29 @@ void globalShortcutActionsHaveStableContracts() {
                 trayOptionIds.at(19) == QStringLiteral("quick.open-screen-recording-folder") &&
                 trayOptionIds.at(20) == QStringLiteral("quick.open-capture-history") &&
                 trayOptionIds.at(21) == QStringLiteral("quick.global-canvas") &&
-                trayOptionIds.at(22) == QStringLiteral("quick.stitch-selected-images") &&
-                trayOptionIds.at(23) == QStringLiteral("quick.split-selected-images") &&
-                trayOptionIds.at(24) == QStringLiteral("quick.edit-selected-images") &&
-                trayOptionIds.at(25) == QStringLiteral("quick.translate-selected-text") &&
-                trayOptionIds.at(26 + WINDOW_TOPMOST_ACTION_COUNT) ==
-                    QStringLiteral("quick.toggle-global-hotkeys") &&
+                trayOptionIds.at(22) == QStringLiteral("quick.quick-annotation-toolbar") &&
+                trayOptionIds.at(23) == QStringLiteral("quick.stitch-selected-images") &&
+                trayOptionIds.at(24) == QStringLiteral("quick.split-selected-images") &&
+                trayOptionIds.at(25) == QStringLiteral("quick.edit-selected-images") &&
+                trayOptionIds.at(26) == QStringLiteral("quick.translate-selected-text") &&
                 trayOptionIds.at(27 + WINDOW_TOPMOST_ACTION_COUNT) ==
-                    QStringLiteral("quick.toggle-disable-on-focused-fullscreen-window") &&
+                    QStringLiteral("quick.toggle-global-hotkeys") &&
                 trayOptionIds.at(28 + WINDOW_TOPMOST_ACTION_COUNT) ==
+                    QStringLiteral("quick.toggle-disable-on-focused-fullscreen-window") &&
+                trayOptionIds.at(29 + WINDOW_TOPMOST_ACTION_COUNT) ==
                     QStringLiteral("tray.window-grouping") &&
                 trayGroups.at(4).options.at(0).kind ==
                     settings::SettingsTrayMenuOptionKind::WindowGrouping &&
-                trayOptionIds.at(29 + WINDOW_TOPMOST_ACTION_COUNT) ==
-                    QStringLiteral("tray.show-main-window") &&
                 trayOptionIds.at(30 + WINDOW_TOPMOST_ACTION_COUNT) ==
+                    QStringLiteral("tray.show-main-window") &&
+                trayOptionIds.at(31 + WINDOW_TOPMOST_ACTION_COUNT) ==
                     QStringLiteral("tray.restart-app") &&
                 trayGroups.at(4).options.at(2).kind ==
                     settings::SettingsTrayMenuOptionKind::RestartApp &&
                 trayGroups.at(4).options.at(2).iconFactory &&
                 trayGroups.at(4).options.at(2).iconFactory() ==
                     snow_shot::presentation::icons::custom::outlined::Restart() &&
-                trayOptionIds.at(31 + WINDOW_TOPMOST_ACTION_COUNT) == QStringLiteral("tray.exit") &&
+                trayOptionIds.at(32 + WINDOW_TOPMOST_ACTION_COUNT) == QStringLiteral("tray.exit") &&
                 trayMenuSchema != nullptr && trayMenuSchema->allowedStringValues == trayOptionIds,
             "tray menu options must derive all global-hotkey groups and append system commands");
 
@@ -2829,6 +2830,9 @@ void globalShortcutActionsHaveStableContracts() {
     require(normalizedAllTrayOptions.valid && !normalizedAllTrayOptions.changed &&
                 normalizedAllTrayOptions.value.toArray() == allTrayOptions,
             "selecting every catalog tray option must preserve Restart App and Exit");
+    require(trayMenuSchema->defaultValue.toArray().contains(
+                QStringLiteral("quick.quick-annotation-toolbar")),
+            "the quick annotation toolbar must be available from the default tray menu");
 
     for (const auto& id :
          {QStringLiteral("quick.open-pin-to-screen-management"),

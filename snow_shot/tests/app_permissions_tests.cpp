@@ -500,7 +500,7 @@ void pageAndAlerts() {
             native->value.statuses[0] = S::Checking;
             service.refresh();
             flush();
-            require(screen->text() == u"Checkingâ€¦" &&
+            require(screen->text() == u"Checking…" &&
                         screen->accentRole() == adqt::widgets::AdButton::AccentRole::Neutral,
                     "checking permissions use a neutral status button");
             screen->click();

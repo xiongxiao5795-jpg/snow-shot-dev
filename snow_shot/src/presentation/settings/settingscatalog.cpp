@@ -81,6 +81,13 @@ quickActionItem(const QString& id, const char* title, const char* description,
     };
     payload.iconFactory = std::move(iconFactory);
     payload.adjustment = adjustment;
+    if (shortcutAction == GlobalShortcutAction::QuickAnnotation ||
+        shortcutAction == GlobalShortcutAction::QuickAnnotationBrush ||
+        shortcutAction == GlobalShortcutAction::QuickAnnotationArrow ||
+        shortcutAction == GlobalShortcutAction::QuickAnnotationRectangle ||
+        shortcutAction == GlobalShortcutAction::QuickAnnotationEllipse) {
+        payload.showInTrayMenu = false;
+    }
     if (tray.title != nullptr) {
         payload.trayLabel = settingsText(tray.title);
     }
@@ -5997,6 +6004,10 @@ TrayCommandManifest buildBuiltInTrayCommandManifest() {
                 QT_TRANSLATE_NOOP("SettingsCatalog",
                                   "Full-screen canvas (enable/disable click-through)"),
                 GlobalShortcutAction::GlobalCanvas,
+                []() { return custom_outlined_icons::FullScreenCanvas(); }),
+          quick(QStringLiteral("quick.quick-annotation-toolbar"),
+                QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation toolbar"),
+                GlobalShortcutAction::QuickAnnotationToolbar,
                 []() { return custom_outlined_icons::FullScreenCanvas(); }),
           quick(QStringLiteral("quick.stitch-selected-images"),
                 QT_TRANSLATE_NOOP("SettingsCatalog", "Stitch selected images"),
