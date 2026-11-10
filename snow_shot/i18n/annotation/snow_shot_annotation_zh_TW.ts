@@ -1695,4 +1695,27 @@
             <translation>雷射筆無法使用</translation>
         </message>
     </context>
+    <context>
+        <name>snow_shot::presentation::QuickAnnotationController</name>
+        <message>
+            <source>Arrow</source>
+            <translation>箭頭</translation>
+        </message>
+        <message>
+            <source>Brush</source>
+            <translation>畫筆</translation>
+        </message>
+        <message>
+            <source>Could not change canvas click-through</source>
+            <translation>無法切換畫布的滑鼠穿透狀態</translation>
+        </message>
+        <message>
+            <source>Ellipse</source>
+            <translation>橢圓</translation>
+        </message>
+        <message>
+            <source>Rectangle</source>
+            <translation>矩形</translation>
+        </message>
+    </context>
 </TS>

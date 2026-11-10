@@ -1695,4 +1695,27 @@
             <translation>激光笔不可用</translation>
         </message>
     </context>
+    <context>
+        <name>snow_shot::presentation::QuickAnnotationController</name>
+        <message>
+            <source>Arrow</source>
+            <translation>箭头</translation>
+        </message>
+        <message>
+            <source>Brush</source>
+            <translation>画笔</translation>
+        </message>
+        <message>
+            <source>Could not change canvas click-through</source>
+            <translation>无法切换画布的鼠标穿透状态</translation>
+        </message>
+        <message>
+            <source>Ellipse</source>
+            <translation>椭圆</translation>
+        </message>
+        <message>
+            <source>Rectangle</source>
+            <translation>矩形</translation>
+        </message>
+    </context>
 </TS>

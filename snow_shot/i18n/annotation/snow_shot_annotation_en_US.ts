@@ -1695,4 +1695,27 @@
             <translation>The laser pointer is unavailable</translation>
         </message>
     </context>
+    <context>
+        <name>snow_shot::presentation::QuickAnnotationController</name>
+        <message>
+            <source>Arrow</source>
+            <translation>Arrow</translation>
+        </message>
+        <message>
+            <source>Brush</source>
+            <translation>Brush</translation>
+        </message>
+        <message>
+            <source>Could not change canvas click-through</source>
+            <translation>Could not change canvas click-through</translation>
+        </message>
+        <message>
+            <source>Ellipse</source>
+            <translation>Ellipse</translation>
+        </message>
+        <message>
+            <source>Rectangle</source>
+            <translation>Rectangle</translation>
+        </message>
+    </context>
 </TS>

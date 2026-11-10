@@ -3,6 +3,7 @@
 #include "canvas_text_editing_preferences_test_support.h"
 #include "../../test-support/canvas_quick_selection_test_support.h"
 #include "snow_shot/presentation/globalcanvascontroller.h"
+#include "snow_shot/presentation/quickannotationcontroller.h"
 #include "snow_shot/presentation/crosshaircursor.h"
 #include "snow_shot/presentation/screenshotcanvastoolstyles.h"
 #include "eraser_toolbar_test_support.h"
@@ -1462,6 +1463,37 @@ int main(int argc, char** argv) {
                              directory.filePath(QStringLiteral("data")), 60000})
                 .success,
             "initialize storage");
+    if (app.arguments().contains(QStringLiteral("--quick-annotation-only"))) {
+        presentation::QuickAnnotationController controller;
+        controller.arm(presentation::QuickAnnotationTool::Arrow);
+        QWidget* window = nullptr;
+        for (QWidget* candidate : QApplication::topLevelWidgets()) {
+            if (candidate->objectName() == QStringLiteral("quickAnnotationWindow"))
+                window = candidate;
+        }
+        require(window != nullptr && window->isVisible(), "arm creates the annotation window");
+        auto* canvas =
+            window->findChild<SnowCanvasWidget*>(QStringLiteral("quickAnnotationCanvas"));
+        require(canvas != nullptr && canvas->canvasTool() == SnowCanvasTool::Arrow,
+                "select arrow without opening a toolbar");
+        require(!window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "armed canvas receives the next gesture");
+        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        require(window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "mouse release immediately restores click-through");
+        require(window->isVisible() && !canvas->canvasHistoryState().canUndo,
+                "committed mark stays visible independently of the drawing document");
+        controller.armLastTool();
+        require(canvas->canvasTool() == SnowCanvasTool::Arrow, "reuse the last tool");
+        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &escape);
+        require(window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "escape cancels the armed gesture");
+        storage.shutdown();
+        return 0;
+    }
 #ifdef Q_OS_MACOS
     if (app.arguments().contains(QStringLiteral("--safe-area-only"))) {
         canvasSafeAreaChangesPreserveDrawing(app);

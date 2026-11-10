@@ -12,8 +12,12 @@ class QuickAnnotationState final {
   public:
     enum class Phase { Idle, Armed, Drawing };
 
-    [[nodiscard]] Phase phase() const { return m_phase; }
-    [[nodiscard]] QuickAnnotationTool tool() const { return m_tool; }
+    [[nodiscard]] Phase phase() const {
+        return m_phase;
+    }
+    [[nodiscard]] QuickAnnotationTool tool() const {
+        return m_tool;
+    }
 
     bool arm(QuickAnnotationTool tool) {
         if (m_phase == Phase::Drawing)
@@ -37,7 +41,9 @@ class QuickAnnotationState final {
         return true;
     }
 
-    void cancel() { m_phase = Phase::Idle; }
+    void cancel() {
+        m_phase = Phase::Idle;
+    }
 
     // Input is elapsed monotonic milliseconds since the mark was committed.
     [[nodiscard]] static double opacity(std::int64_t elapsedMs) {

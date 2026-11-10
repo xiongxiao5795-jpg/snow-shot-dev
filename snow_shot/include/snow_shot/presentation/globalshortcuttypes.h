@@ -41,6 +41,12 @@ enum class GlobalShortcutAction {
     ToggleWindowUnderCursorAlwaysOnTop,
     ScreenshotScrolling,
     EditSelectedImages,
+    QuickAnnotation,
+    QuickAnnotationBrush,
+    QuickAnnotationArrow,
+    QuickAnnotationRectangle,
+    QuickAnnotationEllipse,
+    QuickAnnotationToolbar,
 };
 
 [[nodiscard]] constexpr bool controlsGlobalShortcutGates(GlobalShortcutAction action) {

@@ -204,6 +204,9 @@ class ShortcutSettings final {
     bool setSwitchWindowGroup(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList globalCanvas() const;
     bool setGlobalCanvas(const shortcuts::ShortcutBindingList& bindings) const;
+    [[nodiscard]] shortcuts::ShortcutBindingList quickAnnotationShortcut(const QString& key) const;
+    bool setQuickAnnotationShortcut(const QString& key,
+                                    const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList stitchSelectedImages() const;
     bool setStitchSelectedImages(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList splitSelectedImages() const;

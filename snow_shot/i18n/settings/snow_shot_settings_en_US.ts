@@ -1676,6 +1676,10 @@
             <translation>Child elements</translation>
         </message>
         <message>
+            <source>Choose a quick annotation tool</source>
+            <translation>Choose a quick annotation tool</translation>
+        </message>
+        <message>
             <source>Choose an image for Snow Shot's custom tray menu. Native system menus keep their system appearance. Clear the path to remove this skin</source>
             <translation>Choose an image for Snow Shot's custom tray menu. Native system menus keep their system appearance. Clear the path to remove this skin</translation>
         </message>
@@ -2370,6 +2374,26 @@
         <message>
             <source>Draw four guide segments around the sampled center pixel</source>
             <translation>Draw four guide segments around the sampled center pixel</translation>
+        </message>
+        <message>
+            <source>Draw once with a rectangle</source>
+            <translation>Draw once with a rectangle</translation>
+        </message>
+        <message>
+            <source>Draw once with an arrow</source>
+            <translation>Draw once with an arrow</translation>
+        </message>
+        <message>
+            <source>Draw once with an ellipse</source>
+            <translation>Draw once with an ellipse</translation>
+        </message>
+        <message>
+            <source>Draw once with the brush</source>
+            <translation>Draw once with the brush</translation>
+        </message>
+        <message>
+            <source>Draw once with the last selected tool</source>
+            <translation>Draw once with the last selected tool</translation>
         </message>
         <message>
             <source>Duplicate latest region</source>
@@ -3512,8 +3536,32 @@
             <translation>Quality of service (QoS)</translation>
         </message>
         <message>
+            <source>Quick annotation</source>
+            <translation>Quick annotation</translation>
+        </message>
+        <message>
             <source>Quick annotation for selected text</source>
             <translation>Quick annotation for selected text</translation>
+        </message>
+        <message>
+            <source>Quick annotation toolbar</source>
+            <translation>Quick annotation toolbar</translation>
+        </message>
+        <message>
+            <source>Quick annotation: arrow</source>
+            <translation>Quick annotation: arrow</translation>
+        </message>
+        <message>
+            <source>Quick annotation: brush</source>
+            <translation>Quick annotation: brush</translation>
+        </message>
+        <message>
+            <source>Quick annotation: ellipse</source>
+            <translation>Quick annotation: ellipse</translation>
+        </message>
+        <message>
+            <source>Quick annotation: rectangle</source>
+            <translation>Quick annotation: rectangle</translation>
         </message>
         <message>
             <source>Quick save</source>

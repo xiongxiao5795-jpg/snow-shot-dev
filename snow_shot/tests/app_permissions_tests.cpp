@@ -290,12 +290,28 @@ void routingPolicy() {
     require(requiredPermissions(A::TranslateSelectedText, false) ==
                 AppPermissions{P::Accessibility},
             "selected text needs Accessibility");
-    for (auto action :
-         {A::OpenScreenRecordingFolder, A::OpenCaptureHistory, A::OpenPinToScreenManagement,
-          A::GlobalCanvas, A::StitchSelectedImages, A::SplitSelectedImages, A::EditSelectedImages,
-          A::OpenSettings, A::PinClipboardContent, A::PinSelectedFiles, A::HideShowAllWindows,
-          A::RestoreLastClosedWindows, A::SwitchWindowGroup, A::ToggleGlobalShortcuts,
-          A::ToggleDisableOnFocusedFullscreenWindow, A::ToggleWindowUnderCursorAlwaysOnTop})
+    for (auto action : {A::OpenScreenRecordingFolder,
+                        A::OpenCaptureHistory,
+                        A::OpenPinToScreenManagement,
+                        A::GlobalCanvas,
+                        A::QuickAnnotation,
+                        A::QuickAnnotationBrush,
+                        A::QuickAnnotationArrow,
+                        A::QuickAnnotationRectangle,
+                        A::QuickAnnotationEllipse,
+                        A::QuickAnnotationToolbar,
+                        A::StitchSelectedImages,
+                        A::SplitSelectedImages,
+                        A::EditSelectedImages,
+                        A::OpenSettings,
+                        A::PinClipboardContent,
+                        A::PinSelectedFiles,
+                        A::HideShowAllWindows,
+                        A::RestoreLastClosedWindows,
+                        A::SwitchWindowGroup,
+                        A::ToggleGlobalShortcuts,
+                        A::ToggleDisableOnFocusedFullscreenWindow,
+                        A::ToggleWindowUnderCursorAlwaysOnTop})
         require(requiredPermissions(action, true).isEmpty(),
                 "permission-free actions must remain usable");
     using M = settings::SettingsGlobalMouseAction;

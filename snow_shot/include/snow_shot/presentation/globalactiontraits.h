@@ -52,11 +52,17 @@ inline constexpr auto globalActionTraitsCatalog = [] {
         GlobalActionTraits{A::ScreenshotOcrCopy, F::Screenshot, P::ScreenRecording},
         GlobalActionTraits{A::ToggleWindowUnderCursorAlwaysOnTop, {}, P::None},
         GlobalActionTraits{A::ScreenshotScrolling, F::Screenshot, P::ScreenRecording},
-        GlobalActionTraits{A::EditSelectedImages, {}, P::None}};
+        GlobalActionTraits{A::EditSelectedImages, {}, P::None},
+        GlobalActionTraits{A::QuickAnnotation, {}, P::None},
+        GlobalActionTraits{A::QuickAnnotationBrush, {}, P::None},
+        GlobalActionTraits{A::QuickAnnotationArrow, {}, P::None},
+        GlobalActionTraits{A::QuickAnnotationRectangle, {}, P::None},
+        GlobalActionTraits{A::QuickAnnotationEllipse, {}, P::None},
+        GlobalActionTraits{A::QuickAnnotationToolbar, {}, P::None}};
 }();
 
 static_assert(globalActionTraitsCatalog.size() ==
-              static_cast<std::size_t>(GlobalShortcutAction::EditSelectedImages) + 1);
+              static_cast<std::size_t>(GlobalShortcutAction::QuickAnnotationToolbar) + 1);
 static_assert([] {
     for (std::size_t index = 0; index < globalActionTraitsCatalog.size(); ++index)
         if (static_cast<std::size_t>(globalActionTraitsCatalog[index].action) != index)

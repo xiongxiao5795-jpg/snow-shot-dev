@@ -72,7 +72,8 @@
   "annotation": [
     "ScreenshotQuickTextAnnotationToolbar",
     "snow_shot::presentation::GlobalCanvasController",
-    "ScreenshotToolPalette"
+    "ScreenshotToolPalette",
+    "snow_shot::presentation::QuickAnnotationController"
   ],
   "export": [
     "ScreenshotClipboardService",

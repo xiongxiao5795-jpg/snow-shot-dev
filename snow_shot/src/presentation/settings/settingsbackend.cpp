@@ -2809,6 +2809,18 @@ SettingsResetResult BuiltInSettingsBackend::resetSectionWithResults(SettingsSect
                       QStringLiteral("global_shortcuts/open_capture_history"));
         resetShortcut(GlobalShortcutAction::GlobalCanvas,
                       QStringLiteral("global_shortcuts/global_canvas"));
+        resetShortcut(GlobalShortcutAction::QuickAnnotation,
+                      QStringLiteral("global_shortcuts/quick_annotation"));
+        resetShortcut(GlobalShortcutAction::QuickAnnotationBrush,
+                      QStringLiteral("global_shortcuts/quick_annotation_brush"));
+        resetShortcut(GlobalShortcutAction::QuickAnnotationArrow,
+                      QStringLiteral("global_shortcuts/quick_annotation_arrow"));
+        resetShortcut(GlobalShortcutAction::QuickAnnotationRectangle,
+                      QStringLiteral("global_shortcuts/quick_annotation_rectangle"));
+        resetShortcut(GlobalShortcutAction::QuickAnnotationEllipse,
+                      QStringLiteral("global_shortcuts/quick_annotation_ellipse"));
+        resetShortcut(GlobalShortcutAction::QuickAnnotationToolbar,
+                      QStringLiteral("global_shortcuts/quick_annotation_toolbar"));
         resetShortcut(GlobalShortcutAction::StitchSelectedImages,
                       QStringLiteral("global_shortcuts/stitch_selected_images"));
         resetShortcut(GlobalShortcutAction::SplitSelectedImages,

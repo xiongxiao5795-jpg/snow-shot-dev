@@ -2069,6 +2069,8 @@ set(PROJECT_CXX_SOURCES
     include/snow_shot/presentation/globalcanvascontroller.h
     src/presentation/globalcanvas/globalcanvascontroller.cpp
     src/presentation/globalcanvas/globalcanvasplatform.cpp
+    include/snow_shot/presentation/quickannotationcontroller.h
+    src/presentation/quickannotation/quickannotationcontroller.cpp
     src/presentation/pinned/screenshotpinnedresizegeometry.cpp
     src/presentation/pinned/screenshotpinnedrestoregeometry.cpp
     src/presentation/pinned/screenshotpinnedhidetotopcontroller.cpp
@@ -7363,6 +7365,7 @@ if(SNOW_SHOT_BUILD_TESTS)
     )
 
     add_executable(snow-shot-quick-annotation-state-tests tests/quick_annotation_state_tests.cpp)
+    target_include_directories(snow-shot-quick-annotation-state-tests PRIVATE include)
     add_test(NAME snow-shot-quick-annotation-state-tests COMMAND snow-shot-quick-annotation-state-tests)
     set_tests_properties(snow-shot-quick-annotation-state-tests PROPERTIES LABELS "unit" TIMEOUT 30)
 
@@ -7374,6 +7377,8 @@ if(SNOW_SHOT_BUILD_TESTS)
         include/snow_shot/presentation/globalcanvascontroller.h
         src/presentation/globalcanvas/globalcanvascontroller.cpp
         src/presentation/globalcanvas/globalcanvasplatform.cpp
+        include/snow_shot/presentation/quickannotationcontroller.h
+        src/presentation/quickannotation/quickannotationcontroller.cpp
         src/platform/physicalcursor.cpp
         include/snow_shot/presentation/screenshotfloatingtoolpalettewindow.h
         include/snow_shot/presentation/screenshottoolpalette.h
@@ -7404,6 +7409,13 @@ if(SNOW_SHOT_BUILD_TESTS)
         snow_shot_window_shortcuts snow_shot_storage snow_draw_engine_qt_canvas
         adqt_icon_core ant_design_icons_qt ant_design_qt Qt6::Widgets Qt6::GuiPrivate)
     snow_shot_link_macos_window_platform(snow-shot-global-canvas-tests)
+    if(APPLE)
+        target_sources(snow-shot-global-canvas-tests PRIVATE src/platform/macos/screenshotsessionfocus.mm)
+        target_link_libraries(snow-shot-global-canvas-tests PRIVATE "-framework ApplicationServices")
+    endif()
+    add_test(NAME snow-shot-quick-annotation-tests
+        COMMAND snow-shot-global-canvas-tests --quick-annotation-only -platform offscreen)
+    set_tests_properties(snow-shot-quick-annotation-tests PROPERTIES LABELS "unit" TIMEOUT 60)
     if(WIN32)
         target_sources(snow-shot-global-canvas-tests PRIVATE src/platform/windows/pinnedwindownative.cpp)
         target_link_libraries(snow-shot-global-canvas-tests PRIVATE Qt6::GuiPrivate comctl32)

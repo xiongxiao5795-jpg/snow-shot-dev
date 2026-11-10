@@ -1676,6 +1676,10 @@
             <translation>子元素</translation>
         </message>
         <message>
+            <source>Choose a quick annotation tool</source>
+            <translation>選擇快速標註工具</translation>
+        </message>
+        <message>
             <source>Choose an image for Snow Shot's custom tray menu. Native system menus keep their system appearance. Clear the path to remove this skin</source>
             <translation>為 Snow Shot 自訂系統匣選單選擇影像。系統原生選單保留系統外觀。清空路徑可移除此佈景</translation>
         </message>
@@ -2370,6 +2374,26 @@
         <message>
             <source>Draw four guide segments around the sampled center pixel</source>
             <translation>在取樣的中央像素周圍繪製四段輔助線</translation>
+        </message>
+        <message>
+            <source>Draw once with a rectangle</source>
+            <translation>繪製一個矩形</translation>
+        </message>
+        <message>
+            <source>Draw once with an arrow</source>
+            <translation>繪製一個箭頭</translation>
+        </message>
+        <message>
+            <source>Draw once with an ellipse</source>
+            <translation>繪製一個橢圓</translation>
+        </message>
+        <message>
+            <source>Draw once with the brush</source>
+            <translation>使用畫筆繪製一次</translation>
+        </message>
+        <message>
+            <source>Draw once with the last selected tool</source>
+            <translation>使用上次選擇的工具繪製一次</translation>
         </message>
         <message>
             <source>Duplicate latest region</source>
@@ -3512,8 +3536,32 @@
             <translation>服務品質（QoS）</translation>
         </message>
         <message>
+            <source>Quick annotation</source>
+            <translation>快速標註</translation>
+        </message>
+        <message>
             <source>Quick annotation for selected text</source>
             <translation>選取文字快速標註</translation>
+        </message>
+        <message>
+            <source>Quick annotation toolbar</source>
+            <translation>快速標註工具列</translation>
+        </message>
+        <message>
+            <source>Quick annotation: arrow</source>
+            <translation>快速標註：箭頭</translation>
+        </message>
+        <message>
+            <source>Quick annotation: brush</source>
+            <translation>快速標註：畫筆</translation>
+        </message>
+        <message>
+            <source>Quick annotation: ellipse</source>
+            <translation>快速標註：橢圓</translation>
+        </message>
+        <message>
+            <source>Quick annotation: rectangle</source>
+            <translation>快速標註：矩形</translation>
         </message>
         <message>
             <source>Quick save</source>

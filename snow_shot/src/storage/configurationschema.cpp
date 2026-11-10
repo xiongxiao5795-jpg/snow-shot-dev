@@ -1042,6 +1042,19 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
      ConfigurationValueKind::StringList, nullptr, nullptr, 2},
     {u"global_shortcuts/global_canvas", emptyArrayDefault(), ConfigurationValueKind::StringList,
      nullptr, nullptr, 2},
+    {u"global_shortcuts/quick_annotation", emptyArrayDefault(), ConfigurationValueKind::StringList,
+     nullptr, nullptr, 2},
+    {u"global_shortcuts/quick_annotation_brush", emptyArrayDefault(),
+     ConfigurationValueKind::StringList, nullptr, nullptr, 2},
+    {u"global_shortcuts/quick_annotation_arrow", emptyArrayDefault(),
+     ConfigurationValueKind::StringList, nullptr, nullptr, 2},
+    {u"global_shortcuts/quick_annotation_rectangle", emptyArrayDefault(),
+     ConfigurationValueKind::StringList, nullptr, nullptr, 2},
+    {u"global_shortcuts/quick_annotation_ellipse", emptyArrayDefault(),
+     ConfigurationValueKind::StringList, nullptr, nullptr, 2},
+    {u"global_shortcuts/quick_annotation_toolbar", emptyArrayDefault(),
+     ConfigurationValueKind::StringList, nullptr, nullptr, 2},
+    {u"quick_annotation/last_tool", stringDefault(u"brush"), ConfigurationValueKind::String},
     {u"global_shortcuts/stitch_selected_images", emptyArrayDefault(),
      ConfigurationValueKind::StringList, nullptr, nullptr, 2},
     {u"global_shortcuts/split_selected_images", emptyArrayDefault(),
@@ -1878,6 +1891,18 @@ QVector<ConfigurationSchemaEntry> buildEntries() {
                    macGlobalShortcutDefault(QStringLiteral("Meta+Shift+3"), 20));
     replaceDefault(QStringLiteral("global_shortcuts/pin_clipboard_content"),
                    macGlobalShortcutDefault(QStringLiteral("Meta+3"), 20));
+    replaceDefault(QStringLiteral("global_shortcuts/quick_annotation"),
+                   macGlobalShortcutDefault(QStringLiteral("Meta+Alt+D"), 2));
+    replaceDefault(QStringLiteral("global_shortcuts/quick_annotation_brush"),
+                   macGlobalShortcutDefault(QStringLiteral("Meta+Alt+B"), 11));
+    replaceDefault(QStringLiteral("global_shortcuts/quick_annotation_arrow"),
+                   macGlobalShortcutDefault(QStringLiteral("Meta+Alt+A"), 0));
+    replaceDefault(QStringLiteral("global_shortcuts/quick_annotation_rectangle"),
+                   macGlobalShortcutDefault(QStringLiteral("Meta+Alt+R"), 15));
+    replaceDefault(QStringLiteral("global_shortcuts/quick_annotation_ellipse"),
+                   macGlobalShortcutDefault(QStringLiteral("Meta+Alt+E"), 14));
+    replaceDefault(QStringLiteral("global_shortcuts/quick_annotation_toolbar"),
+                   macGlobalShortcutDefault(QStringLiteral("Meta+Alt+T"), 17));
 #endif
     result.removeIf([](const ConfigurationSchemaEntry& entry) {
         return !app::editionConfigurationKeyAvailable(entry.key);

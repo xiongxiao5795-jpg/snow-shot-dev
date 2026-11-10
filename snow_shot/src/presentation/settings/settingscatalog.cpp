@@ -307,6 +307,60 @@ SettingsItemDefinition globalCanvasItem() {
         []() { return custom_outlined_icons::FullScreenCanvas(); });
 }
 
+SettingsItemDefinition quickAnnotationItem() {
+    return quickActionItem(
+        QStringLiteral("quick.quick-annotation"),
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation"),
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Draw once with the last selected tool"), {},
+        GlobalShortcutAction::QuickAnnotation, QStringLiteral("global_shortcuts/quick_annotation"),
+        []() { return custom_outlined_icons::FullScreenCanvas(); });
+}
+
+SettingsItemDefinition quickAnnotationBrushItem() {
+    return quickActionItem(QStringLiteral("quick.quick-annotation-brush"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation: brush"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Draw once with the brush"), {},
+                           GlobalShortcutAction::QuickAnnotationBrush,
+                           QStringLiteral("global_shortcuts/quick_annotation_brush"),
+                           []() { return custom_outlined_icons::FullScreenCanvas(); });
+}
+
+SettingsItemDefinition quickAnnotationArrowItem() {
+    return quickActionItem(QStringLiteral("quick.quick-annotation-arrow"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation: arrow"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Draw once with an arrow"), {},
+                           GlobalShortcutAction::QuickAnnotationArrow,
+                           QStringLiteral("global_shortcuts/quick_annotation_arrow"),
+                           []() { return custom_outlined_icons::FullScreenCanvas(); });
+}
+
+SettingsItemDefinition quickAnnotationRectangleItem() {
+    return quickActionItem(QStringLiteral("quick.quick-annotation-rectangle"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation: rectangle"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Draw once with a rectangle"), {},
+                           GlobalShortcutAction::QuickAnnotationRectangle,
+                           QStringLiteral("global_shortcuts/quick_annotation_rectangle"),
+                           []() { return custom_outlined_icons::FullScreenCanvas(); });
+}
+
+SettingsItemDefinition quickAnnotationEllipseItem() {
+    return quickActionItem(QStringLiteral("quick.quick-annotation-ellipse"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation: ellipse"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Draw once with an ellipse"), {},
+                           GlobalShortcutAction::QuickAnnotationEllipse,
+                           QStringLiteral("global_shortcuts/quick_annotation_ellipse"),
+                           []() { return custom_outlined_icons::FullScreenCanvas(); });
+}
+
+SettingsItemDefinition quickAnnotationToolbarItem() {
+    return quickActionItem(QStringLiteral("quick.quick-annotation-toolbar"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation toolbar"),
+                           QT_TRANSLATE_NOOP("SettingsCatalog", "Choose a quick annotation tool"),
+                           {}, GlobalShortcutAction::QuickAnnotationToolbar,
+                           QStringLiteral("global_shortcuts/quick_annotation_toolbar"),
+                           []() { return custom_outlined_icons::FullScreenCanvas(); });
+}
+
 SettingsItemDefinition stitchSelectedImagesItem() {
     return quickActionItem(
         QStringLiteral("quick.stitch-selected-images"),
@@ -3973,6 +4027,12 @@ constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionScreenRecordingItems
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionOtherItems[] = {
     {openCaptureHistoryItem},
     {globalCanvasItem},
+    {quickAnnotationItem},
+    {quickAnnotationBrushItem},
+    {quickAnnotationArrowItem},
+    {quickAnnotationRectangleItem},
+    {quickAnnotationEllipseItem},
+    {quickAnnotationToolbarItem},
     {stitchSelectedImagesItem},
     {splitSelectedImagesItem},
     {editSelectedImagesItem},
@@ -5518,6 +5578,18 @@ QString shortcutConfigurationKey(GlobalShortcutAction action) {
         return QStringLiteral("global_shortcuts/switch_window_group");
     case GlobalShortcutAction::GlobalCanvas:
         return QStringLiteral("global_shortcuts/global_canvas");
+    case GlobalShortcutAction::QuickAnnotation:
+        return QStringLiteral("global_shortcuts/quick_annotation");
+    case GlobalShortcutAction::QuickAnnotationBrush:
+        return QStringLiteral("global_shortcuts/quick_annotation_brush");
+    case GlobalShortcutAction::QuickAnnotationArrow:
+        return QStringLiteral("global_shortcuts/quick_annotation_arrow");
+    case GlobalShortcutAction::QuickAnnotationRectangle:
+        return QStringLiteral("global_shortcuts/quick_annotation_rectangle");
+    case GlobalShortcutAction::QuickAnnotationEllipse:
+        return QStringLiteral("global_shortcuts/quick_annotation_ellipse");
+    case GlobalShortcutAction::QuickAnnotationToolbar:
+        return QStringLiteral("global_shortcuts/quick_annotation_toolbar");
     case GlobalShortcutAction::StitchSelectedImages:
         return QStringLiteral("global_shortcuts/stitch_selected_images");
     case GlobalShortcutAction::SplitSelectedImages:

@@ -32,6 +32,7 @@
 
 #include "snow_shot/presentation/globalshortcutmanager.h"
 #include "snow_shot/presentation/globalcanvascontroller.h"
+#include "snow_shot/presentation/quickannotationcontroller.h"
 #include "snow_shot/presentation/globalmousemanager.h"
 #include "snow_shot/presentation/mainwindow.h"
 #include "snow_shot/presentation/pinnedwindowgroupmanager.h"
@@ -1650,6 +1651,37 @@ class ApplicationController::Impl {
         case presentation::GlobalShortcutAction::OpenCaptureHistory:
             ensureMainWindow().showScreenshotHistory();
             break;
+        case presentation::GlobalShortcutAction::QuickAnnotation:
+        case presentation::GlobalShortcutAction::QuickAnnotationBrush:
+        case presentation::GlobalShortcutAction::QuickAnnotationArrow:
+        case presentation::GlobalShortcutAction::QuickAnnotationRectangle:
+        case presentation::GlobalShortcutAction::QuickAnnotationEllipse:
+        case presentation::GlobalShortcutAction::QuickAnnotationToolbar: {
+            if (!quickAnnotationController) {
+                quickAnnotationController =
+                    std::make_unique<presentation::QuickAnnotationController>();
+                QObject::connect(quickAnnotationController.get(),
+                                 &presentation::QuickAnnotationController::errorOccurred, &q,
+                                 [](const QString& message) {
+                                     adqt::widgets::AdMessageService::error(message);
+                                 });
+            }
+            using Action = presentation::GlobalShortcutAction;
+            using Tool = presentation::QuickAnnotationTool;
+            if (action == Action::QuickAnnotation)
+                quickAnnotationController->armLastTool();
+            else if (action == Action::QuickAnnotationToolbar)
+                quickAnnotationController->showToolbar();
+            else if (action == Action::QuickAnnotationBrush)
+                quickAnnotationController->arm(Tool::Brush);
+            else if (action == Action::QuickAnnotationArrow)
+                quickAnnotationController->arm(Tool::Arrow);
+            else if (action == Action::QuickAnnotationRectangle)
+                quickAnnotationController->arm(Tool::Rectangle);
+            else
+                quickAnnotationController->arm(Tool::Ellipse);
+            break;
+        }
         case presentation::GlobalShortcutAction::GlobalCanvas:
             if (!globalCanvasController) {
                 globalCanvasController = std::make_unique<presentation::GlobalCanvasController>();
@@ -1937,6 +1969,7 @@ class ApplicationController::Impl {
     std::unique_ptr<ScreenshotOcrRecognitionService> ocrRecognition;
     std::unique_ptr<ScreenshotController> screenshotController;
     std::unique_ptr<presentation::GlobalCanvasController> globalCanvasController;
+    std::unique_ptr<presentation::QuickAnnotationController> quickAnnotationController;
     // Graph cancellation borrows direct capture even when construction unwinds before Impl's
     // destructor can run its explicit shutdown sequence. Destroy both MCP owners first.
     std::unique_ptr<presentation::DirectCaptureController> directCaptureController;

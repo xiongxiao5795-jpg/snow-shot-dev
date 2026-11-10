@@ -820,6 +820,15 @@ bool ShortcutSettings::setGlobalCanvas(const shortcuts::ShortcutBindingList& bin
     return setShortcutValue(QStringLiteral("global_shortcuts/global_canvas"), bindings);
 }
 
+shortcuts::ShortcutBindingList ShortcutSettings::quickAnnotationShortcut(const QString& key) const {
+    return shortcutValue(key);
+}
+
+bool ShortcutSettings::setQuickAnnotationShortcut(
+    const QString& key, const shortcuts::ShortcutBindingList& bindings) const {
+    return setShortcutValue(key, bindings);
+}
+
 shortcuts::ShortcutBindingList ShortcutSettings::stitchSelectedImages() const {
     return shortcutValue(QStringLiteral("global_shortcuts/stitch_selected_images"));
 }

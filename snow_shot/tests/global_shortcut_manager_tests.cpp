@@ -52,6 +52,12 @@ constexpr std::array ALL_ACTIONS{
     GlobalShortcutAction::OpenCaptureHistory,
     GlobalShortcutAction::OpenPinToScreenManagement,
     GlobalShortcutAction::GlobalCanvas,
+    GlobalShortcutAction::QuickAnnotation,
+    GlobalShortcutAction::QuickAnnotationBrush,
+    GlobalShortcutAction::QuickAnnotationArrow,
+    GlobalShortcutAction::QuickAnnotationRectangle,
+    GlobalShortcutAction::QuickAnnotationEllipse,
+    GlobalShortcutAction::QuickAnnotationToolbar,
     GlobalShortcutAction::StitchSelectedImages,
     GlobalShortcutAction::SplitSelectedImages,
     GlobalShortcutAction::EditSelectedImages,
@@ -273,6 +279,42 @@ void clearAll(GlobalShortcutManager& manager) {
     for (const GlobalShortcutAction action : ALL_ACTIONS) {
         require(manager.setShortcuts(action, {}), "clear global shortcut fixture");
     }
+}
+
+void quickAnnotationShortcutsRespectGates() {
+    auto backend = std::make_unique<FakeBackend>();
+    bool fullscreen = false;
+    GlobalShortcutManager manager(std::move(backend), nullptr,
+                                  [&fullscreen] { return fullscreen; });
+    manager.initialize();
+    clearAll(manager);
+    const std::array actions{GlobalShortcutAction::QuickAnnotation,
+                             GlobalShortcutAction::QuickAnnotationBrush,
+                             GlobalShortcutAction::QuickAnnotationArrow,
+                             GlobalShortcutAction::QuickAnnotationRectangle,
+                             GlobalShortcutAction::QuickAnnotationEllipse,
+                             GlobalShortcutAction::QuickAnnotationToolbar};
+    for (int i = 0; i < static_cast<int>(actions.size()); ++i) {
+        require(manager.setShortcuts(actions[static_cast<std::size_t>(i)],
+                                     {QStringLiteral("Ctrl+Alt+F%1").arg(i + 1)}),
+                "configure quick annotation shortcut");
+    }
+    auto& store = snow_shot::storage::ApplicationStorage::instance().configuration();
+    const QString key = QStringLiteral("global_shortcuts/disable_on_focused_fullscreen_window");
+    const auto old = store.value(key);
+    require(store.setValue(key, true), "enable fullscreen suppression");
+    fullscreen = true;
+    manager.refreshFocusedFullscreenState();
+    for (auto action : actions)
+        require(manager.state(action).status == GlobalShortcutStatus::Registered,
+                "quick annotation remains available during fullscreen presentation");
+    manager.setGlobalShortcutsEnabled(false);
+    for (auto action : actions)
+        require(manager.state(action).status == GlobalShortcutStatus::Disabled,
+                "quick annotation respects the global shortcuts switch");
+    manager.setGlobalShortcutsEnabled(true);
+    require(store.setValue(key, old), "restore fullscreen suppression");
+    clearAll(manager);
 }
 
 void screenshotQuickActionShortcutsRegisterActivateAndPersist() {
@@ -2009,6 +2051,7 @@ int main(int argc, char** argv) {
         storage.shutdown();
         return 0;
     }
+    quickAnnotationShortcutsRespectGates();
     screenshotQuickActionShortcutsRegisterActivateAndPersist();
     switchGroupShortcutPersistsAndReportsBinding();
 #ifdef Q_OS_WIN

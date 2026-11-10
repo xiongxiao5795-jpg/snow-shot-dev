@@ -23,7 +23,7 @@ namespace {
 constexpr int MAX_SHORTCUTS_PER_ACTION = 2;
 constexpr int FIRST_REGISTRATION_ID = 0x2200;
 constexpr int LAST_REGISTRATION_ID = 0xBFFF;
-constexpr std::size_t ACTION_COUNT = 31;
+constexpr std::size_t ACTION_COUNT = 37;
 
 constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::Screenshot,
@@ -44,6 +44,12 @@ constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::OpenCaptureHistory,
     GlobalShortcutAction::OpenPinToScreenManagement,
     GlobalShortcutAction::GlobalCanvas,
+    GlobalShortcutAction::QuickAnnotation,
+    GlobalShortcutAction::QuickAnnotationBrush,
+    GlobalShortcutAction::QuickAnnotationArrow,
+    GlobalShortcutAction::QuickAnnotationRectangle,
+    GlobalShortcutAction::QuickAnnotationEllipse,
+    GlobalShortcutAction::QuickAnnotationToolbar,
     GlobalShortcutAction::StitchSelectedImages,
     GlobalShortcutAction::SplitSelectedImages,
     GlobalShortcutAction::EditSelectedImages,
@@ -136,6 +142,24 @@ GlobalShortcutStatus aggregateStatus(const QVector<GlobalShortcutBindingResult>&
 shortcuts::ShortcutBindingList persistedShortcuts(const storage::ShortcutSettings& settings,
                                                   GlobalShortcutAction action) {
     switch (action) {
+    case GlobalShortcutAction::QuickAnnotation:
+        return settings.quickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation"));
+    case GlobalShortcutAction::QuickAnnotationBrush:
+        return settings.quickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_brush"));
+    case GlobalShortcutAction::QuickAnnotationArrow:
+        return settings.quickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_arrow"));
+    case GlobalShortcutAction::QuickAnnotationRectangle:
+        return settings.quickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_rectangle"));
+    case GlobalShortcutAction::QuickAnnotationEllipse:
+        return settings.quickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_ellipse"));
+    case GlobalShortcutAction::QuickAnnotationToolbar:
+        return settings.quickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_toolbar"));
     case GlobalShortcutAction::Screenshot:
         return settings.screenshot();
     case GlobalShortcutAction::ScreenshotDelay:
@@ -213,6 +237,24 @@ shortcuts::ShortcutBindingList persistedShortcuts(const storage::ShortcutSetting
 bool persistShortcuts(const storage::ShortcutSettings& settings, GlobalShortcutAction action,
                       const shortcuts::ShortcutBindingList& bindings) {
     switch (action) {
+    case GlobalShortcutAction::QuickAnnotation:
+        return settings.setQuickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation"), bindings);
+    case GlobalShortcutAction::QuickAnnotationBrush:
+        return settings.setQuickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_brush"), bindings);
+    case GlobalShortcutAction::QuickAnnotationArrow:
+        return settings.setQuickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_arrow"), bindings);
+    case GlobalShortcutAction::QuickAnnotationRectangle:
+        return settings.setQuickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_rectangle"), bindings);
+    case GlobalShortcutAction::QuickAnnotationEllipse:
+        return settings.setQuickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_ellipse"), bindings);
+    case GlobalShortcutAction::QuickAnnotationToolbar:
+        return settings.setQuickAnnotationShortcut(
+            QStringLiteral("global_shortcuts/quick_annotation_toolbar"), bindings);
     case GlobalShortcutAction::Screenshot:
         return settings.setScreenshot(bindings);
     case GlobalShortcutAction::ScreenshotDelay:
@@ -531,7 +573,12 @@ class GlobalShortcutManager::Impl {
         return actionAvailable(action) &&
                (controlsGlobalShortcutGates(action) ||
                 (m_globalShortcutsEnabled &&
-                 (!m_focusedFullscreen ||
+                 (!m_focusedFullscreen || action == GlobalShortcutAction::QuickAnnotation ||
+                  action == GlobalShortcutAction::QuickAnnotationBrush ||
+                  action == GlobalShortcutAction::QuickAnnotationArrow ||
+                  action == GlobalShortcutAction::QuickAnnotationRectangle ||
+                  action == GlobalShortcutAction::QuickAnnotationEllipse ||
+                  action == GlobalShortcutAction::QuickAnnotationToolbar ||
                   (action == GlobalShortcutAction::GlobalCanvas && m_globalCanvasActive))));
     }
 

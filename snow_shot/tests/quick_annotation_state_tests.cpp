@@ -1,7 +1,8 @@
-#include "../src/presentation/quickannotation/quickannotationstate.h"
+#include "snow_shot/presentation/quickannotationstate.h"
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 using snow_shot::presentation::QuickAnnotationState;
 using snow_shot::presentation::QuickAnnotationTool;
@@ -32,6 +33,7 @@ int main() {
     require(state.phase() == Phase::Idle && state.tool() == QuickAnnotationTool::Arrow,
             "cancel preserves last tool");
     require(QuickAnnotationState::opacity(0) == 1.0 &&
+                QuickAnnotationState::opacity(std::numeric_limits<std::int64_t>::min()) == 1.0 &&
                 QuickAnnotationState::opacity(3000) == 1.0 &&
                 QuickAnnotationState::opacity(3300) == 0.5 &&
                 QuickAnnotationState::opacity(3600) == 0.0 &&
