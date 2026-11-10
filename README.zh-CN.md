@@ -131,6 +131,11 @@ Mini 支持 Windows 和 Apple Silicon Mac。其文字识别工具栏按钮默认
 2. **框选，再加工。** 截取需要的区域，添加标注，或直接识别其中的文字。
 3. **继续你的工作。** 复制、保存，或把结果固定在屏幕旁边；需要展示操作过程时，使用屏幕录制。
 
+在 macOS 上，按 Control-Option-B、A、R 或 E 可分别选择画笔、箭头、矩形或椭圆，
+然后拖拽一次。Control-Option-D 使用上次工具，Control-Option-T 打开精简工具栏；
+按 Escape 可取消待绘制状态。松开鼠标后即可继续操作下方应用，标记停留三秒后淡出。
+若快捷键与其他应用冲突，可在「全局快捷键」中修改。
+
 macOS 用户请根据所用功能完成权限授权。
 安装帮助与平台说明可查看[官方网站](https://snowshot.top)和 [macOS 指南](docs-macos-build.md)。
 

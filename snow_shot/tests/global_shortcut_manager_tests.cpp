@@ -283,6 +283,7 @@ void clearAll(GlobalShortcutManager& manager) {
 
 void quickAnnotationShortcutsRespectGates() {
     auto backend = std::make_unique<FakeBackend>();
+    auto* input = backend.get();
     bool fullscreen = false;
     GlobalShortcutManager manager(std::move(backend), nullptr,
                                   [&fullscreen] { return fullscreen; });
@@ -308,6 +309,14 @@ void quickAnnotationShortcutsRespectGates() {
     for (auto action : actions)
         require(manager.state(action).status == GlobalShortcutStatus::Registered,
                 "quick annotation remains available during fullscreen presentation");
+    GlobalShortcutAction activated = GlobalShortcutAction::Screenshot;
+    QObject::connect(&manager, &GlobalShortcutManager::activated, &manager,
+                     [&activated](GlobalShortcutAction action) { activated = action; });
+    const int brush = registrationId(*input, QStringLiteral("Ctrl+Alt+F2"));
+    require(brush != 0, "brush shortcut is registered");
+    input->handler(brush);
+    require(activated == GlobalShortcutAction::QuickAnnotationBrush,
+            "brush activation dispatches the matching action");
     manager.setGlobalShortcutsEnabled(false);
     for (auto action : actions)
         require(manager.state(action).status == GlobalShortcutStatus::Disabled,

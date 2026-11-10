@@ -34,6 +34,7 @@
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QToolButton>
 #include <QTranslator>
 #include <qpa/qplatformscreen.h>
 #include <qpa/qwindowsysteminterface.h>
@@ -1464,7 +1465,8 @@ int main(int argc, char** argv) {
                 .success,
             "initialize storage");
     if (app.arguments().contains(QStringLiteral("--quick-annotation-only"))) {
-        presentation::QuickAnnotationController controller;
+        qint64 now = 0;
+        presentation::QuickAnnotationController controller(nullptr, [&now] { return now; });
         controller.arm(presentation::QuickAnnotationTool::Arrow);
         QWidget* window = nullptr;
         for (QWidget* candidate : QApplication::topLevelWidgets()) {
@@ -1491,6 +1493,45 @@ int main(int argc, char** argv) {
         QApplication::sendEvent(canvas, &escape);
         require(window->testAttribute(Qt::WA_TransparentForMouseEvents),
                 "escape cancels the armed gesture");
+        controller.showToolbar();
+        QWidget* toolbar = nullptr;
+        for (QWidget* candidate : QApplication::topLevelWidgets()) {
+            if (candidate->objectName() == QStringLiteral("quickAnnotationToolbar"))
+                toolbar = candidate;
+        }
+        require(toolbar && toolbar->isVisible(), "show quick annotation toolbar");
+        const auto buttons = toolbar->findChildren<QToolButton*>();
+        require(buttons.size() == 4, "quick annotation toolbar has four tools");
+        buttons.at(2)->click();
+        require(!toolbar->isVisible() && canvas->canvasTool() == SnowCanvasTool::Shape &&
+                    !window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "toolbar selection hides the toolbar and arms a rectangle");
+        now = 1000;
+        mouse(canvas, QEvent::MouseButtonPress, {40, 40}, Qt::LeftButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseMove, {140, 120}, Qt::NoButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseButtonRelease, {140, 120}, Qt::LeftButton, Qt::NoButton);
+        auto* timer = window->findChild<QTimer*>(QStringLiteral("quickAnnotationFadeTimer"));
+        require(timer && timer->isActive(), "marks start the fade timer");
+        now = 3600;
+        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection),
+                "advance fade timer deterministically");
+        require(window->isVisible(), "a later mark remains after the first has expired");
+        now = 4600;
+        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection),
+                "advance fade timer past the second mark");
+        require(!window->isVisible() && !timer->isActive(), "expired marks release the overlay");
+        controller.arm(presentation::QuickAnnotationTool::Ellipse);
+        require(canvas->canvasTool() == SnowCanvasTool::Shape &&
+                    canvas->canvasStyleToolbarState().shapeStyle.shape ==
+                        SnowCanvasRectangleShape::Ellipse,
+                "ellipse shortcut selects ellipse creation");
+        controller.arm(presentation::QuickAnnotationTool::Brush);
+        require(canvas->canvasTool() == SnowCanvasTool::FreeDraw,
+                "brush shortcut selects free drawing");
+        require(storage.configuration()
+                        .value(QStringLiteral("quick_annotation/last_tool"))
+                        .toString() == QStringLiteral("brush"),
+                "last selected tool is persisted");
         storage.shutdown();
         return 0;
     }

@@ -135,6 +135,13 @@ See [edition details](docs/snow-shot-releases.md#snow-shot-mini-paired-releases)
 2. **Select and refine.** Capture a region, add annotations, or run text recognition.
 3. **Keep it moving.** Copy the result, save it, or pin it beside your work. Use screen recording when a still image is not enough.
 
+For a temporary annotation on macOS, press Control-Option-B, A, R, or E to arm the
+brush, arrow, rectangle, or ellipse, then drag once. Control-Option-D reuses the
+last tool and Control-Option-T opens the small tool palette. Escape cancels a
+pending gesture. The mark stays for three seconds and then fades; the mouse
+returns to the underlying application when you release it. Change these bindings
+in **Global shortcuts** if they conflict with another app.
+
 On macOS, follow the permission prompts for the features you use.
 For installation help and platform notes, visit the [website](https://snowshot.top)
 or the [macOS guide](docs-macos-build.md).

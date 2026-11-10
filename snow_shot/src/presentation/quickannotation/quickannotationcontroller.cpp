@@ -1,6 +1,7 @@
 #include "snow_shot/presentation/quickannotationcontroller.h"
 
 #include "../globalcanvas/globalcanvasplatform.h"
+#include "snow_shot/platform/physicalcursor.h"
 #include "snow_shot/platform/screenshotnative.h"
 #ifdef Q_OS_MACOS
 #include "snow_shot/platform/macos/screenshotsessionfocus.h"
@@ -16,14 +17,15 @@
 #include <QApplication>
 #include <QCursor>
 #include <QElapsedTimer>
+#include <QHBoxLayout>
 #include <QImage>
 #include <QKeyEvent>
-#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
 #include <QScreen>
 #include <QTimer>
+#include <QToolButton>
 #include <QWindow>
 
 #include <algorithm>
@@ -35,6 +37,54 @@
 namespace snow_shot::presentation {
 namespace {
 
+class ToolPanel final : public QWidget {
+  public:
+    explicit ToolPanel(std::function<void(QuickAnnotationTool)> choose)
+        : QWidget(nullptr, Qt::Popup | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
+          m_choose(std::move(choose)) {
+        setObjectName(QStringLiteral("quickAnnotationToolbar"));
+        auto* layout = new QHBoxLayout(this);
+        const auto add = [this, layout](QToolButton*& button, QuickAnnotationTool tool) {
+            button = new QToolButton(this);
+            layout->addWidget(button);
+            connect(button, &QToolButton::clicked, this, [this, tool] {
+                hide();
+                m_choose(tool);
+            });
+        };
+        add(m_brush, QuickAnnotationTool::Brush);
+        add(m_arrow, QuickAnnotationTool::Arrow);
+        add(m_rectangle, QuickAnnotationTool::Rectangle);
+        add(m_ellipse, QuickAnnotationTool::Ellipse);
+        retranslate();
+    }
+
+  protected:
+    void changeEvent(QEvent* event) override {
+        QWidget::changeEvent(event);
+        if (event->type() == QEvent::LanguageChange)
+            retranslate();
+    }
+
+  private:
+    void retranslate() {
+        m_brush->setText(QCoreApplication::translate(
+            "snow_shot::presentation::QuickAnnotationController", "Brush"));
+        m_arrow->setText(QCoreApplication::translate(
+            "snow_shot::presentation::QuickAnnotationController", "Arrow"));
+        m_rectangle->setText(QCoreApplication::translate(
+            "snow_shot::presentation::QuickAnnotationController", "Rectangle"));
+        m_ellipse->setText(QCoreApplication::translate(
+            "snow_shot::presentation::QuickAnnotationController", "Ellipse"));
+    }
+
+    std::function<void(QuickAnnotationTool)> m_choose;
+    QToolButton* m_brush = nullptr;
+    QToolButton* m_arrow = nullptr;
+    QToolButton* m_rectangle = nullptr;
+    QToolButton* m_ellipse = nullptr;
+};
+
 class GestureCanvas final : public SnowCanvasWidget {
   public:
     using SnowCanvasWidget::SnowCanvasWidget;
@@ -44,13 +94,21 @@ class GestureCanvas final : public SnowCanvasWidget {
 
   protected:
     void mousePressEvent(QMouseEvent* event) override {
-        if (event->button() == Qt::LeftButton && pressed)
+        if (event->button() != Qt::LeftButton) {
+            event->accept();
+            return;
+        }
+        if (pressed)
             pressed();
         SnowCanvasWidget::mousePressEvent(event);
     }
     void mouseReleaseEvent(QMouseEvent* event) override {
+        if (event->button() != Qt::LeftButton) {
+            event->accept();
+            return;
+        }
         SnowCanvasWidget::mouseReleaseEvent(event);
-        if (event->button() == Qt::LeftButton && released)
+        if (released)
             released();
     }
     void keyPressEvent(QKeyEvent* event) override {
@@ -65,10 +123,11 @@ class GestureCanvas final : public SnowCanvasWidget {
 
 class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
   public:
-    explicit AnnotationWindow(QScreen* screen, std::function<void()> onError)
+    explicit AnnotationWindow(QScreen* screen, std::function<void()> onError,
+                              std::function<qint64()> clock)
         : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
           m_screen(screen), m_runtime(SnowCanvasRuntimeConfig{screenshotCanvasToolStyleDefaults()}),
-          m_canvas(m_runtime, this), m_onError(std::move(onError)) {
+          m_canvas(m_runtime, this), m_onError(std::move(onError)), m_now(std::move(clock)) {
         setObjectName(QStringLiteral("quickAnnotationWindow"));
         m_canvas.setObjectName(QStringLiteral("quickAnnotationCanvas"));
         setAttribute(Qt::WA_TranslucentBackground);
@@ -83,9 +142,13 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         m_canvas.released = [this] { completeGesture(); };
         m_canvas.cancelled = [this] { cancel(); };
         m_clock.start();
+        if (!m_now)
+            m_now = [this] { return m_clock.elapsed(); };
+        m_timer.setParent(this);
+        m_timer.setObjectName(QStringLiteral("quickAnnotationFadeTimer"));
         m_timer.setInterval(33);
         connect(&m_timer, &QTimer::timeout, this, [this] {
-            const auto now = m_clock.elapsed();
+            const auto now = m_now();
             std::erase_if(m_marks, [now](const Mark& mark) {
                 return QuickAnnotationState::opacity(now - mark.created) == 0.0;
             });
@@ -169,7 +232,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         painter.fillRect(context.exposedRegion.boundingRect(), Qt::transparent);
         painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
         if (context.purpose == SnowCanvasRenderContext::Purpose::Widget) {
-            const auto now = m_clock.elapsed();
+            const auto now = m_now();
             for (const Mark& mark : m_marks) {
                 painter.setOpacity(QuickAnnotationState::opacity(now - mark.created));
                 painter.drawImage(mark.rect, mark.image);
@@ -207,6 +270,8 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     void updateGeometryForScreen() {
         if (!m_screen)
             return;
+        if (windowHandle())
+            windowHandle()->setScreen(m_screen);
         setGeometry(m_screen->geometry());
     }
 
@@ -241,7 +306,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
                     m_marks.push_back(
                         {image.copy(bounds),
                          QRectF(left / dpr, top / dpr, bounds.width() / dpr, bounds.height() / dpr),
-                         m_clock.elapsed()});
+                         m_now()});
                     m_timer.start();
                 }
             }
@@ -285,6 +350,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     GestureCanvas m_canvas;
     QuickAnnotationState m_state;
     std::function<void()> m_onError;
+    std::function<qint64()> m_now;
     QElapsedTimer m_clock;
     QTimer m_timer;
     std::vector<Mark> m_marks;
@@ -297,7 +363,8 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
 
 class QuickAnnotationController::Impl {
   public:
-    explicit Impl(QuickAnnotationController& owner) : q(owner) {
+    Impl(QuickAnnotationController& owner, std::function<qint64()> clock)
+        : q(owner), now(std::move(clock)) {
         auto& storage = storage::ApplicationStorage::instance();
         if (storage.isInitialized()) {
             const QString saved = storage.configuration()
@@ -311,18 +378,31 @@ class QuickAnnotationController::Impl {
                 lastTool = QuickAnnotationTool::Ellipse;
         }
         QObject::connect(qApp, &QGuiApplication::screenRemoved, &q, [this](QScreen* screen) {
-            std::erase_if(windows,
-                          [screen](const auto& window) { return window->screen() == screen; });
+            for (const auto& window : windows) {
+                if (window->screen() != screen)
+                    continue;
+                QPointer<AnnotationWindow> removed(window.get());
+                window->cancel();
+                QTimer::singleShot(0, &q, [this, removed] {
+                    std::erase_if(windows, [removed](const auto& window) {
+                        return window.get() == removed.data();
+                    });
+                });
+            }
         });
     }
 
     void arm(QuickAnnotationTool tool) {
+        if (toolbar)
+            toolbar->hide();
         for (const auto& window : windows) {
             if (window->drawing())
                 return;
             window->cancel();
         }
-        QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
+        const QPoint position =
+            platform::PhysicalCursor().logicalPosition().value_or(QCursor::pos()).toPoint();
+        QScreen* screen = QGuiApplication::screenAt(position);
         if (!screen)
             screen = QGuiApplication::primaryScreen();
         if (!screen)
@@ -330,10 +410,13 @@ class QuickAnnotationController::Impl {
         auto it = std::find_if(windows.begin(), windows.end(),
                                [screen](const auto& window) { return window->screen() == screen; });
         if (it == windows.end()) {
-            windows.push_back(std::make_unique<AnnotationWindow>(screen, [this] {
-                emit q.errorOccurred(
-                    QuickAnnotationController::tr("Could not change canvas click-through"));
-            }));
+            windows.push_back(std::make_unique<AnnotationWindow>(
+                screen,
+                [this] {
+                    emit q.errorOccurred(
+                        QuickAnnotationController::tr("Could not change canvas click-through"));
+                },
+                now));
             it = std::prev(windows.end());
         }
         if ((*it)->arm(tool)) {
@@ -352,12 +435,16 @@ class QuickAnnotationController::Impl {
     }
 
     QuickAnnotationController& q;
+    std::function<qint64()> now;
     QuickAnnotationTool lastTool = QuickAnnotationTool::Brush;
     std::vector<std::unique_ptr<AnnotationWindow>> windows;
+    std::unique_ptr<ToolPanel> toolbar;
 };
 
 QuickAnnotationController::QuickAnnotationController(QObject* parent)
-    : QObject(parent), m_impl(std::make_unique<Impl>(*this)) {}
+    : QuickAnnotationController(parent, {}) {}
+QuickAnnotationController::QuickAnnotationController(QObject* parent, std::function<qint64()> clock)
+    : QObject(parent), m_impl(std::make_unique<Impl>(*this, std::move(clock))) {}
 QuickAnnotationController::~QuickAnnotationController() = default;
 void QuickAnnotationController::arm(QuickAnnotationTool tool) {
     m_impl->arm(tool);
@@ -366,19 +453,29 @@ void QuickAnnotationController::armLastTool() {
     m_impl->arm(m_impl->lastTool);
 }
 void QuickAnnotationController::showToolbar() {
-    QMenu menu;
-    const auto brush = menu.addAction(tr("Brush"));
-    const auto arrow = menu.addAction(tr("Arrow"));
-    const auto rectangle = menu.addAction(tr("Rectangle"));
-    const auto ellipse = menu.addAction(tr("Ellipse"));
-    QAction* selected = menu.exec(QCursor::pos());
-    if (selected == brush)
-        arm(QuickAnnotationTool::Brush);
-    else if (selected == arrow)
-        arm(QuickAnnotationTool::Arrow);
-    else if (selected == rectangle)
-        arm(QuickAnnotationTool::Rectangle);
-    else if (selected == ellipse)
-        arm(QuickAnnotationTool::Ellipse);
+    if (std::any_of(m_impl->windows.begin(), m_impl->windows.end(),
+                    [](const auto& window) { return window->drawing(); }))
+        return;
+    if (!m_impl->toolbar)
+        m_impl->toolbar =
+            std::make_unique<ToolPanel>([this](QuickAnnotationTool tool) { arm(tool); });
+    m_impl->toolbar->adjustSize();
+    const QPoint cursor =
+        platform::PhysicalCursor().logicalPosition().value_or(QCursor::pos()).toPoint();
+    QScreen* screen = QGuiApplication::screenAt(cursor);
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    QPoint position = cursor;
+    if (screen) {
+        const QRect bounds = screen->availableGeometry();
+        position.setX(
+            std::clamp(position.x(), bounds.left(),
+                       std::max(bounds.left(), bounds.right() - m_impl->toolbar->width() + 1)));
+        position.setY(
+            std::clamp(position.y(), bounds.top(),
+                       std::max(bounds.top(), bounds.bottom() - m_impl->toolbar->height() + 1)));
+    }
+    m_impl->toolbar->move(position);
+    m_impl->toolbar->show();
 }
 } // namespace snow_shot::presentation

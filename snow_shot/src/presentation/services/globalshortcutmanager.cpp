@@ -44,12 +44,6 @@ constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::OpenCaptureHistory,
     GlobalShortcutAction::OpenPinToScreenManagement,
     GlobalShortcutAction::GlobalCanvas,
-    GlobalShortcutAction::QuickAnnotation,
-    GlobalShortcutAction::QuickAnnotationBrush,
-    GlobalShortcutAction::QuickAnnotationArrow,
-    GlobalShortcutAction::QuickAnnotationRectangle,
-    GlobalShortcutAction::QuickAnnotationEllipse,
-    GlobalShortcutAction::QuickAnnotationToolbar,
     GlobalShortcutAction::StitchSelectedImages,
     GlobalShortcutAction::SplitSelectedImages,
     GlobalShortcutAction::EditSelectedImages,
@@ -63,6 +57,12 @@ constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::HideShowAllWindows,
     GlobalShortcutAction::ToggleGlobalShortcuts,
     GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow,
+    GlobalShortcutAction::QuickAnnotation,
+    GlobalShortcutAction::QuickAnnotationBrush,
+    GlobalShortcutAction::QuickAnnotationArrow,
+    GlobalShortcutAction::QuickAnnotationRectangle,
+    GlobalShortcutAction::QuickAnnotationEllipse,
+    GlobalShortcutAction::QuickAnnotationToolbar,
 };
 
 std::size_t actionIndex(GlobalShortcutAction action) {
