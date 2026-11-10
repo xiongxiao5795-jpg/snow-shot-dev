@@ -15,6 +15,7 @@ on:
       - '!scripts/test-macos-release-incremental.sh'
       - '!scripts/test-macos-build-support.py'
       - '!scripts/package-snow-shot.sh'
+      - '!docs/fork-quick-annotation.md'
 
 permissions:
   contents: read
@@ -163,10 +164,12 @@ jobs:
         run: |
           size_mb=$(du -sm "$SNOW_RUST_CARGO_TARGET_DIR" | awk '{print $1}')
           echo "Rust cache size: ${size_mb} MiB"
-          if (( size_mb <= 8192 )); then
+          # GitHub compresses the saved cache. Allow the observed Full build
+          # (9,376 MiB on disk), while keeping a conservative size bound.
+          if (( size_mb <= 9728 )); then
             echo 'save=true' >> "$GITHUB_OUTPUT"
           else
-            echo '::warning::Rust cache exceeds 8 GiB and will not be saved.'
+            echo '::warning::Rust cache exceeds 9.5 GiB on disk and will not be saved.'
             echo 'save=false' >> "$GITHUB_OUTPUT"
           fi
       - name: Save Rust build cache

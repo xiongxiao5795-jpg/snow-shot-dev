@@ -38,6 +38,7 @@ checks on the feature branch. The release job builds only the Full edition and u
 caches; commits containing `[skip release]` run the checks without starting a Release package.
 The `snow-shot-quick-annotation-state-tests` and `snow-shot-quick-annotation-options-tests`
 targets can also be built and run independently for focused checks.
-The first compatible Release run must populate its cache. Automated offscreen tests cannot replace
-manual checks of real mouse pass-through, display layouts, shortcut conflicts, and meeting-app
-screen sharing on macOS.
+The first compatible Release run must populate its cache. Rust caches over 9.5 GiB on disk are
+skipped; GitHub's total cache quota and eviction can also affect later reuse. Automated offscreen
+tests cannot replace manual checks of real mouse pass-through, display layouts, shortcut conflicts,
+and meeting-app screen sharing on macOS.
