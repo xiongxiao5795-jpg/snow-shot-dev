@@ -1543,6 +1543,22 @@ int main(int argc, char** argv) {
     }
     if (app.arguments().contains(QStringLiteral("--native-only"))) {
         nativeCanvasLifecycle();
+        {
+            presentation::QuickAnnotationController controller;
+            controller.showToolbar();
+            QApplication::processEvents();
+            QWidget* toolbar = nullptr;
+            for (QWidget* candidate : QApplication::topLevelWidgets()) {
+                if (candidate->objectName() == QStringLiteral("quickAnnotationToolbar"))
+                    toolbar = candidate;
+            }
+            require(toolbar && toolbar->isVisible(), "native quick annotation toolbar is visible");
+            NSWindow* native = reinterpret_cast<NSView*>(toolbar->winId()).window;
+            require(native && native.level == platform::detail::captureWindowLevel(
+                                                  {platform::detail::CaptureFamily::GlobalCanvas,
+                                                   platform::detail::kToolbarLayer}),
+                    "quick annotation toolbar is above the canvas in fullscreen spaces");
+        }
         storage.shutdown();
         return 0;
     }

@@ -15,6 +15,7 @@ void configureScreenshotOverlayWindow(QWidget* widget);
 void retireScreenshotWindowPresentation(QWidget* widget);
 void configureScreenshotColorPickerWindow(QWidget* widget);
 void configureGlobalCanvasWindow(QWidget* widget);
+void configureGlobalCanvasToolbarWindow(QWidget* widget);
 void configureScreenRecordingAreaWindow(QWidget* widget);
 void configureScreenRecordingToolbarWindow(QWidget* widget);
 void configureScreenshotRecognitionWindow(QWidget* widget);

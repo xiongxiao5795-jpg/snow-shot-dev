@@ -652,6 +652,11 @@ void configureGlobalCanvasWindow(QWidget* widget) {
     configureControlledWindowDragging(widget, true);
 }
 
+void configureGlobalCanvasToolbarWindow(QWidget* widget) {
+    macos::configureWindowCursorUpdates(widget);
+    registerScreenshotLayer(widget, kToolbarLayer, CaptureFamily::GlobalCanvas);
+}
+
 void configureScreenshotOverlayWindow(QWidget* widget) {
     macos::configureWindowCursorUpdates(widget);
     registerScreenshotLayer(widget, kOverlayLayer);

@@ -56,6 +56,9 @@ class ToolPanel final : public QWidget {
         add(m_arrow, QuickAnnotationTool::Arrow);
         add(m_rectangle, QuickAnnotationTool::Rectangle);
         add(m_ellipse, QuickAnnotationTool::Ellipse);
+#ifdef Q_OS_MACOS
+        platform::configureGlobalCanvasToolbarWindow(this);
+#endif
         retranslate();
     }
 
