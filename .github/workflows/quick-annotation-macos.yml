@@ -14,10 +14,10 @@ concurrency:
 
 jobs:
   debug:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 360
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.tools/vcpkg-binary-cache
       CCACHE_DIR: ${{ github.workspace }}/.tools/ccache
       CCACHE_MAXSIZE: 1G
@@ -27,6 +27,10 @@ jobs:
           submodules: recursive
       - name: Verify runner architecture
         run: test "$(uname -m)" = arm64
+      - name: Verify Metal toolchain
+        run: |
+          xcrun --find metal || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
@@ -47,9 +51,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
-          key: quick-annotation-vcpkg-xcode26.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: quick-annotation-vcpkg-xcode27.2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            quick-annotation-vcpkg-xcode26.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-
+            quick-annotation-vcpkg-xcode27.2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-
       - name: Provision dependencies
         id: provision
         run: |
@@ -75,9 +79,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/ccache
-          key: quick-annotation-ccache-xcode26.3-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: quick-annotation-ccache-xcode27.2-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            quick-annotation-ccache-xcode26.3-${{ runner.os }}-${{ runner.arch }}-
+            quick-annotation-ccache-xcode27.2-${{ runner.os }}-${{ runner.arch }}-
       - name: Save extracted catalogs on failure
         if: failure()
         uses: actions/upload-artifact@v4

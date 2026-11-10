@@ -3730,8 +3730,13 @@ if(SNOW_SHOT_BUILD_TESTS)
     snow_shot_import_offscreen_platform(snow-shot-permission-guide-tests)
 
     add_executable(snow-shot-app-permissions-tests tests/app_permissions_tests.cpp
-        src/presentation/services/screenshotclipboardservice.cpp)
-    target_link_libraries(snow-shot-app-permissions-tests PRIVATE snow_shot_settings)
+        src/presentation/services/screenshotclipboardservice.cpp
+        src/presentation/services/screenshotexportartifact.cpp
+        include/snow_shot/presentation/screenshotexportcoordinator.h
+        src/presentation/services/screenshotimagefileservice.cpp
+        src/presentation/services/screenshotpdfexport.cpp)
+    target_link_libraries(snow-shot-app-permissions-tests PRIVATE snow_shot_settings
+        snow_shot_export_scheduling)
     add_test(NAME snow-shot-app-permissions-tests COMMAND snow-shot-app-permissions-tests)
     add_test(NAME snow-shot-pinned-visibility-permission-routing-tests
         COMMAND snow-shot-app-permissions-tests --routing-only -platform offscreen)
