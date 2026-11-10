@@ -5,13 +5,19 @@ on:
   push:
     branches: [codex/quick-annotation-package]
     paths:
-      - .github/workflows/quick-annotation-macos-release.yml
+      - '**'
+      - '!.github/workflows/quick-annotation-macos-release.yml'
+      - '!.github/workflows/quick-annotation-release-cache-check.yml'
+      - '!scripts/macos-release-cache.py'
+      - '!scripts/test-macos-release-cache.py'
+      - '!scripts/test-macos-release-incremental.sh'
+      - '!scripts/test-macos-build-support.py'
 
 permissions:
   contents: read
 
 concurrency:
-  group: quick-annotation-macos-package-${{ github.ref }}
+  group: quick-annotation-macos-incremental-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,10 +28,17 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.tools/vcpkg-binary-cache
       SNOW_QT_STATIC_DIR: ${{ github.workspace }}/.tools/qt-static/lib/cmake/Qt6
+      SNOW_RUST_CARGO_TARGET_DIR: ${{ github.workspace }}/.tools/release-cargo
+      CCACHE_DIR: ${{ github.workspace }}/.tools/release-ccache
+      CCACHE_MAXSIZE: 1500M
+      CCACHE_COMPILERCHECK: content
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           submodules: recursive
+      - name: Verify requested source
+        run: python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
       - name: Verify runner and Metal toolchain
         run: |
           test "$(uname -m)" = arm64
@@ -42,7 +55,7 @@ jobs:
           toolchain: 1.97.1
           components: rustfmt, clippy
       - name: Install build tools
-        run: brew install cmake ninja pkgconf clang-format
+        run: brew install cmake ninja pkgconf clang-format ccache
       - name: Restore static dependency cache
         id: dependencies
         uses: actions/cache/restore@v4
@@ -95,8 +108,72 @@ jobs:
           rustup run "$ocr_toolchain" cargo fetch --locked --manifest-path snow-crates/Cargo.toml
           cargo fetch --locked --manifest-path snow_rust_ffi/Cargo.toml
           cargo fetch --locked --manifest-path snow_shot/rust/snow-shot-mcp/Cargo.toml
-      - name: Package app using upstream script
-        run: scripts/package-snow-shot.sh snow-shot-macos-arm64-release --parallel 3
+      - name: Identify the exact compiler and SDK
+        id: toolchain
+        run: |
+          ocr_toolchain=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml)
+          identity=$({ xcodebuild -version; xcrun clang --version; xcrun --sdk macosx --show-sdk-build-version; rustc -vV; rustup run "$ocr_toolchain" rustc -vV; } | shasum -a 256 | awk '{print $1}')
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+      - name: Restore C++ compiler cache
+        id: cpp-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: release-cpp-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'scripts/build-static-qt.sh', 'scripts/static-qt-features.json', '.tools/qt-static/share/snow-apps/static-qt-build.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            release-cpp-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'scripts/build-static-qt.sh', 'scripts/static-qt-features.json', '.tools/qt-static/share/snow-apps/static-qt-build.json') }}-
+      - name: Restore Rust build cache
+        id: rust-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.SNOW_RUST_CARGO_TARGET_DIR }}
+            ${{ github.workspace }}/build/snow-shot-macos-arm64-release/cargo-mini
+          key: release-rust-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'snow-crates/**/Cargo.toml', 'snow-crates/**/Cargo.lock', 'snow_rust_ffi/Cargo.toml', 'snow_rust_ffi/Cargo.lock', 'snow_draw_engine_qt/**/Cargo.toml', 'snow_shot/rust/**/Cargo.toml', 'snow_shot/rust/**/Cargo.lock', 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            release-rust-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'snow-crates/**/Cargo.toml', 'snow-crates/**/Cargo.lock', 'snow_rust_ffi/Cargo.toml', 'snow_rust_ffi/Cargo.lock', 'snow_draw_engine_qt/**/Cargo.toml', 'snow_shot/rust/**/Cargo.toml', 'snow_shot/rust/**/Cargo.lock', 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml') }}-
+      - name: Build current source with reusable intermediates
+        id: compile
+        run: |
+          test ! -e build/snow-shot-macos-arm64-release/CMakeCache.txt
+          test ! -e build/snow-shot-macos-arm64-release/build.ninja
+          test ! -e build/snow-shot-macos-arm64-release/snow_shot
+          test ! -e build/snow-shot-macos-arm64-release/snow_shot_mini
+          python3 scripts/macos-release-cache.py prepare --expected "$GITHUB_SHA" \
+            --cargo-dir "$SNOW_RUST_CARGO_TARGET_DIR" \
+            --cargo-dir "$GITHUB_WORKSPACE/build/snow-shot-macos-arm64-release/cargo-mini"
+          ccache --zero-stats
+          scripts/build.sh snow-shot-macos-arm64-release --skip-bootstrap --target snow_shot --target snow_shot_mini --parallel 3 -- \
+            -DSNOW_RUST_CARGO_TARGET_DIR="$SNOW_RUST_CARGO_TARGET_DIR" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+          python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
+          ccache --show-stats
+      - name: Save C++ compiler cache
+        if: steps.compile.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.cpp-cache.outputs.cache-primary-key }}
+      - name: Check Rust cache size
+        id: rust-cache-size
+        run: |
+          size_mb=$(du -sm "$SNOW_RUST_CARGO_TARGET_DIR" build/snow-shot-macos-arm64-release/cargo-mini | awk '{sum += $1} END {print sum}')
+          echo "Rust cache size: ${size_mb} MiB"
+          if (( size_mb <= 8192 )); then echo 'save=true' >> "$GITHUB_OUTPUT"; else echo 'save=false' >> "$GITHUB_OUTPUT"; fi
+      - name: Save Rust build cache
+        if: steps.rust-cache-size.outputs.save == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.SNOW_RUST_CARGO_TARGET_DIR }}
+            ${{ github.workspace }}/build/snow-shot-macos-arm64-release/cargo-mini
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+      - name: Package the verified build
+        run: |
+          python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
+          scripts/package-snow-shot.sh snow-shot-macos-arm64-release --skip-build
+          python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
       - name: Check packages and signatures
         run: |
           shopt -s nullglob
@@ -106,10 +183,13 @@ jobs:
             codesign --verify --strict "$package"
             shasum -a 256 "$package"
           done
+          printf 'source_commit=%s\n' "$GITHUB_SHA" > build/snow-shot-macos-arm64-release/source-receipt.txt
+          shasum -a 256 "${packages[@]}" >> build/snow-shot-macos-arm64-release/source-receipt.txt
       - uses: actions/upload-artifact@v4
         with:
           name: snow-shot-release-macos-arm64
           path: |
             build/snow-shot-macos-arm64-release/*.dmg
             build/snow-shot-macos-arm64-release/*.dmg.sha256
+            build/snow-shot-macos-arm64-release/source-receipt.txt
           if-no-files-found: error

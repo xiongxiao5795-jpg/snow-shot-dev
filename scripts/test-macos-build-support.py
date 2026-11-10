@@ -1514,6 +1514,22 @@ if name == 'openssl':
         self.assertTrue(any(any(arg.endswith('GenerateSnowShotDiagnosticsSymbols-Release.cmake')
                                     for arg in call) for call in calls))
 
+    def test_incremental_release_build_then_packages_without_cleaning(self):
+        marker = self.root / 'build/snow-shot-macos-arm64-release/retained-object.o'
+        marker.parent.mkdir(parents=True)
+        marker.write_text('cached fixture')
+        calls = self.run_script('build.sh', 'snow-shot-macos-arm64-release', '--skip-bootstrap',
+                                '--target', 'snow_shot', '--target', 'snow_shot_mini')
+        self.assertTrue(marker.exists())
+        self.assertTrue(any('--build' in call and 'snow_shot' in call and
+                            'snow_shot_mini' in call for call in calls))
+        self.log.unlink()
+        calls = self.run_script('package-snow-shot.sh', 'snow-shot-macos-arm64-release',
+                                '--skip-build')
+        self.assertTrue(marker.exists())
+        self.assertFalse(any('--build' in call for call in calls))
+        self.assertTrue(any(call[0] == 'cpack' for call in calls))
+
     def test_arm_assembler_objects_keep_the_macos_deployment_target(self):
         x264 = (ROOT / 'cmake/vcpkg-overlay-ports/x264/portfile.cmake').read_text()
         x265 = (ROOT / 'cmake/vcpkg-overlay-ports/x265/portfile.cmake').read_text()

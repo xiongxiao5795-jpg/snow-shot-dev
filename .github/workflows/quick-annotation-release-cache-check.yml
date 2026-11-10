@@ -1,0 +1,41 @@
+name: macOS release cache verification
+
+on:
+  push:
+    branches: [codex/release-incremental]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cache-check:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+      - name: Install compiler cache on GitHub runner
+        run: brew install ccache
+      - name: Check release cache safety
+        run: |
+          python3 scripts/test-macos-release-cache.py
+          python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/mock-cargo-cache"
+          touch "$RUNNER_TEMP/mock-cargo-cache/cached-artifact"
+          python3 scripts/macos-release-cache.py prepare --expected "$GITHUB_SHA" --cargo-dir "$RUNNER_TEMP/mock-cargo-cache"
+          python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
+      - name: Check incremental build and packaging sequence
+        run: |
+          python3 scripts/test-macos-build-support.py \
+            MacOSBuildScripts.test_incremental_release_build_then_packages_without_cleaning \
+            MacOSBuildScripts.test_skip_build_packages_existing_symbols_without_rebuilding
+      - name: Verify actual C++ and Rust cache freshness
+        run: bash scripts/test-macos-release-incremental.sh
