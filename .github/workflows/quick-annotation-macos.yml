@@ -45,13 +45,20 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
-          key: quick-annotation-vcpkg-xcode26.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}
+          key: quick-annotation-vcpkg-xcode26.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            quick-annotation-vcpkg-xcode26.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-
       - name: Provision dependencies
+        id: provision
         run: |
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          scripts/bootstrap-macos.sh snow-shot-macos-arm64-debug
+          for attempt in 1 2 3; do
+            if scripts/bootstrap-macos.sh snow-shot-macos-arm64-debug; then exit 0; fi
+            if [[ "$attempt" == 3 ]]; then exit 1; fi
+            sleep "$((attempt * 10))"
+          done
       - name: Save dependency cache
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: always() && !cancelled() && steps.provision.outcome != 'skipped'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
