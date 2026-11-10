@@ -7,6 +7,7 @@ trap 'rm -rf "$work"' EXIT
 export CCACHE_DIR="$work/ccache"
 export CCACHE_COMPILERCHECK=content
 export CARGO_TARGET_DIR="$work/cargo-target"
+export CARGO_TERM_COLOR=never
 mkdir -p "$work/rust/src"
 
 cat > "$work/value.cpp" <<'CPP'
@@ -37,10 +38,11 @@ edition = "2024"
 TOML
 printf 'fn main() { println!("old"); }\n' > "$work/rust/src/main.rs"
 cargo build --offline --release --manifest-path "$work/rust/Cargo.toml"
-cp -R "$CARGO_TARGET_DIR" "$work/saved-cargo"
+cp -Rp "$CARGO_TARGET_DIR" "$work/saved-cargo"
 rm -rf "$CARGO_TARGET_DIR"
-cp -R "$work/saved-cargo" "$CARGO_TARGET_DIR"
+cp -Rp "$work/saved-cargo" "$CARGO_TARGET_DIR"
 cargo build --offline --release --verbose --manifest-path "$work/rust/Cargo.toml" 2> "$work/cargo-warm.log"
+cat "$work/cargo-warm.log"
 grep -F 'Fresh snow-release-cache-fixture' "$work/cargo-warm.log"
 sleep 2
 printf 'fn main() { println!("new"); }\n' > "$work/rust/src/main.rs"
