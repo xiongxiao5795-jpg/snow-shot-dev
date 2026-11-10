@@ -1519,16 +1519,28 @@ if name == 'openssl':
         marker.parent.mkdir(parents=True)
         marker.write_text('cached fixture')
         calls = self.run_script('build.sh', 'snow-shot-macos-arm64-release', '--skip-bootstrap',
-                                '--target', 'snow_shot', '--target', 'snow_shot_mini')
+                                '--target', 'snow_shot', '--',
+                                '-DSNOW_APPS_BUILD_SNOW_SHOT_MINI=OFF')
         self.assertTrue(marker.exists())
-        self.assertTrue(any('--build' in call and 'snow_shot' in call and
-                            'snow_shot_mini' in call for call in calls))
+        self.assertTrue(any('--build' in call and 'snow_shot' in call for call in calls))
+        self.assertFalse(any('snow_shot_mini' in call for call in calls))
+        self.assertTrue(any('-DSNOW_APPS_BUILD_SNOW_SHOT_MINI=OFF' in call for call in calls))
         self.log.unlink()
         calls = self.run_script('package-snow-shot.sh', 'snow-shot-macos-arm64-release',
-                                '--skip-build')
+                                '--skip-build', '--full-only')
         self.assertTrue(marker.exists())
         self.assertFalse(any('--build' in call for call in calls))
-        self.assertTrue(any(call[0] == 'cpack' for call in calls))
+        self.assertEqual(sum(call[0] == 'cpack' for call in calls), 1)
+        self.assertFalse(any(any('Mini' in arg for arg in call) for call in calls))
+
+    def test_full_only_package_builds_only_full(self):
+        calls = self.run_script('package-snow-shot.sh', 'snow-shot-macos-arm64-release',
+                                '--full-only')
+        self.assertTrue(any('--build' in call and 'snow_shot' in call for call in calls))
+        self.assertFalse(any('snow_shot_mini' in call for call in calls))
+        self.assertTrue(any('-DSNOW_APPS_BUILD_SNOW_SHOT_MINI=OFF' in call for call in calls))
+        self.assertEqual(sum(call[0] == 'cpack' for call in calls), 1)
+        self.assertFalse(any(any('Mini' in arg for arg in call) for call in calls))
 
     def test_arm_assembler_objects_keep_the_macos_deployment_target(self):
         x264 = (ROOT / 'cmake/vcpkg-overlay-ports/x264/portfile.cmake').read_text()

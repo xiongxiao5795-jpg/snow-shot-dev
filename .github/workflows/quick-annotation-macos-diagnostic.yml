@@ -2,10 +2,6 @@ name: Quick annotation macOS release diagnosis
 
 on:
   workflow_dispatch:
-  push:
-    branches: [codex/quick-annotation-package]
-    paths:
-      - .github/workflows/quick-annotation-macos-diagnostic.yml
 
 permissions:
   contents: read
@@ -108,12 +104,13 @@ jobs:
           ) &
           monitor=$!
           trap 'kill "$monitor" 2>/dev/null || true' EXIT
-          scripts/package-snow-shot.sh snow-shot-macos-arm64-release --parallel 2
+          scripts/package-snow-shot.sh snow-shot-macos-arm64-release --parallel 2 --full-only
       - name: Check packages and signatures
         run: |
           shopt -s nullglob
           packages=(build/snow-shot-macos-arm64-release/*.dmg)
-          [[ ${#packages[@]} -eq 2 ]]
+          [[ ${#packages[@]} -eq 1 ]]
+          [[ "${packages[0]}" != *snow-shot-mini* ]]
           for package in "${packages[@]}"; do
             codesign --verify --strict "$package"
             shasum -a 256 "$package"

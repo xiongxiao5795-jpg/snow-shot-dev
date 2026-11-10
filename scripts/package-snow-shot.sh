@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/snow-build-environment.sh"
 if [[ "${1:-}" == --help ]]; then
-    echo 'Usage: package-snow-shot.sh [snow-shot-macos-{arm64|x64}-release] [--parallel JOBS] [--skip-build]'
+    echo 'Usage: package-snow-shot.sh [snow-shot-macos-{arm64|x64}-release] [--parallel JOBS] [--skip-build] [--full-only]'
     echo 'Builds an ad-hoc signed DMG; Developer ID signing/notarization is a separate release step.'
     exit 0
 fi
@@ -13,10 +13,12 @@ snow_select_preset "${preset:-snow-shot-macos-$(snow_default_arch)-release}"
 [[ "$snow_preset" == *-release ]] || snow_die 'Packaging requires a macOS release preset.'
 parallelism=4
 skip_build=0
+full_only=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --parallel) [[ $# -ge 2 ]] || snow_die '--parallel needs a positive integer'; parallelism="$2"; shift 2 ;;
         --skip-build) skip_build=1; shift ;;
+        --full-only) full_only=1; shift ;;
         *) snow_die "Unknown argument: $1" ;;
     esac
 done
@@ -24,13 +26,18 @@ done
 snow_setup_tools
 if [[ "$skip_build" == 0 ]]; then
     targets=(--target snow_shot)
-    if [[ "$snow_preset" == *-arm64-* ]]; then targets+=(--target snow_shot_mini); fi
-    "$snow_repo_root/scripts/build.sh" "$snow_preset" --clean \
-        "${targets[@]}" --parallel "$parallelism"
+    if [[ "$snow_preset" == *-arm64-* && "$full_only" == 0 ]]; then targets+=(--target snow_shot_mini); fi
+    if [[ "$full_only" == 1 ]]; then
+        "$snow_repo_root/scripts/build.sh" "$snow_preset" --clean \
+            "${targets[@]}" --parallel "$parallelism" -- -DSNOW_APPS_BUILD_SNOW_SHOT_MINI=OFF
+    else
+        "$snow_repo_root/scripts/build.sh" "$snow_preset" --clean \
+            "${targets[@]}" --parallel "$parallelism"
+    fi
 fi
 cache="$snow_build_dir/CMakeCache.txt"
 [[ -f "$cache" ]] || snow_die "CMake cache was not found: $cache"
-if [[ "$snow_vcpkg_triplet" == arm64-* ]]; then
+if [[ "$snow_vcpkg_triplet" == arm64-* && "$full_only" == 0 ]]; then
     grep -Eq '^SNOW_APPS_BUILD_SNOW_SHOT_MINI:BOOL=(ON|TRUE|1)$' "$cache" ||
         snow_die 'Coordinated ARM64 packaging requires SNOW_APPS_BUILD_SNOW_SHOT_MINI=ON.'
 fi
@@ -48,11 +55,11 @@ done
 grep -Eq "^VCPKG_TARGET_TRIPLET:.*=$snow_vcpkg_triplet$" "$cache" || snow_die 'Release cache does not use the static macOS vcpkg triplet.'
 cd "$snow_repo_root"
 cmake -P "$snow_build_dir/snow_shot/GenerateSnowShotDiagnosticsSymbols-Release.cmake"
-if [[ "$snow_vcpkg_triplet" == arm64-* ]]; then
+if [[ "$snow_vcpkg_triplet" == arm64-* && "$full_only" == 0 ]]; then
     cmake -P "$snow_build_dir/snow_shot/GenerateSnowShotMiniDiagnosticsSymbols-Release.cmake"
 fi
 cpack --preset "package-$snow_preset"
 
-if [[ "$snow_vcpkg_triplet" == arm64-* ]]; then
+if [[ "$snow_vcpkg_triplet" == arm64-* && "$full_only" == 0 ]]; then
     cpack --config "$snow_build_dir/CPackSnowShotMiniConfig.cmake"
 fi
