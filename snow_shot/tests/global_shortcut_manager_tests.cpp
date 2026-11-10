@@ -303,9 +303,13 @@ void quickAnnotationShortcutsRespectGates() {
     auto& store = snow_shot::storage::ApplicationStorage::instance().configuration();
     const QString key = QStringLiteral("global_shortcuts/disable_on_focused_fullscreen_window");
     const auto old = store.value(key);
-    require(store.setValue(key, true), "enable fullscreen suppression");
+    const QString filterKey = QStringLiteral("global_shortcuts/fullscreen_window_filter");
+    const auto oldFilter = store.value(filterKey);
+    require(store.setValues({{key, true}, {filterKey, QStringLiteral("all_windows")}}),
+            "enable fullscreen suppression");
     fullscreen = true;
     manager.refreshFocusedFullscreenState();
+    require(manager.focusedFullscreenSuppressionActive(), "fullscreen suppression is active");
     for (auto action : actions)
         require(manager.state(action).status == GlobalShortcutStatus::Registered,
                 "quick annotation remains available during fullscreen presentation");
@@ -322,7 +326,8 @@ void quickAnnotationShortcutsRespectGates() {
         require(manager.state(action).status == GlobalShortcutStatus::Disabled,
                 "quick annotation respects the global shortcuts switch");
     manager.setGlobalShortcutsEnabled(true);
-    require(store.setValue(key, old), "restore fullscreen suppression");
+    require(store.setValues({{key, old}, {filterKey, oldFilter}}),
+            "restore fullscreen suppression");
     clearAll(manager);
 }
 
