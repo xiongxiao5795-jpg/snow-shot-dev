@@ -127,10 +127,12 @@ class GestureCanvas final : public SnowCanvasWidget {
 class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
   public:
     explicit AnnotationWindow(QScreen* screen, std::function<void()> onError,
-                              std::function<qint64()> clock)
+                              std::function<qint64()> clock,
+                              std::function<bool(QWidget*, bool)> setInputTransparent)
         : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
           m_screen(screen), m_runtime(SnowCanvasRuntimeConfig{screenshotCanvasToolStyleDefaults()}),
-          m_canvas(m_runtime, this), m_onError(std::move(onError)), m_now(std::move(clock)) {
+          m_canvas(m_runtime, this), m_onError(std::move(onError)), m_now(std::move(clock)),
+          m_setInputTransparent(std::move(setInputTransparent)) {
         setObjectName(QStringLiteral("quickAnnotationWindow"));
         m_canvas.setObjectName(QStringLiteral("quickAnnotationCanvas"));
         setAttribute(Qt::WA_TranslucentBackground);
@@ -200,7 +202,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
 #endif
         show();
         raise();
-        if (!setGlobalCanvasInputTransparent(this, false)) {
+        if (!m_setInputTransparent(this, false)) {
             m_state.cancel();
             hide();
 #ifdef Q_OS_MACOS
@@ -250,7 +252,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         if (event->type() == QEvent::WinIdChange && internalWinId() != 0) {
             QTimer::singleShot(0, this, [this] {
                 const bool transparent = m_state.phase() == QuickAnnotationState::Phase::Idle;
-                if (!setGlobalCanvasInputTransparent(this, transparent)) {
+                if (!m_setInputTransparent(this, transparent)) {
                     cancel();
                     hide();
                     m_marks.clear();
@@ -338,7 +340,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
 #ifdef Q_OS_MACOS
         m_focus->beforeHide(true);
 #endif
-        if (!setGlobalCanvasInputTransparent(this, true)) {
+        if (!m_setInputTransparent(this, true)) {
             // Hiding is the safe fallback: never leave an invisible input blocker.
             hide();
             m_marks.clear();
@@ -366,6 +368,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     QuickAnnotationState m_state;
     std::function<void()> m_onError;
     std::function<qint64()> m_now;
+    std::function<bool(QWidget*, bool)> m_setInputTransparent;
     QElapsedTimer m_clock;
     QTimer m_timer;
     std::vector<Mark> m_marks;
@@ -378,8 +381,11 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
 
 class QuickAnnotationController::Impl {
   public:
-    Impl(QuickAnnotationController& owner, std::function<qint64()> clock)
-        : q(owner), now(std::move(clock)) {
+    Impl(QuickAnnotationController& owner, std::function<qint64()> clock,
+         std::function<bool(QWidget*, bool)> setInputTransparent)
+        : q(owner), now(std::move(clock)), input(std::move(setInputTransparent)) {
+        if (!input)
+            input = setGlobalCanvasInputTransparent;
         auto& storage = storage::ApplicationStorage::instance();
         if (storage.isInitialized()) {
             const QString saved = storage.configuration()
@@ -431,7 +437,7 @@ class QuickAnnotationController::Impl {
                     emit q.errorOccurred(
                         QuickAnnotationController::tr("Could not change canvas click-through"));
                 },
-                now));
+                now, input));
             it = std::prev(windows.end());
         }
         if ((*it)->arm(tool)) {
@@ -451,6 +457,7 @@ class QuickAnnotationController::Impl {
 
     QuickAnnotationController& q;
     std::function<qint64()> now;
+    std::function<bool(QWidget*, bool)> input;
     QuickAnnotationTool lastTool = QuickAnnotationTool::Brush;
     std::vector<std::unique_ptr<AnnotationWindow>> windows;
     std::unique_ptr<ToolPanel> toolbar;
@@ -459,7 +466,12 @@ class QuickAnnotationController::Impl {
 QuickAnnotationController::QuickAnnotationController(QObject* parent)
     : QuickAnnotationController(parent, {}) {}
 QuickAnnotationController::QuickAnnotationController(QObject* parent, std::function<qint64()> clock)
-    : QObject(parent), m_impl(std::make_unique<Impl>(*this, std::move(clock))) {}
+    : QuickAnnotationController(parent, std::move(clock), {}) {}
+QuickAnnotationController::QuickAnnotationController(
+    QObject* parent, std::function<qint64()> clock,
+    std::function<bool(QWidget*, bool)> setInputTransparent)
+    : QObject(parent),
+      m_impl(std::make_unique<Impl>(*this, std::move(clock), std::move(setInputTransparent))) {}
 QuickAnnotationController::~QuickAnnotationController() = default;
 void QuickAnnotationController::arm(QuickAnnotationTool tool) {
     m_impl->arm(tool);

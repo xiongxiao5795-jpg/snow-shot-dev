@@ -6,6 +6,8 @@
 #include <functional>
 #include <memory>
 
+class QWidget;
+
 namespace snow_shot::presentation {
 
 class QuickAnnotationController final : public QObject {
@@ -13,6 +15,8 @@ class QuickAnnotationController final : public QObject {
   public:
     explicit QuickAnnotationController(QObject* parent = nullptr);
     QuickAnnotationController(QObject* parent, std::function<qint64()> clock);
+    QuickAnnotationController(QObject* parent, std::function<qint64()> clock,
+                              std::function<bool(QWidget*, bool)> setInputTransparent);
     ~QuickAnnotationController() override;
 
     void arm(QuickAnnotationTool tool);

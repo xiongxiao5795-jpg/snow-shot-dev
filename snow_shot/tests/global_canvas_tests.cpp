@@ -1532,6 +1532,27 @@ int main(int argc, char** argv) {
                         .value(QStringLiteral("quick_annotation/last_tool"))
                         .toString() == QStringLiteral("brush"),
                 "last selected tool is persisted");
+        QApplication::sendEvent(canvas, &escape);
+        QWidget* failedWindow = nullptr;
+        presentation::QuickAnnotationController failed(
+            nullptr, [&now] { return now; },
+            [&failedWindow](QWidget* target, bool transparent) {
+                failedWindow = target;
+                return !transparent;
+            });
+        int errors = 0;
+        QObject::connect(&failed, &presentation::QuickAnnotationController::errorOccurred, &failed,
+                         [&errors](const QString&) { ++errors; });
+        failed.arm(presentation::QuickAnnotationTool::Brush);
+        require(failedWindow && failedWindow->isVisible(), "failure fixture arms the canvas");
+        auto* failedCanvas =
+            failedWindow->findChild<SnowCanvasWidget*>(QStringLiteral("quickAnnotationCanvas"));
+        require(failedCanvas != nullptr, "failure fixture has a canvas");
+        mouse(failedCanvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(failedCanvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+        mouse(failedCanvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        require(!failedWindow->isVisible() && errors == 1,
+                "failed click-through hides the input blocker and reports an error");
         storage.shutdown();
         return 0;
     }
