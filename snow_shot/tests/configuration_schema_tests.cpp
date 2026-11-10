@@ -146,8 +146,9 @@ void entryReferencesAndCopiesRemainIndependent() {
     require(ConfigurationSchema::defaultValue(QStringLiteral("quick_annotation/last_tool")) ==
                 QJsonValue(QStringLiteral("brush")),
             "quick annotation defaults to the brush");
-    require(ConfigurationSchema::defaultValue(QStringLiteral("quick_annotation/options")).isObject(),
-            "quick annotation owns its settings object");
+    require(
+        ConfigurationSchema::defaultValue(QStringLiteral("quick_annotation/options")).isObject(),
+        "quick annotation owns its settings object");
     for (const QString& key : {QStringLiteral("global_shortcuts/quick_annotation"),
                                QStringLiteral("global_shortcuts/quick_annotation_brush"),
                                QStringLiteral("global_shortcuts/quick_annotation_arrow"),

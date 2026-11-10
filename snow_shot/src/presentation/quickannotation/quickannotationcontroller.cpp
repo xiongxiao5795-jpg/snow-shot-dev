@@ -65,8 +65,7 @@ class ToolPanel final : public QWidget {
         add(m_ellipse, QuickAnnotationTool::Ellipse);
         m_color = new QComboBox(this);
         m_color->setObjectName(QStringLiteral("quickAnnotationColor"));
-        for (const auto* color :
-             {"#f5222d", "#faad14", "#52c41a", "#1890ff", "#000000", "#ffffff"})
+        for (const auto* color : {"#f5222d", "#faad14", "#52c41a", "#1890ff", "#000000", "#ffffff"})
             m_color->addItem(QString(), QString::fromLatin1(color));
         const int colorIndex = m_color->findData(m_options.color.name());
         m_color->setCurrentIndex(std::max(0, colorIndex));
@@ -120,8 +119,9 @@ class ToolPanel final : public QWidget {
             "snow_shot::presentation::QuickAnnotationController", "Ellipse"));
         m_color->setItemText(0, QCoreApplication::translate(
                                     "snow_shot::presentation::QuickAnnotationController", "Red"));
-        m_color->setItemText(1, QCoreApplication::translate(
-                                    "snow_shot::presentation::QuickAnnotationController", "Orange"));
+        m_color->setItemText(
+            1, QCoreApplication::translate("snow_shot::presentation::QuickAnnotationController",
+                                           "Orange"));
         m_color->setItemText(2, QCoreApplication::translate(
                                     "snow_shot::presentation::QuickAnnotationController", "Green"));
         m_color->setItemText(3, QCoreApplication::translate(
@@ -467,7 +467,9 @@ class QuickAnnotationController::Impl {
         auto& storage = storage::ApplicationStorage::instance();
         if (storage.isInitialized()) {
             options = QuickAnnotationOptions::fromJson(
-                storage.configuration().value(QStringLiteral("quick_annotation/options")).toObject());
+                storage.configuration()
+                    .value(QStringLiteral("quick_annotation/options"))
+                    .toObject());
             const QString saved = storage.configuration()
                                       .value(QStringLiteral("quick_annotation/last_tool"))
                                       .toString();

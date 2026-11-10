@@ -1471,7 +1471,8 @@ int main(int argc, char** argv) {
     if (app.arguments().contains(QStringLiteral("--quick-annotation-only"))) {
         const auto invalid = presentation::QuickAnnotationOptions::fromJson(
             {{QStringLiteral("color"), QStringLiteral("invalid")},
-             {QStringLiteral("width"), 100}, {QStringLiteral("hold_ms"), -1}});
+             {QStringLiteral("width"), 100},
+             {QStringLiteral("hold_ms"), -1}});
         require(invalid.color == QColor(0xf5, 0x22, 0x2d) && invalid.width == 20 &&
                     invalid.holdMs == 500,
                 "invalid option values fall back or are clamped");
@@ -1533,15 +1534,17 @@ int main(int argc, char** argv) {
         controller.showToolbar();
         auto* color = toolbar->findChild<QComboBox*>(QStringLiteral("quickAnnotationColor"));
         auto* width = toolbar->findChild<QSpinBox*>(QStringLiteral("quickAnnotationWidth"));
-        auto* hold = toolbar->findChild<QDoubleSpinBox*>(QStringLiteral("quickAnnotationHoldSeconds"));
+        auto* hold =
+            toolbar->findChild<QDoubleSpinBox*>(QStringLiteral("quickAnnotationHoldSeconds"));
         require(color && width && hold && hold->value() == 1.5,
                 "quick annotation exposes independent appearance and duration settings");
         color->setCurrentIndex(3);
         width->setValue(7);
         hold->setValue(3.0);
-        const auto savedOptions = storage.configuration()
-                                      .value(QStringLiteral("quick_annotation/options")).toObject();
-        require(savedOptions.value(QStringLiteral("color")).toString() == QStringLiteral("#1890ff") &&
+        const auto savedOptions =
+            storage.configuration().value(QStringLiteral("quick_annotation/options")).toObject();
+        require(savedOptions.value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("#1890ff") &&
                     savedOptions.value(QStringLiteral("width")).toInt() == 7 &&
                     savedOptions.value(QStringLiteral("hold_ms")).toInt() == 3000,
                 "quick annotation settings persist independently");
@@ -1551,28 +1554,34 @@ int main(int argc, char** argv) {
                     canvas->canvasStyleToolbarState().shapeStyle.shape ==
                         SnowCanvasRectangleShape::Ellipse,
                 "ellipse shortcut selects ellipse creation");
-        require(canvas->canvasStyleToolbarState().shapeStyle.stroke == QColor(QStringLiteral("#1890ff")) &&
+        require(canvas->canvasStyleToolbarState().shapeStyle.stroke ==
+                        QColor(QStringLiteral("#1890ff")) &&
                     canvas->canvasStyleToolbarState().shapeStyle.strokeWidth == 7 &&
-                    canvas->canvasStyleToolbarState().shapeStyle.fillStyle == SnowCanvasFillStyle::Border,
+                    canvas->canvasStyleToolbarState().shapeStyle.fillStyle ==
+                        SnowCanvasFillStyle::Border,
                 "configured ellipse has the selected color, width, and transparent interior");
         controller.arm(presentation::QuickAnnotationTool::Arrow);
-        require(canvas->canvasStyleToolbarState().shapeStyle.stroke == QColor(QStringLiteral("#1890ff")) &&
+        require(canvas->canvasStyleToolbarState().shapeStyle.stroke ==
+                        QColor(QStringLiteral("#1890ff")) &&
                     canvas->canvasStyleToolbarState().shapeStyle.strokeWidth == 7,
                 "configured color and width apply to arrow");
         controller.arm(presentation::QuickAnnotationTool::Brush);
         require(canvas->canvasTool() == SnowCanvasTool::FreeDraw,
                 "brush shortcut selects free drawing");
-        require(canvas->canvasStyleToolbarState().shapeStyle.stroke == QColor(QStringLiteral("#1890ff")) &&
+        require(canvas->canvasStyleToolbarState().shapeStyle.stroke ==
+                        QColor(QStringLiteral("#1890ff")) &&
                     canvas->canvasStyleToolbarState().shapeStyle.strokeWidth == 7,
                 "configured color and width apply to brush");
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
         now = 5200;
-        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) && window->isVisible(),
+        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
+                    window->isVisible(),
                 "custom hold time keeps a mark beyond the default duration");
         now = 6700;
-        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) && !window->isVisible(),
+        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
+                    !window->isVisible(),
                 "custom hold time eventually expires");
         require(storage.configuration()
                         .value(QStringLiteral("quick_annotation/last_tool"))
