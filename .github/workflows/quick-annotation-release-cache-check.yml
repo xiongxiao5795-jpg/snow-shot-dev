@@ -25,7 +25,10 @@ jobs:
       - name: Install validation tools on GitHub runner
         run: brew install ccache actionlint
       - name: Validate release workflow
-        run: actionlint -shellcheck= .github/workflows/quick-annotation-macos-release.yml .github/workflows/quick-annotation-release-cache-check.yml
+        run: |
+          printf 'self-hosted-runner:\n  labels:\n    - xcode-27\n' > "$RUNNER_TEMP/actionlint.yaml"
+          actionlint -shellcheck= -config "$RUNNER_TEMP/actionlint.yaml" \
+            .github/workflows/quick-annotation-macos-release.yml .github/workflows/quick-annotation-release-cache-check.yml
       - name: Check release cache safety
         run: |
           python3 scripts/test-macos-release-cache.py
