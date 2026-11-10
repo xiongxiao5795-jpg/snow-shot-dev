@@ -7362,6 +7362,10 @@ if(SNOW_SHOT_BUILD_TESTS)
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
     )
 
+    add_executable(snow-shot-quick-annotation-state-tests tests/quick_annotation_state_tests.cpp)
+    add_test(NAME snow-shot-quick-annotation-state-tests COMMAND snow-shot-quick-annotation-state-tests)
+    set_tests_properties(snow-shot-quick-annotation-state-tests PROPERTIES LABELS "unit" TIMEOUT 30)
+
     add_executable(snow-shot-global-canvas-tests
         tests/global_canvas_tests.cpp
         tests/global_canvas_laser_tests.cpp

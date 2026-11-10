@@ -1,0 +1,54 @@
+name: Quick annotation macOS verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/quick-annotation]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quick-annotation-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug:
+    runs-on: macos-15
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = arm64
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.12.0
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+      - name: Install build tools
+        run: brew install cmake ninja pkgconf
+      - name: Provision dependencies
+        run: scripts/bootstrap-macos.sh snow-shot-macos-arm64-debug
+      - name: Build app and targeted tests
+        run: |
+          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot --target snow-shot-quick-annotation-state-tests --target snow-shot-global-canvas-tests --parallel 3
+      - name: Run targeted tests
+        run: |
+          ctest --preset test-snow-shot-macos-arm64-debug --output-on-failure -R '^snow-shot-(quick-annotation-state|global-canvas-platform)-tests$'
+      - name: Deploy development app
+        run: |
+          cmake --install build/snow-shot-macos-arm64-debug --component SnowShot --prefix "$RUNNER_TEMP/snow-shot"
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/snow-shot/snow_shot.app" "$RUNNER_TEMP/snow-shot-debug-macos-arm64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snow-shot-debug-macos-arm64
+          path: ${{ runner.temp }}/snow-shot-debug-macos-arm64.zip
+          if-no-files-found: error
