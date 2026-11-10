@@ -108,11 +108,11 @@ jobs:
           rustup run "$ocr_toolchain" cargo fetch --locked --manifest-path snow-crates/Cargo.toml
           cargo fetch --locked --manifest-path snow_rust_ffi/Cargo.toml
           cargo fetch --locked --manifest-path snow_shot/rust/snow-shot-mcp/Cargo.toml
-      - name: Identify the exact compiler and SDK
+      - name: Identify the compiler, SDK and build policy
         id: toolchain
         run: |
           ocr_toolchain=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml)
-          identity=$({ xcodebuild -version; xcrun clang --version; xcrun --sdk macosx --show-sdk-build-version; rustc -vV; rustup run "$ocr_toolchain" rustc -vV; } | shasum -a 256 | awk '{print $1}')
+          identity=$({ xcodebuild -version; xcrun clang --version; xcrun --sdk macosx --show-sdk-build-version; rustc -vV; rustup run "$ocr_toolchain" rustc -vV; ccache --version; shasum -a 256 CMakeLists.txt snow_shot/CMakeLists.txt cmake/RustStaticLibrary.cmake cmake/SnowSelectedText.cmake cmake/SnowShotMini.cmake scripts/macos-release-cache.py; } | shasum -a 256 | awk '{print $1}')
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
       - name: Restore C++ compiler cache
         id: cpp-cache
@@ -148,6 +148,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
           python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
+          python3 scripts/macos-release-cache.py record --expected "$GITHUB_SHA" --cargo-dir "$SNOW_RUST_CARGO_TARGET_DIR"
           ccache --show-stats
       - name: Save C++ compiler cache
         if: steps.compile.outcome == 'success'
@@ -160,7 +161,12 @@ jobs:
         run: |
           size_mb=$(du -sm "$SNOW_RUST_CARGO_TARGET_DIR" build/snow-shot-macos-arm64-release/cargo-mini | awk '{sum += $1} END {print sum}')
           echo "Rust cache size: ${size_mb} MiB"
-          if (( size_mb <= 8192 )); then echo 'save=true' >> "$GITHUB_OUTPUT"; else echo 'save=false' >> "$GITHUB_OUTPUT"; fi
+          if (( size_mb <= 8192 )); then
+            echo 'save=true' >> "$GITHUB_OUTPUT"
+          else
+            echo '::warning::Rust cache exceeds 8 GiB and will not be saved.'
+            echo 'save=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Save Rust build cache
         if: steps.rust-cache-size.outputs.save == 'true'
         uses: actions/cache/save@v4

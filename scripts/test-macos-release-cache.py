@@ -52,10 +52,25 @@ class ReleaseCacheSafety(unittest.TestCase):
         os.utime(self.source, (1, 1))
         with patch.object(cache.time, 'sleep'):
             self.assertEqual(cache.refresh_rust_inputs(self.root, [self.cargo, self.root / 'mini-cache'],
-                                                       [relative]), 1)
+                                                       [relative]), (1, 0))
         self.assertGreater(self.source.stat().st_mtime_ns, artifact.stat().st_mtime_ns)
         self.assertGreater(self.source.stat().st_mtime_ns, mini_artifact.stat().st_mtime_ns)
         cache.verify_checkout(self.root, self.head)
+
+    def test_reuses_unchanged_inputs_but_refreshes_changed_content(self):
+        relative = str(self.source.relative_to(self.root))
+        old_time = time.time_ns() - 10_000_000_000
+        os.utime(self.source, ns=(old_time, old_time))
+        cache.record_rust_inputs(self.root, self.cargo, [relative], self.head)
+        os.utime(self.source, None)  # A fresh checkout changes file times.
+        with patch.object(cache.time, 'sleep'):
+            self.assertEqual(cache.refresh_rust_inputs(self.root, [self.cargo], [relative]), (0, 1))
+        self.assertEqual(self.source.stat().st_mtime_ns, old_time)
+        self.source.write_text('pub fn value() -> u8 { 2 }\n')
+        os.utime(self.source, ns=(old_time, old_time))  # Even a preserved time must not hide changes.
+        with patch.object(cache.time, 'sleep'):
+            self.assertEqual(cache.refresh_rust_inputs(self.root, [self.cargo], [relative]), (1, 0))
+        self.assertGreater(self.source.stat().st_mtime_ns, old_time)
 
     def test_rejects_future_cache_timestamps(self):
         artifact = self.cargo / 'future'
@@ -65,6 +80,19 @@ class ReleaseCacheSafety(unittest.TestCase):
         os.utime(artifact, (future, future))
         with self.assertRaisesRegex(ValueError, 'timestamps'):
             cache.refresh_rust_inputs(self.root, [self.cargo], [str(self.source.relative_to(self.root))])
+
+    def test_invalid_receipt_falls_back_to_rebuilding(self):
+        self.cargo.mkdir()
+        (self.cargo / cache.RECEIPT_NAME).write_text('{invalid')
+        with patch.object(cache.time, 'sleep'):
+            self.assertEqual(cache.refresh_rust_inputs(
+                self.root, [self.cargo], [str(self.source.relative_to(self.root))]), (1, 0))
+
+    def test_rejects_inputs_outside_the_checkout(self):
+        link = self.root / 'external-link'
+        link.symlink_to('/dev/null')
+        with self.assertRaisesRegex(ValueError, 'outside the checkout'):
+            list(cache.tracked_files(self.root, [str(link.relative_to(self.root))]))
 
 
 if __name__ == '__main__':

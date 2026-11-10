@@ -22,8 +22,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
-      - name: Install compiler cache on GitHub runner
-        run: brew install ccache
+      - name: Install validation tools on GitHub runner
+        run: brew install ccache actionlint
+      - name: Validate release workflow
+        run: actionlint -shellcheck= .github/workflows/quick-annotation-macos-release.yml .github/workflows/quick-annotation-release-cache-check.yml
       - name: Check release cache safety
         run: |
           python3 scripts/test-macos-release-cache.py
