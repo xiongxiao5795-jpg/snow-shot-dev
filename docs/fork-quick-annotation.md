@@ -7,6 +7,9 @@ The feature implementation and its options live in
 and the existing global shortcut, settings, application lifecycle, and macOS window APIs. Those
 integration points are deliberately kept in the existing host files, so a merge from upstream may
 still require resolving conflicts there. It is not a separately loadable plugin.
+The main integration points are `applicationcontroller.cpp`, `globalshortcuttypes.h`,
+`globalshortcutmanager.cpp`, the settings catalog/backend and configuration schema, the macOS
+window policy, the application CMake source list, and the translation catalogs.
 
 The toolbar provides six stroke-color presets, stroke width (1–20), and hold time
 (0.5–30 seconds). The default hold is 1.5 seconds, followed by a 0.6-second fade. Options are
@@ -19,6 +22,16 @@ upstream does not update this branch automatically: merge the updated `main` int
 resolve any integration conflicts here, and run the targeted GitHub checks. Do not force-push the
 feature branch or replace it with upstream's `main`, because that would discard the fork-only work.
 Repository and workflow permissions can affect a sync; verify the resulting commit and tests.
+After syncing the fork's `main` on GitHub, one way to bring it into the local feature branch is:
+
+```sh
+git switch codex/quick-annotation-package
+git fetch origin main
+git merge FETCH_HEAD
+```
+
+Resolve conflicts without dropping the module or its host integration, then push the feature
+branch to run its targeted checks on GitHub. This sequence does not require a local build toolchain.
 
 GitHub Actions runs the quick-annotation state, canvas, shortcuts, settings, and native macOS
 checks on the feature branch. The release job builds only the Full edition and uses compiler
