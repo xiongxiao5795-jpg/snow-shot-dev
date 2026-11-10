@@ -45,7 +45,9 @@ jobs:
       - name: Install build tools
         run: brew install cmake ninja pkgconf clang-format ccache
       - name: Configure Qt location
-        run: echo "Qt6_DIR=$QT_ROOT_DIR/lib/cmake/Qt6" >> "$GITHUB_ENV"
+        run: |
+          echo "Qt6_DIR=$QT_ROOT_DIR/lib/cmake/Qt6" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_LIBDIR=$GITHUB_WORKSPACE/.tools/macos/installed/dynamic/arm64-osx-snow-shot/lib/pkgconfig:$GITHUB_WORKSPACE/.tools/macos/installed/dynamic/arm64-osx-snow-shot/share/pkgconfig" >> "$GITHUB_ENV"
       - name: Restore dependency cache
         id: vcpkg-cache
         uses: actions/cache/restore@v4
@@ -71,7 +73,7 @@ jobs:
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - name: Extract and check translations
         run: |
-          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot_update_translations --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=-
+          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot_update_translations --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=- -DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew -DCMAKE_MAKE_PROGRAM=/opt/homebrew/bin/ninja -DPKG_CONFIG_EXECUTABLE=/opt/homebrew/bin/pkg-config
           python3 snow_shot/scripts/translation_catalogs.py check
           git diff --exit-code -- snow_shot/i18n
       - name: Restore compiler cache
@@ -91,7 +93,11 @@ jobs:
       - name: Build app and targeted tests
         id: compile
         run: |
-          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot --target snow-shot-quick-annotation-state-tests --target snow-shot-global-canvas-tests --target snow-shot-global-shortcut-manager-tests --target snow-shot-app-permissions-tests --target snow-shot-settings-catalog-tests --target snow-shot-configuration-schema-tests --target snow-shot-mini-configuration-schema-tests --target snow-shot-mini-edition-tests --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=- -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot --target snow-shot-quick-annotation-state-tests --target snow-shot-global-canvas-tests --target snow-shot-global-shortcut-manager-tests --target snow-shot-app-permissions-tests --target snow-shot-settings-catalog-tests --target snow-shot-configuration-schema-tests --target snow-shot-mini-configuration-schema-tests --target snow-shot-mini-edition-tests --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=- -DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew -DCMAKE_MAKE_PROGRAM=/opt/homebrew/bin/ninja -DPKG_CONFIG_EXECUTABLE=/opt/homebrew/bin/pkg-config -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+          if otool -L build/snow-shot-macos-arm64-debug/snow_shot/snow_shot.app/Contents/MacOS/snow_shot | grep -F /opt/homebrew/; then
+            echo 'The app unexpectedly links a Homebrew library.' >&2
+            exit 1
+          fi
       - name: Save compiler cache
         if: always() && !cancelled() && steps.compile.outcome != 'skipped'
         uses: actions/cache/save@v4
