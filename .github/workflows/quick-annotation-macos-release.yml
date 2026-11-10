@@ -21,7 +21,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.tools/vcpkg-binary-cache
-      SNOW_QT_STATIC_DIR: ${{ runner.temp }}/qt-static/lib/cmake/Qt6
+      SNOW_QT_STATIC_DIR: ${{ github.workspace }}/.tools/qt-static/lib/cmake/Qt6
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,7 +61,7 @@ jobs:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
           key: ${{ steps.dependencies.outputs.cache-primary-key }}
       - name: Build upstream static Qt
-        run: scripts/build-static-qt.sh --arch arm64 --install-prefix "$RUNNER_TEMP/qt-static" --parallel 3
+        run: scripts/build-static-qt.sh --arch arm64 --install-prefix "$GITHUB_WORKSPACE/.tools/qt-static" --parallel 3
       - name: Package app using upstream script
         run: scripts/package-snow-shot.sh snow-shot-macos-arm64-release --parallel 3
       - name: Check packages and signatures
