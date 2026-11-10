@@ -138,9 +138,11 @@ See [edition details](docs/snow-shot-releases.md#snow-shot-mini-paired-releases)
 For a temporary annotation on macOS, press Control-Option-B, A, R, or E to arm the
 brush, arrow, rectangle, or ellipse, then drag once. Control-Option-D reuses the
 last tool and Control-Option-T opens the small tool palette. Escape cancels a
-pending gesture. The mark stays for three seconds and then fades; the mouse
-returns to the underlying application when you release it. Change these bindings
-in **Global shortcuts** if they conflict with another app.
+pending gesture. The mark stays for 1.5 seconds by default and then fades; the mouse
+returns to the underlying application when you release it. The palette also lets you
+choose a color preset, stroke width, and hold time. Change the bindings in
+**Global shortcuts** if they conflict with another app. This feature is maintained in the fork;
+see [the fork maintenance notes](docs/fork-quick-annotation.md).
 
 On macOS, follow the permission prompts for the features you use.
 For installation help and platform notes, visit the [website](https://snowshot.top)

@@ -133,8 +133,9 @@ Mini 支持 Windows 和 Apple Silicon Mac。其文字识别工具栏按钮默认
 
 在 macOS 上，按 Control-Option-B、A、R 或 E 可分别选择画笔、箭头、矩形或椭圆，
 然后拖拽一次。Control-Option-D 使用上次工具，Control-Option-T 打开精简工具栏；
-按 Escape 可取消待绘制状态。松开鼠标后即可继续操作下方应用，标记停留三秒后淡出。
-若快捷键与其他应用冲突，可在「全局快捷键」中修改。
+按 Escape 可取消待绘制状态。松开鼠标后即可继续操作下方应用，标记默认停留 1.5 秒后淡出。
+工具栏中可选择颜色、粗细和停留时间；若快捷键与其他应用冲突，可在「全局快捷键」中修改。
+该功能由本 fork 单独维护，详见[维护说明](docs/fork-quick-annotation.md)。
 
 macOS 用户请根据所用功能完成权限授权。
 安装帮助与平台说明可查看[官方网站](https://snowshot.top)和 [macOS 指南](docs-macos-build.md)。
