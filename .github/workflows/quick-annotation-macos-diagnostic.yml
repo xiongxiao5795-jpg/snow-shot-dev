@@ -3,7 +3,7 @@ name: Quick annotation macOS release diagnosis
 on:
   workflow_dispatch:
   push:
-    branches: [codex/quick-annotation-diagnostic]
+    branches: [codex/quick-annotation-package]
     paths:
       - .github/workflows/quick-annotation-macos-diagnostic.yml
 
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: quick-annotation-macos-package-${{ github.ref }}
+  group: quick-annotation-macos-diagnostic-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
