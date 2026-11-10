@@ -187,6 +187,7 @@ jobs:
           [[ ${#packages[@]} -eq 2 ]]
           for package in "${packages[@]}"; do
             codesign --verify --strict "$package"
+            stat -f 'Package size: %z bytes  %N' "$package"
             shasum -a 256 "$package"
           done
           printf 'source_commit=%s\n' "$GITHUB_SHA" > build/snow-shot-macos-arm64-release/source-receipt.txt
