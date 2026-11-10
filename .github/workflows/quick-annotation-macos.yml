@@ -19,6 +19,8 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.tools/vcpkg-binary-cache
+      CCACHE_DIR: ${{ github.workspace }}/.tools/ccache
+      CCACHE_MAXSIZE: 1G
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,7 +39,7 @@ jobs:
           arch: clang_64
           cache: true
       - name: Install build tools
-        run: brew install cmake ninja pkgconf clang-format
+        run: brew install cmake ninja pkgconf clang-format ccache
       - name: Configure Qt location
         run: echo "Qt6_DIR=$QT_ROOT_DIR/lib/cmake/Qt6" >> "$GITHUB_ENV"
       - name: Restore dependency cache
@@ -68,6 +70,14 @@ jobs:
           scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot_update_translations --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=-
           python3 snow_shot/scripts/translation_catalogs.py check
           git diff --exit-code -- snow_shot/i18n
+      - name: Restore compiler cache
+        id: compiler-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.tools/ccache
+          key: quick-annotation-ccache-xcode26.3-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            quick-annotation-ccache-xcode26.3-${{ runner.os }}-${{ runner.arch }}-
       - name: Save extracted catalogs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -75,8 +85,15 @@ jobs:
           name: macos-extracted-catalogs
           path: snow_shot/i18n
       - name: Build app and targeted tests
+        id: compile
         run: |
-          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot --target snow-shot-quick-annotation-state-tests --target snow-shot-global-canvas-tests --target snow-shot-global-shortcut-manager-tests --target snow-shot-app-permissions-tests --target snow-shot-settings-catalog-tests --target snow-shot-configuration-schema-tests --target snow-shot-mini-configuration-schema-tests --target snow-shot-mini-edition-tests --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=-
+          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot --target snow-shot-quick-annotation-state-tests --target snow-shot-global-canvas-tests --target snow-shot-global-shortcut-manager-tests --target snow-shot-app-permissions-tests --target snow-shot-settings-catalog-tests --target snow-shot-configuration-schema-tests --target snow-shot-mini-configuration-schema-tests --target snow-shot-mini-edition-tests --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=- -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+      - name: Save compiler cache
+        if: always() && !cancelled() && steps.compile.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.tools/ccache
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - name: Run targeted tests
         run: |
           ctest --preset test-snow-shot-macos-arm64-debug --output-on-failure -R '^snow-shot-(quick-annotation|quick-annotation-state|global-canvas-platform|global-shortcut-manager|app-permissions|settings-catalog|configuration-schema|mini-configuration-schema|mini-edition)-tests$'

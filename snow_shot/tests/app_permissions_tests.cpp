@@ -387,8 +387,8 @@ void pageAndAlerts() {
         AppPermissionService service(std::move(fake));
         service.refresh();
         flush();
-        GlobalShortcutManager shortcuts;
-        settings::BuiltInSettingsBackend backend(shortcuts, nullptr, nullptr, &service);
+        GlobalShortcutManager shortcutManager;
+        settings::BuiltInSettingsBackend backend(shortcutManager, nullptr, nullptr, &service);
         const auto& registry = settings::builtInSettingsRegistry();
         require(registry.catalog().validationErrors().isEmpty(),
                 "permission catalog must validate");
