@@ -2,7 +2,7 @@ name: macOS release cache verification
 
 on:
   push:
-    branches: [codex/release-incremental]
+    branches: [codex/quick-annotation-package]
   workflow_dispatch:
 
 permissions:
