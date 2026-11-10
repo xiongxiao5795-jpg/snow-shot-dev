@@ -18,10 +18,18 @@ vcpkg_check_features(
     FEATURES zlib MZ_ZLIB
 )
 
+set(_snow_minizip_options)
+if(VCPKG_TARGET_IS_OSX)
+    # The manifest only opts into zlib. Avoid picking up optional compression
+    # and crypto libraries from the build host; Apple CommonCrypto remains in use.
+    list(APPEND _snow_minizip_options -DMZ_LZMA=OFF -DMZ_ZSTD=OFF -DMZ_OPENSSL=OFF)
+endif()
+
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         ${FEATURE_OPTIONS}
+        ${_snow_minizip_options}
         -DMZ_FETCH_LIBS=OFF
         -DMZ_LIB_SUFFIX=-ng
         -DMZ_ICONV=OFF

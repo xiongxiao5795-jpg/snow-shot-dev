@@ -51,6 +51,7 @@ jobs:
           key: quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-
+            quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-
       - name: Provision static dependencies
         id: provision
         run: |
@@ -66,12 +67,19 @@ jobs:
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
           key: ${{ steps.dependencies.outputs.cache-primary-key }}
+      - name: Check minizip dependency closure
+        run: |
+          config=.tools/macos/installed/static/arm64-osx-snow-shot-static/share/minizip-ng/minizip-ng-config.cmake
+          test -f "$config"
+          if grep -Ei 'find_dependency\((LibLZMA|zstd|OpenSSL)' "$config"; then exit 1; fi
       - name: Restore static Qt cache
         id: static-qt-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/qt-static
           key: quick-annotation-static-qt-xcode27.2-${{ runner.arch }}-${{ hashFiles('scripts/build-static-qt.sh', 'scripts/validate-static-qt.py', 'scripts/static-qt-features.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**') }}
+          restore-keys: |
+            quick-annotation-static-qt-xcode27.2-${{ runner.arch }}-
       - name: Build upstream static Qt
         id: static-qt
         run: scripts/build-static-qt.sh --arch arm64 --install-prefix "$GITHUB_WORKSPACE/.tools/qt-static" --parallel 3
