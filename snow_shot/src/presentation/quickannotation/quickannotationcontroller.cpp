@@ -260,6 +260,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
             style->stroke = options.color;
             style->strokeWidth = options.width;
         }
+        defaults.rectangle.fillStyle = SnowCanvasFillStyle::Border;
         defaults.freeDraw.fill = options.color;
         applyScreenshotCanvasToolStyles(m_canvas, defaults);
         SnowCanvasShapeStyle shape;

@@ -1552,8 +1552,9 @@ int main(int argc, char** argv) {
                         SnowCanvasRectangleShape::Ellipse,
                 "ellipse shortcut selects ellipse creation");
         require(canvas->canvasStyleToolbarState().shapeStyle.stroke == QColor(QStringLiteral("#1890ff")) &&
-                    canvas->canvasStyleToolbarState().shapeStyle.strokeWidth == 7,
-                "configured color and width apply to ellipse");
+                    canvas->canvasStyleToolbarState().shapeStyle.strokeWidth == 7 &&
+                    canvas->canvasStyleToolbarState().shapeStyle.fillStyle == SnowCanvasFillStyle::Border,
+                "configured ellipse has the selected color, width, and transparent interior");
         controller.arm(presentation::QuickAnnotationTool::Arrow);
         require(canvas->canvasStyleToolbarState().shapeStyle.stroke == QColor(QStringLiteral("#1890ff")) &&
                     canvas->canvasStyleToolbarState().shapeStyle.strokeWidth == 7,
