@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 360
     env:
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/snow-vcpkg-cache
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.tools/vcpkg-binary-cache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,7 +43,7 @@ jobs:
         id: vcpkg-cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ runner.temp }}/snow-vcpkg-cache
+          path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
           key: quick-annotation-vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}
       - name: Provision dependencies
         run: |
@@ -53,7 +53,7 @@ jobs:
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ${{ runner.temp }}/snow-vcpkg-cache
+          path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - name: Extract and check translations
         run: |
