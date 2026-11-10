@@ -106,6 +106,12 @@ jobs:
         continue-on-error: true
         run: |
           ctest --test-dir build/snow-shot-macos-arm64-debug --output-on-failure -R '^snow-shot-global-canvas-native-tests$'
+      - name: Fetch Rust dependencies for offline license collection
+        run: |
+          ocr_toolchain=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml)
+          rustup run "$ocr_toolchain" cargo fetch --locked --manifest-path snow-crates/Cargo.toml
+          cargo fetch --locked --manifest-path snow_rust_ffi/Cargo.toml
+          cargo fetch --locked --manifest-path snow_shot/rust/snow-shot-mcp/Cargo.toml
       - name: Deploy development app
         run: |
           cmake --install build/snow-shot-macos-arm64-debug --component SnowShot --prefix "$RUNNER_TEMP/snow-shot"

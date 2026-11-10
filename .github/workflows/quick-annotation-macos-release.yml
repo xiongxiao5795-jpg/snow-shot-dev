@@ -66,8 +66,27 @@ jobs:
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
           key: ${{ steps.dependencies.outputs.cache-primary-key }}
+      - name: Restore static Qt cache
+        id: static-qt-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.tools/qt-static
+          key: quick-annotation-static-qt-xcode27.2-${{ runner.arch }}-${{ hashFiles('scripts/build-static-qt.sh', 'scripts/validate-static-qt.py', 'scripts/static-qt-features.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**') }}
       - name: Build upstream static Qt
+        id: static-qt
         run: scripts/build-static-qt.sh --arch arm64 --install-prefix "$GITHUB_WORKSPACE/.tools/qt-static" --parallel 3
+      - name: Save static Qt cache
+        if: steps.static-qt.outcome == 'success' && steps.static-qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.tools/qt-static
+          key: ${{ steps.static-qt-cache.outputs.cache-primary-key }}
+      - name: Fetch Rust dependencies for offline license collection
+        run: |
+          ocr_toolchain=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml)
+          rustup run "$ocr_toolchain" cargo fetch --locked --manifest-path snow-crates/Cargo.toml
+          cargo fetch --locked --manifest-path snow_rust_ffi/Cargo.toml
+          cargo fetch --locked --manifest-path snow_shot/rust/snow-shot-mcp/Cargo.toml
       - name: Package app using upstream script
         run: scripts/package-snow-shot.sh snow-shot-macos-arm64-release --parallel 3
       - name: Check packages and signatures
