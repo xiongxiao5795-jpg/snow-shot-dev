@@ -16,6 +16,8 @@ jobs:
   debug:
     runs-on: macos-15
     timeout-minutes: 360
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/snow-vcpkg-cache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,8 +39,22 @@ jobs:
         run: brew install cmake ninja pkgconf
       - name: Configure Qt location
         run: echo "Qt6_DIR=$QT_ROOT_DIR/lib/cmake/Qt6" >> "$GITHUB_ENV"
+      - name: Restore dependency cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/snow-vcpkg-cache
+          key: quick-annotation-vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}
       - name: Provision dependencies
-        run: scripts/bootstrap-macos.sh snow-shot-macos-arm64-debug
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          scripts/bootstrap-macos.sh snow-shot-macos-arm64-debug
+      - name: Save dependency cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/snow-vcpkg-cache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
       - name: Extract and check translations
         run: |
           scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot_update_translations --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=-
