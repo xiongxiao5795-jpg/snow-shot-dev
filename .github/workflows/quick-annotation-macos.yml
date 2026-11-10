@@ -17,6 +17,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 360
     env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.tools/vcpkg-binary-cache
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +45,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
-          key: quick-annotation-vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}
+          key: quick-annotation-vcpkg-xcode26.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}
       - name: Provision dependencies
         run: |
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
