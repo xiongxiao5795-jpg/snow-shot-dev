@@ -35,6 +35,8 @@ jobs:
           cache: true
       - name: Install build tools
         run: brew install cmake ninja pkgconf
+      - name: Configure Qt location
+        run: echo "Qt6_DIR=$QT_ROOT_DIR/lib/cmake/Qt6" >> "$GITHUB_ENV"
       - name: Provision dependencies
         run: scripts/bootstrap-macos.sh snow-shot-macos-arm64-debug
       - name: Build app and targeted tests
