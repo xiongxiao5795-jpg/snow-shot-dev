@@ -2590,6 +2590,23 @@ void globalShortcutActionsHaveStableContracts() {
          "global_shortcuts/switch_window_group", settings::SettingsCommandKind::ExecuteQuickAction},
         {Action::GlobalCanvas, "other", "quick.global-canvas", "global_shortcuts/global_canvas",
          settings::SettingsCommandKind::ExecuteQuickAction},
+        {Action::QuickAnnotation, "other", "quick.quick-annotation",
+         "global_shortcuts/quick_annotation", settings::SettingsCommandKind::ExecuteQuickAction},
+        {Action::QuickAnnotationBrush, "other", "quick.quick-annotation-brush",
+         "global_shortcuts/quick_annotation_brush",
+         settings::SettingsCommandKind::ExecuteQuickAction},
+        {Action::QuickAnnotationArrow, "other", "quick.quick-annotation-arrow",
+         "global_shortcuts/quick_annotation_arrow",
+         settings::SettingsCommandKind::ExecuteQuickAction},
+        {Action::QuickAnnotationRectangle, "other", "quick.quick-annotation-rectangle",
+         "global_shortcuts/quick_annotation_rectangle",
+         settings::SettingsCommandKind::ExecuteQuickAction},
+        {Action::QuickAnnotationEllipse, "other", "quick.quick-annotation-ellipse",
+         "global_shortcuts/quick_annotation_ellipse",
+         settings::SettingsCommandKind::ExecuteQuickAction},
+        {Action::QuickAnnotationToolbar, "other", "quick.quick-annotation-toolbar",
+         "global_shortcuts/quick_annotation_toolbar",
+         settings::SettingsCommandKind::ExecuteQuickAction},
         {Action::StitchSelectedImages, "other", "quick.stitch-selected-images",
          "global_shortcuts/stitch_selected_images",
          settings::SettingsCommandKind::ExecuteQuickAction},
@@ -2661,7 +2678,7 @@ void globalShortcutActionsHaveStableContracts() {
     }
 
     require(actions.size() == expectations.size() &&
-                expectations.size() == 29 + WINDOW_TOPMOST_ACTION_COUNT,
+                expectations.size() == 35 + WINDOW_TOPMOST_ACTION_COUNT,
             "the global-hotkeys catalog must expose all shortcut actions exactly once");
     const auto* stitch = catalog.itemForShortcut(Action::StitchSelectedImages);
     const auto* stitchSchema = storage::ConfigurationSchema::entry(
@@ -2977,23 +2994,26 @@ void globalShortcutActionsHaveStableContracts() {
                       QStringLiteral("quick.pin-selected-files")});
     const auto* otherShortcuts =
         catalog.section(QStringLiteral("global-hotkeys"), QStringLiteral("other"));
-    require(otherShortcuts != nullptr &&
-                otherShortcuts->items.size() == 8 + WINDOW_TOPMOST_ACTION_COUNT &&
-                otherShortcuts->items.at(0).id == QStringLiteral("quick.open-capture-history") &&
-                otherShortcuts->items.at(1).id == QStringLiteral("quick.global-canvas") &&
-                otherShortcuts->items.at(2).id == QStringLiteral("quick.stitch-selected-images") &&
-                otherShortcuts->items.at(3).id == QStringLiteral("quick.split-selected-images") &&
-                otherShortcuts->items.at(4).id == QStringLiteral("quick.edit-selected-images") &&
-                otherShortcuts->items.at(5).id == QStringLiteral("quick.translate-selected-text") &&
-                otherShortcuts->items.at(6 + WINDOW_TOPMOST_ACTION_COUNT).id ==
-                    QStringLiteral("quick.toggle-global-hotkeys") &&
-                otherShortcuts->items.at(7 + WINDOW_TOPMOST_ACTION_COUNT).id ==
-                    QStringLiteral("quick.toggle-disable-on-focused-fullscreen-window"),
-            "Other quick actions expose history, canvas, stitching, splitting, translation, and "
-            "hotkey toggles");
+    require(
+        otherShortcuts != nullptr &&
+            otherShortcuts->items.size() == 14 + WINDOW_TOPMOST_ACTION_COUNT &&
+            otherShortcuts->items.at(0).id == QStringLiteral("quick.open-capture-history") &&
+            otherShortcuts->items.at(1).id == QStringLiteral("quick.global-canvas") &&
+            otherShortcuts->items.at(2).id == QStringLiteral("quick.quick-annotation") &&
+            otherShortcuts->items.at(7).id == QStringLiteral("quick.quick-annotation-toolbar") &&
+            otherShortcuts->items.at(8).id == QStringLiteral("quick.stitch-selected-images") &&
+            otherShortcuts->items.at(9).id == QStringLiteral("quick.split-selected-images") &&
+            otherShortcuts->items.at(10).id == QStringLiteral("quick.edit-selected-images") &&
+            otherShortcuts->items.at(11).id == QStringLiteral("quick.translate-selected-text") &&
+            otherShortcuts->items.at(12 + WINDOW_TOPMOST_ACTION_COUNT).id ==
+                QStringLiteral("quick.toggle-global-hotkeys") &&
+            otherShortcuts->items.at(13 + WINDOW_TOPMOST_ACTION_COUNT).id ==
+                QStringLiteral("quick.toggle-disable-on-focused-fullscreen-window"),
+        "Other quick actions expose history, canvas, stitching, splitting, translation, and "
+        "hotkey toggles");
 #ifdef Q_OS_WIN
     const auto* windowTopmost = catalog.itemForShortcut(Action::ToggleWindowUnderCursorAlwaysOnTop);
-    require(windowTopmost && otherShortcuts->items.at(6).id == windowTopmost->id &&
+    require(windowTopmost && otherShortcuts->items.at(12).id == windowTopmost->id &&
                 windowTopmost->title.translated() ==
                     QStringLiteral("Toggle always on top for the window under the cursor") &&
                 trayOptionIds.at(26) == windowTopmost->id &&

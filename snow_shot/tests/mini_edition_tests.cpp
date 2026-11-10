@@ -57,7 +57,7 @@ void settingsExcludeRemovedFeatures() {
     const auto* other = catalog.section(QStringLiteral("global-hotkeys"), QStringLiteral("other"));
     require(
         other &&
-            other->items.at(4).id ==
+            other->items.at(10).id ==
                 QStringLiteral("quick.toggle-window-under-cursor-always-on-top") &&
             catalog.itemForShortcut(
                 snow_shot::presentation::GlobalShortcutAction::ToggleWindowUnderCursorAlwaysOnTop),

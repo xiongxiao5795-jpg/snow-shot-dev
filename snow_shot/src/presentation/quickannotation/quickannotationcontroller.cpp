@@ -244,6 +244,18 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
   protected:
     bool event(QEvent* event) override {
         const bool handled = QWidget::event(event);
+        if (event->type() == QEvent::WinIdChange && internalWinId() != 0) {
+            QTimer::singleShot(0, this, [this] {
+                const bool transparent = m_state.phase() == QuickAnnotationState::Phase::Idle;
+                if (!setGlobalCanvasInputTransparent(this, transparent)) {
+                    cancel();
+                    hide();
+                    m_marks.clear();
+                    m_timer.stop();
+                    m_onError();
+                }
+            });
+        }
         if (event->type() == QEvent::WindowDeactivate &&
             m_state.phase() != QuickAnnotationState::Phase::Idle) {
             QTimer::singleShot(0, this, [this] {

@@ -68,10 +68,10 @@ jobs:
           path: snow_shot/i18n
       - name: Build app and targeted tests
         run: |
-          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot --target snow-shot-quick-annotation-state-tests --target snow-shot-global-canvas-tests --target snow-shot-global-shortcut-manager-tests --target snow-shot-app-permissions-tests --target snow-shot-settings-catalog-tests --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=-
+          scripts/build.sh snow-shot-macos-arm64-debug --target snow_shot --target snow-shot-quick-annotation-state-tests --target snow-shot-global-canvas-tests --target snow-shot-global-shortcut-manager-tests --target snow-shot-app-permissions-tests --target snow-shot-settings-catalog-tests --target snow-shot-configuration-schema-tests --target snow-shot-mini-configuration-schema-tests --target snow-shot-mini-edition-tests --parallel 3 -- -DSNOW_MACOS_CODESIGN_IDENTITY=-
       - name: Run targeted tests
         run: |
-          ctest --preset test-snow-shot-macos-arm64-debug --output-on-failure -R '^snow-shot-(quick-annotation|quick-annotation-state|global-canvas-platform|global-shortcut-manager|app-permissions|settings-catalog)-tests$'
+          ctest --preset test-snow-shot-macos-arm64-debug --output-on-failure -R '^snow-shot-(quick-annotation|quick-annotation-state|global-canvas-platform|global-shortcut-manager|app-permissions|settings-catalog|configuration-schema|mini-configuration-schema|mini-edition)-tests$'
       - name: Deploy development app
         run: |
           cmake --install build/snow-shot-macos-arm64-debug --component SnowShot --prefix "$RUNNER_TEMP/snow-shot"

@@ -67,6 +67,25 @@ QJsonArray metadata() {
 
 void publicMetadataMatchesOriginal(const QJsonArray& actual) {
 #ifdef Q_OS_WIN
+    const QSet<QString> addedKeys{
+        QStringLiteral("global_shortcuts/quick_annotation"),
+        QStringLiteral("global_shortcuts/quick_annotation_brush"),
+        QStringLiteral("global_shortcuts/quick_annotation_arrow"),
+        QStringLiteral("global_shortcuts/quick_annotation_rectangle"),
+        QStringLiteral("global_shortcuts/quick_annotation_ellipse"),
+        QStringLiteral("global_shortcuts/quick_annotation_toolbar"),
+        QStringLiteral("quick_annotation/last_tool"),
+    };
+    QJsonArray originalActual;
+    QSet<QString> seenAdded;
+    for (const auto& entry : actual) {
+        const auto key = entry.toObject().value(QStringLiteral("key")).toString();
+        if (addedKeys.contains(key))
+            seenAdded.insert(key);
+        else
+            originalActual.append(entry);
+    }
+    require(seenAdded == addedKeys, "all quick annotation settings must be in the schema");
     QFile file(QString::fromUtf8(SNOW_SCHEMA_BASELINE_JSON));
     require(file.open(QIODevice::ReadOnly), "the original schema metadata fixture must open");
     QJsonParseError error;
@@ -81,30 +100,36 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
                 (snow_shot::app::edition::isMini ? QStringLiteral("mini") : QStringLiteral("full")),
             "the reference must match the linked storage edition");
     const auto expected = fixture.value(QStringLiteral("entries")).toArray();
-    if (actual.size() != expected.size()) {
-        std::cerr << "schema entries: actual=" << actual.size() << " expected=" << expected.size()
-                  << '\n';
+    if (originalActual.size() != expected.size()) {
+        std::cerr << "schema entries: actual=" << originalActual.size()
+                  << " expected=" << expected.size() << '\n';
         const auto keys = [](const QJsonArray& entries) {
             QSet<QString> result;
             for (const auto& entry : entries)
                 result.insert(entry.toObject().value(QStringLiteral("key")).toString());
             return result;
         };
-        const auto actualKeys = keys(actual);
+        const auto actualKeys = keys(originalActual);
         const auto expectedKeys = keys(expected);
         for (const auto& key : actualKeys - expectedKeys)
             std::cerr << "missing fixture key: " << key.toStdString() << '\n';
         for (const auto& key : expectedKeys - actualKeys)
             std::cerr << "unexpected fixture key: " << key.toStdString() << '\n';
     }
-    require(actual.size() == expected.size(), "schema entry counts must match the original");
+    require(originalActual.size() == expected.size(),
+            "schema entry counts must match the original");
     for (qsizetype i = 0; i < expected.size(); ++i) {
-        if (actual.at(i) != expected.at(i)) {
-            std::cerr
-                << "schema metadata changed at entry " << i << ": "
-                << actual.at(i).toObject().value(QStringLiteral("key")).toString().toStdString()
-                << "\nactual: " << QJsonDocument(actual.at(i).toObject()).toJson().constData()
-                << "expected: " << QJsonDocument(expected.at(i).toObject()).toJson().constData();
+        if (originalActual.at(i) != expected.at(i)) {
+            std::cerr << "schema metadata changed at entry " << i << ": "
+                      << originalActual.at(i)
+                             .toObject()
+                             .value(QStringLiteral("key"))
+                             .toString()
+                             .toStdString()
+                      << "\nactual: "
+                      << QJsonDocument(originalActual.at(i).toObject()).toJson().constData()
+                      << "expected: "
+                      << QJsonDocument(expected.at(i).toObject()).toJson().constData();
             std::exit(1);
         }
     }
@@ -117,6 +142,19 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
 }
 
 void entryReferencesAndCopiesRemainIndependent() {
+    require(ConfigurationSchema::defaultValue(QStringLiteral("quick_annotation/last_tool")) ==
+                QJsonValue(QStringLiteral("brush")),
+            "quick annotation defaults to the brush");
+    for (const QString& key : {QStringLiteral("global_shortcuts/quick_annotation"),
+                               QStringLiteral("global_shortcuts/quick_annotation_brush"),
+                               QStringLiteral("global_shortcuts/quick_annotation_arrow"),
+                               QStringLiteral("global_shortcuts/quick_annotation_rectangle"),
+                               QStringLiteral("global_shortcuts/quick_annotation_ellipse"),
+                               QStringLiteral("global_shortcuts/quick_annotation_toolbar")}) {
+        const auto* entry = ConfigurationSchema::entry(key);
+        require(entry != nullptr && entry->maximumListItems == 2 && entry->defaultValue.isArray(),
+                "quick annotation shortcuts have bounded configuration entries");
+    }
     const auto& entries = ConfigurationSchema::entries();
     require(!entries.isEmpty(), "the schema must contain entries");
     const auto* storage = entries.constData();
