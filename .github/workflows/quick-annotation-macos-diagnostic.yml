@@ -1,0 +1,127 @@
+name: Quick annotation macOS release diagnosis
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/quick-annotation-diagnostic]
+    paths:
+      - .github/workflows/quick-annotation-macos-diagnostic.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quick-annotation-macos-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: xcode-27
+    timeout-minutes: 360
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.tools/vcpkg-binary-cache
+      SNOW_QT_STATIC_DIR: ${{ github.workspace }}/.tools/qt-static/lib/cmake/Qt6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Verify runner and Metal toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          xcrun --find metal || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
+      - name: Check static Qt build script on system Bash
+        run: |
+          python3 scripts/test-macos-build-support.py \
+            MacOSBuildScripts.test_static_native_qt_keeps_normal_tool_detection \
+            MacOSBuildScripts.test_static_x64_qt_uses_rosetta_tools_with_a_fresh_cache \
+            MacOSBuildScripts.test_static_qt_builder_supports_command_line_tools_without_full_xcode
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - name: Install build tools
+        run: brew install cmake ninja pkgconf clang-format
+      - name: Restore static dependency cache
+        id: dependencies
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
+          key: quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-
+            quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-
+      - name: Provision static dependencies
+        id: provision
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          for attempt in 1 2 3; do
+            if scripts/bootstrap-macos.sh snow-shot-macos-arm64-release --skip-qt-validation; then exit 0; fi
+            if [[ "$attempt" == 3 ]]; then exit 1; fi
+            sleep "$((attempt * 10))"
+          done
+      - name: Save static dependency cache
+        if: always() && !cancelled() && steps.provision.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
+          key: ${{ steps.dependencies.outputs.cache-primary-key }}
+      - name: Check minizip dependency closure
+        run: |
+          config=.tools/macos/installed/static/arm64-osx-snow-shot-static/share/minizip-ng/minizip-ng-config.cmake
+          test -f "$config"
+          if grep -Ei 'find_dependency\((LibLZMA|zstd|OpenSSL)' "$config"; then exit 1; fi
+      - name: Restore static Qt cache
+        id: static-qt-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.tools/qt-static
+          key: quick-annotation-static-qt-xcode27.2-${{ runner.arch }}-${{ hashFiles('scripts/build-static-qt.sh', 'scripts/validate-static-qt.py', 'scripts/static-qt-features.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**') }}
+          restore-keys: |
+            quick-annotation-static-qt-xcode27.2-${{ runner.arch }}-
+      - name: Build upstream static Qt
+        id: static-qt
+        run: scripts/build-static-qt.sh --arch arm64 --install-prefix "$GITHUB_WORKSPACE/.tools/qt-static" --parallel 3
+      - name: Save static Qt cache
+        if: steps.static-qt.outcome == 'success' && steps.static-qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.tools/qt-static
+          key: ${{ steps.static-qt-cache.outputs.cache-primary-key }}
+      - name: Fetch Rust dependencies for offline license collection
+        run: |
+          ocr_toolchain=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml)
+          rustup run "$ocr_toolchain" cargo fetch --locked --manifest-path snow-crates/Cargo.toml
+          cargo fetch --locked --manifest-path snow_rust_ffi/Cargo.toml
+          cargo fetch --locked --manifest-path snow_shot/rust/snow-shot-mcp/Cargo.toml
+      - name: Package app with resource monitoring
+        run: |
+          (
+            while :; do
+              printf '\n--- Build resource sample: %s ---\n' "$(date -u)"
+              ps -A -o pid=,rss=,%cpu=,etime=,comm= | awk 'tolower($0) ~ /(clang|ld|ninja|cargo|rustc)/'
+              vm_stat | head -n 8
+              df -h "$GITHUB_WORKSPACE"
+              sleep 60
+            done
+          ) &
+          monitor=$!
+          trap 'kill "$monitor" 2>/dev/null || true' EXIT
+          scripts/package-snow-shot.sh snow-shot-macos-arm64-release --parallel 2
+      - name: Check packages and signatures
+        run: |
+          shopt -s nullglob
+          packages=(build/snow-shot-macos-arm64-release/*.dmg)
+          [[ ${#packages[@]} -eq 2 ]]
+          for package in "${packages[@]}"; do
+            codesign --verify --strict "$package"
+            shasum -a 256 "$package"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snow-shot-release-diagnostic-macos-arm64
+          path: |
+            build/snow-shot-macos-arm64-release/*.dmg
+            build/snow-shot-macos-arm64-release/*.dmg.sha256
+          if-no-files-found: error
