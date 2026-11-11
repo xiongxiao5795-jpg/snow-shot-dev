@@ -156,6 +156,9 @@ jobs:
             release-thinlto-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'scripts/build-static-qt.sh', 'scripts/static-qt-features.json', '.tools/qt-static/share/snow-apps/static-qt-build.json') }}-
       - name: Build current source with reusable intermediates
         id: compile
+        env:
+          # Explain rebuilds without changing Cargo's fingerprint behavior.
+          CARGO_LOG: cargo::core::compiler::fingerprint=info,cargo::compiler::fingerprint=info
         run: |
           test ! -e build/snow-shot-macos-arm64-release/CMakeCache.txt
           test ! -e build/snow-shot-macos-arm64-release/build.ninja
@@ -293,6 +296,24 @@ jobs:
         run: |
           snapshots=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" \
             --key release-thinlto-v1- --limit 100 --json id,key,createdAt)
+          if ! printf '%s' "$snapshots" | jq -e --arg key "$SAVED_KEY" 'any(.[]; .key == $key)' >/dev/null; then
+            echo 'New cache was not saved; retaining all previous snapshots.'
+            exit 0
+          fi
+          printf '%s' "$snapshots" | jq -r --arg key "$SAVED_KEY" \
+            '[.[] | select(.key != $key)] | sort_by(.createdAt) | reverse | .[1:] | .[].id' |
+          while IFS= read -r cache_id; do
+            gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"
+          done
+      - name: Prune superseded C++ snapshots
+        if: steps.compile.outcome == 'success' && steps.cpp-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SAVED_KEY: ${{ steps.cpp-cache.outputs.cache-primary-key }}
+        run: |
+          snapshots=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" \
+            --key release-cpp-v2- --limit 100 --json id,key,createdAt)
           if ! printf '%s' "$snapshots" | jq -e --arg key "$SAVED_KEY" 'any(.[]; .key == $key)' >/dev/null; then
             echo 'New cache was not saved; retaining all previous snapshots.'
             exit 0
