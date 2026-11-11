@@ -33,6 +33,7 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
 #endif
         m_color = new adqt::widgets::AdColorPicker(this);
         m_color->setObjectName(QStringLiteral("quickAnnotationSettingsColor"));
+        m_color->setAlphaChannelEnabled(false);
         m_width = number("quickAnnotationSettingsWidth", 1, 20, 1, 0);
         m_shadow = number("quickAnnotationSettingsShadow", 0, 25, 1, 0);
         m_hold = number("quickAnnotationSettingsHold", 0.5, 30, 0.5, 1);

@@ -1553,6 +1553,12 @@ int main(int argc, char** argv) {
                     savedOptions.value(QStringLiteral("hold_ms")).toInt() == 3000,
                 "quick annotation settings persist independently");
         auto externalOptions = savedOptions;
+        auto customColor = savedOptions;
+        customColor.insert(QStringLiteral("color"), QStringLiteral("#123456"));
+        require(storage.configuration().setValue(QStringLiteral("quick_annotation/options"),
+                                                 customColor) &&
+                    color->currentData().toString() == QStringLiteral("#123456"),
+                "toolbar displays an arbitrary color selected in settings");
         externalOptions.insert(QStringLiteral("fade_ms"), 1200);
         externalOptions.insert(QStringLiteral("shadow_radius"), 12);
         externalOptions.insert(QStringLiteral("hold_ms"), 2500);

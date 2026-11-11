@@ -71,8 +71,12 @@ class ToolPanel final : public QWidget {
         m_color->setObjectName(QStringLiteral("quickAnnotationColor"));
         for (const auto* color : {"#f5222d", "#faad14", "#52c41a", "#1890ff", "#000000", "#ffffff"})
             m_color->addItem(QString(), QString::fromLatin1(color));
-        const int colorIndex = m_color->findData(m_options.color.name());
-        m_color->setCurrentIndex(std::max(0, colorIndex));
+        int colorIndex = m_color->findData(m_options.color.name());
+        if (colorIndex < 0) {
+            m_color->addItem(m_options.color.name().toUpper(), m_options.color.name());
+            colorIndex = m_color->count() - 1;
+        }
+        m_color->setCurrentIndex(colorIndex);
         layout->addWidget(m_color);
         m_width = new QSpinBox(this);
         m_width->setObjectName(QStringLiteral("quickAnnotationWidth"));
@@ -124,7 +128,12 @@ class ToolPanel final : public QWidget {
         m_options = options;
         const QSignalBlocker colorBlocker(m_color), widthBlocker(m_width), holdBlocker(m_hold),
             persistentBlocker(m_persistent);
-        m_color->setCurrentIndex(std::max(0, m_color->findData(options.color.name())));
+        int colorIndex = m_color->findData(options.color.name());
+        if (colorIndex < 0) {
+            m_color->addItem(options.color.name().toUpper(), options.color.name());
+            colorIndex = m_color->count() - 1;
+        }
+        m_color->setCurrentIndex(colorIndex);
         m_width->setValue(options.width);
         m_hold->setValue(options.holdMs / 1000.0);
         m_persistent->setChecked(options.persistent);
