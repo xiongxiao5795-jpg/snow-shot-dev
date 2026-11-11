@@ -55,7 +55,14 @@ checks on the feature branch. The release job builds only the Full edition and u
 caches; commits containing `[skip release]` run the checks without starting a Release package.
 The `snow-shot-quick-annotation-state-tests` and `snow-shot-quick-annotation-options-tests`
 targets can also be built and run independently for focused checks.
-The first compatible Release run must populate its cache. Rust caches over 9.5 GiB on disk are
-skipped; GitHub's total cache quota and eviction can also affect later reuse. Automated offscreen
+Release caches identify the compiler and dependencies independently of application CMake files,
+so ordinary feature edits can reuse previous C++ and Rust work. Each Cargo snapshot is keyed by
+its tracked Rust inputs; unchanged inputs reuse the same snapshot, and the workflow retains the
+newest and one previous successful v2 Rust snapshot for this branch. It checks the new snapshot
+exists before deleting older ones. C++ compiler results are keyed separately and remain subject to
+ccache's own correctness checks. A matching older cache can seed the first v2 run. Cache deletion
+uses this repository's Actions permission and is non-fatal if unavailable. The first compatible
+Release run must populate its cache. Rust caches over 9.5 GiB on disk are skipped; GitHub's total
+cache quota and eviction can also affect later reuse. Automated offscreen
 tests cannot replace manual checks of real mouse pass-through, display layouts, shortcut conflicts,
 and meeting-app screen sharing on macOS.

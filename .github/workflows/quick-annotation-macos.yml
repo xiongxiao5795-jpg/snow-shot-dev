@@ -66,7 +66,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
-          key: quick-annotation-vcpkg-xcode27.2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: quick-annotation-vcpkg-v2-xcode27.2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}
           restore-keys: |
             quick-annotation-vcpkg-xcode27.2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-
             quick-annotation-vcpkg-xcode27.2-${{ runner.os }}-${{ runner.arch }}-
@@ -80,7 +80,7 @@ jobs:
             sleep "$((attempt * 10))"
           done
       - name: Save dependency cache
-        if: always() && !cancelled() && steps.provision.outcome != 'skipped'
+        if: steps.provision.outcome == 'success' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
@@ -100,8 +100,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/ccache
-          key: quick-annotation-ccache-xcode27.2-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: quick-annotation-ccache-v2-xcode27.2-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
           restore-keys: |
+            quick-annotation-ccache-v2-xcode27.2-${{ runner.os }}-${{ runner.arch }}-
             quick-annotation-ccache-xcode27.2-${{ runner.os }}-${{ runner.arch }}-
       - name: Save extracted catalogs on failure
         if: failure()
@@ -118,7 +119,7 @@ jobs:
             exit 1
           fi
       - name: Save compiler cache
-        if: always() && !cancelled() && steps.compile.outcome != 'skipped'
+        if: always() && !cancelled() && steps.compile.outcome != 'skipped' && steps.compiler-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.tools/ccache

@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: write  # Remove obsolete snapshots created by this workflow.
 
 concurrency:
   group: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[skip release]') && format('quick-annotation-skipped-{0}', github.run_id) || format('quick-annotation-macos-incremental-{0}', github.ref) }}
@@ -67,7 +68,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
-          key: quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: quick-annotation-release-vcpkg-v2-xcode27.2-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}
           restore-keys: |
             quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh') }}-
             quick-annotation-release-vcpkg-xcode27.2-${{ runner.arch }}-
@@ -81,7 +82,7 @@ jobs:
             sleep "$((attempt * 10))"
           done
       - name: Save static dependency cache
-        if: always() && !cancelled() && steps.provision.outcome != 'skipped'
+        if: steps.provision.outcome == 'success' && steps.dependencies.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.tools/vcpkg-binary-cache
@@ -118,24 +119,32 @@ jobs:
         id: toolchain
         run: |
           ocr_toolchain=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml)
-          identity=$({ xcodebuild -version; xcrun clang --version; xcrun --sdk macosx --show-sdk-build-version; rustc -vV; rustup run "$ocr_toolchain" rustc -vV; ccache --version; shasum -a 256 CMakeLists.txt snow_shot/CMakeLists.txt cmake/RustStaticLibrary.cmake cmake/SnowSelectedText.cmake cmake/SnowShotMini.cmake scripts/macos-release-cache.py; } | shasum -a 256 | awk '{print $1}')
-          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          toolchain=$({ xcodebuild -version; xcrun clang --version; xcrun --sdk macosx --show-sdk-build-version; rustc -vV; rustup run "$ocr_toolchain" rustc -vV; ccache --version; } | shasum -a 256 | awk '{print $1}')
+          # Bootstrap the new cache from the old exact policy once; never restore
+          # a cache from a different compiler or dependency configuration.
+          legacy=$({ xcodebuild -version; xcrun clang --version; xcrun --sdk macosx --show-sdk-build-version; rustc -vV; rustup run "$ocr_toolchain" rustc -vV; ccache --version; shasum -a 256 CMakeLists.txt snow_shot/CMakeLists.txt cmake/RustStaticLibrary.cmake cmake/SnowSelectedText.cmake cmake/SnowShotMini.cmake scripts/macos-release-cache.py; } | shasum -a 256 | awk '{print $1}')
+          rust_sources=$(git ls-files --stage --recurse-submodules -- snow-crates snow_rust_ffi snow_draw_engine_qt/Cargo.toml snow_draw_engine_qt/Cargo.lock snow_draw_engine_qt/crates snow_shot/rust | shasum -a 256 | awk '{print $1}')
+          echo "identity=$toolchain" >> "$GITHUB_OUTPUT"
+          echo "legacy=$legacy" >> "$GITHUB_OUTPUT"
+          echo "rust_sources=$rust_sources" >> "$GITHUB_OUTPUT"
       - name: Restore C++ compiler cache
         id: cpp-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: release-cpp-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'scripts/build-static-qt.sh', 'scripts/static-qt-features.json', '.tools/qt-static/share/snow-apps/static-qt-build.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: release-cpp-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'scripts/build-static-qt.sh', 'scripts/static-qt-features.json', '.tools/qt-static/share/snow-apps/static-qt-build.json') }}-${{ github.sha }}
           restore-keys: |
-            release-cpp-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'scripts/build-static-qt.sh', 'scripts/static-qt-features.json', '.tools/qt-static/share/snow-apps/static-qt-build.json') }}-
+            release-cpp-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'scripts/build-static-qt.sh', 'scripts/static-qt-features.json', '.tools/qt-static/share/snow-apps/static-qt-build.json') }}-
+            release-cpp-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.legacy }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'scripts/build-static-qt.sh', 'scripts/static-qt-features.json', '.tools/qt-static/share/snow-apps/static-qt-build.json') }}-
       - name: Restore Rust build cache
         id: rust-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.SNOW_RUST_CARGO_TARGET_DIR }}
-          key: release-rust-full-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'snow-crates/**/Cargo.toml', 'snow-crates/**/Cargo.lock', 'snow_rust_ffi/Cargo.toml', 'snow_rust_ffi/Cargo.lock', 'snow_draw_engine_qt/**/Cargo.toml', 'snow_shot/rust/**/Cargo.toml', 'snow_shot/rust/**/Cargo.lock', 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: release-rust-full-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'snow-crates/**/Cargo.toml', 'snow-crates/**/Cargo.lock', 'snow_rust_ffi/Cargo.toml', 'snow_rust_ffi/Cargo.lock', 'snow_draw_engine_qt/**/Cargo.toml', 'snow_shot/rust/**/Cargo.toml', 'snow_shot/rust/**/Cargo.lock', 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml') }}-${{ steps.toolchain.outputs.rust_sources }}
           restore-keys: |
-            release-rust-full-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'snow-crates/**/Cargo.toml', 'snow-crates/**/Cargo.lock', 'snow_rust_ffi/Cargo.toml', 'snow_rust_ffi/Cargo.lock', 'snow_draw_engine_qt/**/Cargo.toml', 'snow_shot/rust/**/Cargo.toml', 'snow_shot/rust/**/Cargo.lock', 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml') }}-
+            release-rust-full-v2-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'snow-crates/**/Cargo.toml', 'snow-crates/**/Cargo.lock', 'snow_rust_ffi/Cargo.toml', 'snow_rust_ffi/Cargo.lock', 'snow_draw_engine_qt/**/Cargo.toml', 'snow_shot/rust/**/Cargo.toml', 'snow_shot/rust/**/Cargo.lock', 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml') }}-
+            release-rust-full-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.legacy }}-${{ hashFiles('CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap-macos.sh', 'snow-crates/**/Cargo.toml', 'snow-crates/**/Cargo.lock', 'snow_rust_ffi/Cargo.toml', 'snow_rust_ffi/Cargo.lock', 'snow_draw_engine_qt/**/Cargo.toml', 'snow_shot/rust/**/Cargo.toml', 'snow_shot/rust/**/Cargo.lock', 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml') }}-
       - name: Build current source with reusable intermediates
         id: compile
         run: |
@@ -153,9 +162,9 @@ jobs:
             -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
           python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
           python3 scripts/macos-release-cache.py record --expected "$GITHUB_SHA" --cargo-dir "$SNOW_RUST_CARGO_TARGET_DIR"
-          ccache --show-stats
+          ccache --show-stats --verbose
       - name: Save C++ compiler cache
-        if: steps.compile.outcome == 'success'
+        if: steps.compile.outcome == 'success' && steps.cpp-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -174,7 +183,7 @@ jobs:
             echo 'save=false' >> "$GITHUB_OUTPUT"
           fi
       - name: Save Rust build cache
-        if: steps.rust-cache-size.outputs.save == 'true'
+        if: steps.rust-cache-size.outputs.save == 'true' && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.SNOW_RUST_CARGO_TARGET_DIR }}
@@ -226,3 +235,23 @@ jobs:
         env:
           DMG_URL: ${{ steps.dmg.outputs.artifact-url }}
         run: printf '[Download the macOS ARM64 DMG](%s)\n' "$DMG_URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prune superseded Rust snapshots
+        if: steps.rust-cache-size.outputs.save == 'true' && steps.rust-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SAVED_KEY: ${{ steps.rust-cache.outputs.cache-primary-key }}
+        run: |
+          # Only remove old v2 snapshots on this branch after confirming the
+          # new snapshot exists. Keep one previous snapshot as a fallback.
+          snapshots=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" \
+            --key release-rust-full-v2- --limit 100 --json id,key,createdAt)
+          if ! printf '%s' "$snapshots" | jq -e --arg key "$SAVED_KEY" 'any(.[]; .key == $key)' >/dev/null; then
+            echo 'New cache was not saved; retaining all previous snapshots.'
+            exit 0
+          fi
+          printf '%s' "$snapshots" | jq -r --arg key "$SAVED_KEY" \
+            '[.[] | select(.key != $key)] | sort_by(.createdAt) | reverse | .[1:] | .[].id' |
+          while IFS= read -r cache_id; do
+            gh cache delete "$cache_id" --repo "$GITHUB_REPOSITORY"
+          done
