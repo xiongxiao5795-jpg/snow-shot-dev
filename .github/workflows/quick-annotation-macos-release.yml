@@ -210,6 +210,12 @@ jobs:
           path: build/snow-shot-macos-arm64-release/*.dmg.sha256
           archive: false
           if-no-files-found: error
+      - name: Upload persistent-identity installer
+        uses: actions/upload-artifact@v7
+        with:
+          path: scripts/install-snow-shot-macos.sh
+          archive: false
+          if-no-files-found: error
       - name: Upload source receipt
         uses: actions/upload-artifact@v7
         with:

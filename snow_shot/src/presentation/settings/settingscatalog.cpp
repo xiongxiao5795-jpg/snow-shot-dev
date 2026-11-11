@@ -318,7 +318,7 @@ SettingsItemDefinition quickAnnotationItem() {
     return quickActionItem(
         QStringLiteral("quick.quick-annotation"),
         QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation"),
-        QT_TRANSLATE_NOOP("SettingsCatalog", "Draw once with the last selected tool"), {},
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Start quick annotation with the default tool"), {},
         GlobalShortcutAction::QuickAnnotation, QStringLiteral("global_shortcuts/quick_annotation"),
         []() { return custom_outlined_icons::FullScreenCanvas(); });
 }

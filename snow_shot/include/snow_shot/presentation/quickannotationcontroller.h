@@ -21,7 +21,7 @@ class QuickAnnotationController final : public QObject {
 
     void arm(QuickAnnotationTool tool);
     void armLastTool();
-    void showToolbar();
+    void showToolbar(bool armDefault = true);
 
   signals:
     void errorOccurred(const QString& message);

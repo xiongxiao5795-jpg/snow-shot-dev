@@ -243,6 +243,34 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
                 result.dirty = true;
             }
         }
+#ifdef Q_OS_MACOS
+        // Change only bindings that still match the previous fork defaults.
+        if (mutateDocument && !currentOverlay.contains(
+                                  QStringLiteral("quick_annotation/shortcut_defaults_migrated"))) {
+            const QMap<QString, QString> previous{
+                {QStringLiteral("global_shortcuts/quick_annotation"), QStringLiteral("Meta+Alt+D")},
+                {QStringLiteral("global_shortcuts/quick_annotation_brush"),
+                 QStringLiteral("Meta+Alt+B")},
+                {QStringLiteral("global_shortcuts/quick_annotation_arrow"),
+                 QStringLiteral("Meta+Alt+A")},
+                {QStringLiteral("global_shortcuts/quick_annotation_rectangle"),
+                 QStringLiteral("Meta+Alt+R")},
+                {QStringLiteral("global_shortcuts/quick_annotation_ellipse"),
+                 QStringLiteral("Meta+Alt+E")},
+                {QStringLiteral("global_shortcuts/quick_annotation_toolbar"),
+                 QStringLiteral("Meta+Alt+T")}};
+            if (previous.contains(entry.key)) {
+                const auto bindings = shortcuts::shortcutBindingsFromJson(raw, true);
+                if (bindings.size() == 1 &&
+                    bindings.first().portableText ==
+                        shortcuts::canonicalPortableText(previous.value(entry.key))) {
+                    raw = defaultValue;
+                    insertPath(&result.document, entry.key, raw);
+                    result.dirty = true;
+                }
+            }
+        }
+#endif
         // Add the new menu entry once for existing profiles, preserving all custom options.
         if (entry.key == QStringLiteral("tray/menu_options") && mutateDocument && raw.isArray() &&
             !currentOverlay.contains(QStringLiteral("quick_annotation/tray_menu_migrated"))) {

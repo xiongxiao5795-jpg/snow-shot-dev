@@ -1499,7 +1499,9 @@ int main(int argc, char** argv) {
         require(window->isVisible() && !canvas->canvasHistoryState().canUndo,
                 "committed mark stays visible independently of the drawing document");
         controller.armLastTool();
-        require(canvas->canvasTool() == SnowCanvasTool::Arrow, "reuse the last tool");
+        require(canvas->canvasTool() == SnowCanvasTool::Shape &&
+                    canvas->canvasStyleToolbarState().shapeStyle.cornerRadii.topLeft > 0,
+                "quick annotation starts with a rounded rectangle by default");
         QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
         QApplication::sendEvent(canvas, &escape);
         require(window->testAttribute(Qt::WA_TransparentForMouseEvents),
@@ -1512,15 +1514,17 @@ int main(int argc, char** argv) {
         }
         require(toolbar && toolbar->isVisible(), "show quick annotation toolbar");
         const auto buttons = toolbar->findChildren<QToolButton*>();
-        require(buttons.size() == 4, "quick annotation toolbar has four tools");
+        require(buttons.size() >= 7, "quick annotation toolbar has tools, persistence and close");
         buttons.at(2)->click();
-        require(!toolbar->isVisible() && canvas->canvasTool() == SnowCanvasTool::Shape &&
+        require(toolbar->isVisible() && canvas->canvasTool() == SnowCanvasTool::Shape &&
                     !window->testAttribute(Qt::WA_TransparentForMouseEvents),
-                "toolbar selection hides the toolbar and arms a rectangle");
+                "toolbar selection arms a rectangle without closing before drawing");
         now = 1000;
         mouse(canvas, QEvent::MouseButtonPress, {40, 40}, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseMove, {140, 120}, Qt::NoButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseButtonRelease, {140, 120}, Qt::LeftButton, Qt::NoButton);
+        require(!toolbar->isVisible() && window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "one completed mark hides the toolbar and restores click-through");
         auto* timer = window->findChild<QTimer*>(QStringLiteral("quickAnnotationFadeTimer"));
         require(timer && timer->isActive(), "marks start the fade timer");
         now = 2100;
@@ -1550,6 +1554,7 @@ int main(int argc, char** argv) {
                 "quick annotation settings persist independently");
         auto externalOptions = savedOptions;
         externalOptions.insert(QStringLiteral("fade_ms"), 1200);
+        externalOptions.insert(QStringLiteral("shadow_radius"), 12);
         externalOptions.insert(QStringLiteral("hold_ms"), 2500);
         require(storage.configuration().setValue(QStringLiteral("quick_annotation/options"),
                                                  externalOptions) &&
@@ -1601,7 +1606,29 @@ int main(int argc, char** argv) {
                         .value(QStringLiteral("quick_annotation/last_tool"))
                         .toString() == QStringLiteral("brush"),
                 "last selected tool is persisted");
-        QApplication::sendEvent(canvas, &escape);
+        controller.showToolbar();
+        auto* keep = toolbar->findChild<QToolButton*>(QStringLiteral("quickAnnotationPersistent"));
+        auto* close = toolbar->findChild<QToolButton*>(QStringLiteral("quickAnnotationClose"));
+        require(keep && close, "toolbar provides persistent mode and explicit exit");
+        keep->setChecked(true);
+        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        require(!toolbar->isVisible() && window->isVisible() &&
+                    window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "persistent mark survives automatic toolbar dismissal without blocking input");
+        now += 60000;
+        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
+                    window->isVisible(),
+                "persistent mark does not expire with time");
+        controller.showToolbar();
+        close->click();
+        require(!toolbar->isVisible() && window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "explicit exit releases all input");
+        now += 1300;
+        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
+                    !window->isVisible(),
+                "explicit exit fades persistent marks");
         QWidget* failedWindow = nullptr;
         presentation::QuickAnnotationController failed(
             nullptr, [&now] { return now; },
@@ -1648,6 +1675,14 @@ int main(int argc, char** argv) {
                                                   {platform::detail::CaptureFamily::GlobalCanvas,
                                                    platform::detail::kToolbarLayer}),
                     "quick annotation toolbar is above the canvas in fullscreen spaces");
+            QWidget* overlay = nullptr;
+            for (QWidget* candidate : QApplication::topLevelWidgets())
+                if (candidate->objectName() == QStringLiteral("quickAnnotationWindow"))
+                    overlay = candidate;
+            require(overlay != nullptr, "quick annotation creates a native capture surface");
+            NSWindow* annotation = reinterpret_cast<NSView*>(overlay->winId()).window;
+            require(annotation && annotation.sharingType != NSWindowSharingNone,
+                    "annotation surface remains eligible for region recording");
         }
         storage.shutdown();
         return 0;

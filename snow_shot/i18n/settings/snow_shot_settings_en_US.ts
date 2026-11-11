@@ -1932,6 +1932,10 @@
             <translation>Color picker display mode</translation>
         </message>
         <message>
+            <source>Color used for new marks</source>
+            <translation>Color used for new marks</translation>
+        </message>
+        <message>
             <source>Compression level</source>
             <translation>Compression level</translation>
         </message>
@@ -2232,6 +2236,10 @@
             <translation>Default text font size</translation>
         </message>
         <message>
+            <source>Default tool</source>
+            <translation>Default tool</translation>
+        </message>
+        <message>
             <source>Defaults for newly pinned text; source formatting is preserved</source>
             <translation>Defaults for newly pinned text; source formatting is preserved</translation>
         </message>
@@ -2400,10 +2408,6 @@
             <translation>Draw once with the brush</translation>
         </message>
         <message>
-            <source>Draw once with the last selected tool</source>
-            <translation>Draw once with the last selected tool</translation>
-        </message>
-        <message>
             <source>Duplicate latest region</source>
             <translation>Duplicate latest region</translation>
         </message>
@@ -2422,6 +2426,10 @@
         <message>
             <source>Edit with Snow Shot Mini</source>
             <translation>Edit with Snow Shot Mini</translation>
+        </message>
+        <message>
+            <source>Ellipse</source>
+            <translation>Ellipse</translation>
         </message>
         <message>
             <source>Enable MCP integration</source>
@@ -2528,8 +2536,8 @@
             <translation>Extended features settings</translation>
         </message>
         <message>
-            <source>Fade duration in seconds</source>
-            <translation>Fade duration in seconds</translation>
+            <source>Fade duration</source>
+            <translation>Fade duration</translation>
         </message>
         <message>
             <source>Fast</source>
@@ -2754,6 +2762,18 @@
         <message>
             <source>Highlight color presets</source>
             <translation>Highlight color presets</translation>
+        </message>
+        <message>
+            <source>Hold time</source>
+            <translation>Hold time</translation>
+        </message>
+        <message>
+            <source>How long marks take to fade out</source>
+            <translation>How long marks take to fade out</translation>
+        </message>
+        <message>
+            <source>How long temporary marks remain visible</source>
+            <translation>How long temporary marks remain visible</translation>
         </message>
         <message>
             <source>Icon</source>
@@ -3688,6 +3708,10 @@
             <translation>Recording toolbar</translation>
         </message>
         <message>
+            <source>Rectangle</source>
+            <translation>Rectangle</translation>
+        </message>
+        <message>
             <source>Rectangle filter</source>
             <translation>Rectangle filter</translation>
         </message>
@@ -3822,6 +3846,10 @@
         <message>
             <source>Rotate counterclockwise</source>
             <translation>Rotate counterclockwise</translation>
+        </message>
+        <message>
+            <source>Rounded rectangle</source>
+            <translation>Rounded rectangle</translation>
         </message>
         <message>
             <source>Run after %1 seconds</source>
@@ -4224,6 +4252,14 @@
             <translation>Shadow color</translation>
         </message>
         <message>
+            <source>Shadow radius</source>
+            <translation>Shadow radius</translation>
+        </message>
+        <message>
+            <source>Shadow range around marks, from 0 to 25 pt</source>
+            <translation>Shadow range around marks, from 0 to 25 pt</translation>
+        </message>
+        <message>
             <source>Shake a window to hide/show other windows</source>
             <translation>Shake a window to hide/show other windows</translation>
         </message>
@@ -4352,8 +4388,16 @@
             <translation>Show the captured mouse cursor by default in new normal screenshots</translation>
         </message>
         <message>
+            <source>Show the color control in the toolbar</source>
+            <translation>Show the color control in the toolbar</translation>
+        </message>
+        <message>
             <source>Show the floating toolbar on the desktop</source>
             <translation>Show the floating toolbar on the desktop</translation>
+        </message>
+        <message>
+            <source>Show the hold-time control in the toolbar</source>
+            <translation>Show the hold-time control in the toolbar</translation>
         </message>
         <message>
             <source>Show the shadow on new pinned windows</source>
@@ -4366,6 +4410,10 @@
         <message>
             <source>Show the video format and microphone and system audio status in the center of the motion preview area</source>
             <translation>Show the video format and microphone and system audio status in the center of the motion preview area</translation>
+        </message>
+        <message>
+            <source>Show the width control in the toolbar</source>
+            <translation>Show the width control in the toolbar</translation>
         </message>
         <message>
             <source>Show toolbar</source>
@@ -4520,6 +4568,10 @@
             <translation>Start new screenshot sessions and pin-to-screen annotation mode with the last used annotation tool instead of the move tool</translation>
         </message>
         <message>
+            <source>Start quick annotation with the default tool</source>
+            <translation>Start quick annotation with the default tool</translation>
+        </message>
+        <message>
             <source>Start scrolling capture in the confirmed screenshot selection</source>
             <translation>Start scrolling capture in the confirmed screenshot selection</translation>
         </message>
@@ -4562,6 +4614,10 @@
         <message>
             <source>Stroke color presets</source>
             <translation>Stroke color presets</translation>
+        </message>
+        <message>
+            <source>Stroke width</source>
+            <translation>Stroke width</translation>
         </message>
         <message>
             <source>Switch window group</source>
@@ -4708,6 +4764,22 @@
             <translation>Tool positions</translation>
         </message>
         <message>
+            <source>Tool selected when quick annotation starts</source>
+            <translation>Tool selected when quick annotation starts</translation>
+        </message>
+        <message>
+            <source>Toolbar color control</source>
+            <translation>Toolbar color control</translation>
+        </message>
+        <message>
+            <source>Toolbar controls</source>
+            <translation>Toolbar controls</translation>
+        </message>
+        <message>
+            <source>Toolbar hold-time control</source>
+            <translation>Toolbar hold-time control</translation>
+        </message>
+        <message>
             <source>Toolbar opacity</source>
             <translation>Toolbar opacity</translation>
         </message>
@@ -4722,6 +4794,10 @@
         <message>
             <source>Toolbar skin position</source>
             <translation>Toolbar skin position</translation>
+        </message>
+        <message>
+            <source>Toolbar width control</source>
+            <translation>Toolbar width control</translation>
         </message>
         <message>
             <source>Tools excluded from automatic selection</source>
@@ -4966,6 +5042,10 @@
         <message>
             <source>While editing text, press Delete to remove selected text or the character after the cursor</source>
             <translation>While editing text, press Delete to remove selected text or the character after the cursor</translation>
+        </message>
+        <message>
+            <source>Width of new marks</source>
+            <translation>Width of new marks</translation>
         </message>
         <message>
             <source>Window</source>

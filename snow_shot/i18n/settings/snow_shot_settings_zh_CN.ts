@@ -1932,6 +1932,10 @@
             <translation>颜色拾取器显示模式</translation>
         </message>
         <message>
+            <source>Color used for new marks</source>
+            <translation>新标记使用的颜色</translation>
+        </message>
+        <message>
             <source>Compression level</source>
             <translation>压缩级别</translation>
         </message>
@@ -2232,6 +2236,10 @@
             <translation>默认文本字号</translation>
         </message>
         <message>
+            <source>Default tool</source>
+            <translation>默认工具</translation>
+        </message>
+        <message>
             <source>Defaults for newly pinned text; source formatting is preserved</source>
             <translation>为新固定到屏幕的文本设置默认样式，并保留源格式</translation>
         </message>
@@ -2400,10 +2408,6 @@
             <translation>使用画笔绘制一次</translation>
         </message>
         <message>
-            <source>Draw once with the last selected tool</source>
-            <translation>使用上次选择的工具绘制一次</translation>
-        </message>
-        <message>
             <source>Duplicate latest region</source>
             <translation>复制最新选区</translation>
         </message>
@@ -2422,6 +2426,10 @@
         <message>
             <source>Edit with Snow Shot Mini</source>
             <translation>使用 Snow Shot Mini 编辑</translation>
+        </message>
+        <message>
+            <source>Ellipse</source>
+            <translation>椭圆</translation>
         </message>
         <message>
             <source>Enable MCP integration</source>
@@ -2528,8 +2536,8 @@
             <translation>扩展功能设置</translation>
         </message>
         <message>
-            <source>Fade duration in seconds</source>
-            <translation>淡出时长（秒）</translation>
+            <source>Fade duration</source>
+            <translation>淡出时长</translation>
         </message>
         <message>
             <source>Fast</source>
@@ -2754,6 +2762,18 @@
         <message>
             <source>Highlight color presets</source>
             <translation>高亮颜色预设</translation>
+        </message>
+        <message>
+            <source>Hold time</source>
+            <translation>停留时间</translation>
+        </message>
+        <message>
+            <source>How long marks take to fade out</source>
+            <translation>标记淡出所需时间</translation>
+        </message>
+        <message>
+            <source>How long temporary marks remain visible</source>
+            <translation>临时标记保持可见的时间</translation>
         </message>
         <message>
             <source>Icon</source>
@@ -3688,6 +3708,10 @@
             <translation>屏幕录制工具栏</translation>
         </message>
         <message>
+            <source>Rectangle</source>
+            <translation>矩形</translation>
+        </message>
+        <message>
             <source>Rectangle filter</source>
             <translation>矩形滤镜</translation>
         </message>
@@ -3822,6 +3846,10 @@
         <message>
             <source>Rotate counterclockwise</source>
             <translation>逆时针旋转</translation>
+        </message>
+        <message>
+            <source>Rounded rectangle</source>
+            <translation>圆角矩形</translation>
         </message>
         <message>
             <source>Run after %1 seconds</source>
@@ -4224,6 +4252,14 @@
             <translation>阴影颜色</translation>
         </message>
         <message>
+            <source>Shadow radius</source>
+            <translation>阴影范围</translation>
+        </message>
+        <message>
+            <source>Shadow range around marks, from 0 to 25 pt</source>
+            <translation>标记周围的阴影范围，0 至 25 pt</translation>
+        </message>
+        <message>
             <source>Shake a window to hide/show other windows</source>
             <translation>摇动窗口以隐藏/显示其他窗口</translation>
         </message>
@@ -4352,8 +4388,16 @@
             <translation>在新的普通截图中默认显示捕获的鼠标光标</translation>
         </message>
         <message>
+            <source>Show the color control in the toolbar</source>
+            <translation>在工具栏显示颜色控件</translation>
+        </message>
+        <message>
             <source>Show the floating toolbar on the desktop</source>
             <translation>在桌面上显示悬浮工具栏</translation>
+        </message>
+        <message>
+            <source>Show the hold-time control in the toolbar</source>
+            <translation>在工具栏显示停留时间控件</translation>
         </message>
         <message>
             <source>Show the shadow on new pinned windows</source>
@@ -4366,6 +4410,10 @@
         <message>
             <source>Show the video format and microphone and system audio status in the center of the motion preview area</source>
             <translation>在动效预览区域中央显示视频格式以及麦克风和系统音频状态</translation>
+        </message>
+        <message>
+            <source>Show the width control in the toolbar</source>
+            <translation>在工具栏显示粗细控件</translation>
         </message>
         <message>
             <source>Show toolbar</source>
@@ -4520,6 +4568,10 @@
             <translation>开始新的截图会话或进入固定到屏幕标注模式时，自动启用上次使用的标注工具，而不是移动工具</translation>
         </message>
         <message>
+            <source>Start quick annotation with the default tool</source>
+            <translation>使用默认工具开始快速标注</translation>
+        </message>
+        <message>
             <source>Start scrolling capture in the confirmed screenshot selection</source>
             <translation>在已确认的截图选区内开始滚动截图</translation>
         </message>
@@ -4562,6 +4614,10 @@
         <message>
             <source>Stroke color presets</source>
             <translation>描边颜色预设</translation>
+        </message>
+        <message>
+            <source>Stroke width</source>
+            <translation>笔迹粗细</translation>
         </message>
         <message>
             <source>Switch window group</source>
@@ -4708,6 +4764,22 @@
             <translation>工具位置</translation>
         </message>
         <message>
+            <source>Tool selected when quick annotation starts</source>
+            <translation>进入快速标注时选用的工具</translation>
+        </message>
+        <message>
+            <source>Toolbar color control</source>
+            <translation>工具栏颜色控件</translation>
+        </message>
+        <message>
+            <source>Toolbar controls</source>
+            <translation>工具栏配置</translation>
+        </message>
+        <message>
+            <source>Toolbar hold-time control</source>
+            <translation>工具栏停留时间控件</translation>
+        </message>
+        <message>
             <source>Toolbar opacity</source>
             <translation>工具栏不透明度</translation>
         </message>
@@ -4722,6 +4794,10 @@
         <message>
             <source>Toolbar skin position</source>
             <translation>工具栏皮肤位置</translation>
+        </message>
+        <message>
+            <source>Toolbar width control</source>
+            <translation>工具栏粗细控件</translation>
         </message>
         <message>
             <source>Tools excluded from automatic selection</source>
@@ -4966,6 +5042,10 @@
         <message>
             <source>While editing text, press Delete to remove selected text or the character after the cursor</source>
             <translation>编辑文字时，按 Delete 键删除选中的文字或光标后的字符</translation>
+        </message>
+        <message>
+            <source>Width of new marks</source>
+            <translation>新标记的笔迹粗细</translation>
         </message>
         <message>
             <source>Window</source>

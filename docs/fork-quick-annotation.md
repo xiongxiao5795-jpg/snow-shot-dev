@@ -11,13 +11,21 @@ The main integration points are `applicationcontroller.cpp`, `globalshortcuttype
 `globalshortcutmanager.cpp`, the settings catalog/backend and configuration schema, the macOS
 window policy, the application CMake source list, and the translation catalogs.
 
-The Settings > Quick annotation page provides six stroke-color presets, stroke width (1–20),
-hold time (0.5–30 seconds), and fade duration (0.1–5 seconds). The default hold is 1.5 seconds,
-followed by a 0.6-second fade. Options are stored under `quick_annotation/options` and do not
-change regular screenshot drawing styles. Global shortcuts have their own Quick annotation group;
-the menu-bar Quick annotation entry opens the compact tool palette. Existing tray configurations
-receive the entry once, and it can subsequently be hidden in tray menu settings. The last selected
-tool is stored separately and survives an application restart.
+The Settings > Quick annotation page uses the same settings-row controls as Screenshot settings.
+It configures the default tool, color, width, shadow radius (0–25 pt), hold time, fade duration,
+and optional toolbar controls. The default tool is a rounded rectangle. On macOS, Control+4
+starts quick annotation; the other quick annotation shortcuts are unset by default. Old fork
+shortcuts are migrated only when they still match the earlier defaults; customized bindings stay.
+The toolbar opens on activation and hides after one gesture while mouse input is restored. A
+persistent mark remains until persistence is disabled or the toolbar is explicitly closed; those
+marks then fade out. Settings belong to `quick_annotation/options`, not screenshot drawing styles.
+
+Release artifacts include the upstream installer and the matching DMG checksum. The installer can
+stage a locally signed app with a persistent identity; future updates must reuse that identity and
+the same installation path. Migration from earlier ad-hoc builds may require a one-time privacy
+prompt. macOS controls privacy decisions, so consistent signing cannot guarantee retention for
+every macOS release or every update method. Dragging the ad-hoc DMG app directly bypasses the
+persistent-identity installer. Do not replace a separate upstream installation by accident.
 
 Keep the feature on `codex/quick-annotation-package`. Syncing the fork's default `main` from
 upstream does not update this branch automatically: merge the updated `main` into this branch,

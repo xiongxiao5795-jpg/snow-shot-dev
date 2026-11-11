@@ -1718,6 +1718,10 @@
             <translation>畫筆</translation>
         </message>
         <message>
+            <source>Close</source>
+            <translation>結束</translation>
+        </message>
+        <message>
             <source>Could not change canvas click-through</source>
             <translation>無法切換畫布的滑鼠穿透狀態</translation>
         </message>
@@ -1734,6 +1738,10 @@
             <translation>停留時間（秒）</translation>
         </message>
         <message>
+            <source>Keep marks</source>
+            <translation>標註常駐</translation>
+        </message>
+        <message>
             <source>Orange</source>
             <translation>橙色</translation>
         </message>
@@ -1744,6 +1752,10 @@
         <message>
             <source>Red</source>
             <translation>紅色</translation>
+        </message>
+        <message>
+            <source>Rounded rectangle</source>
+            <translation>圓角矩形</translation>
         </message>
         <message>
             <source>Stroke color</source>

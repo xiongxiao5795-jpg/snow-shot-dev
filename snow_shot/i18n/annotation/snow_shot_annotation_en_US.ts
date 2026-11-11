@@ -1718,6 +1718,10 @@
             <translation>Brush</translation>
         </message>
         <message>
+            <source>Close</source>
+            <translation>Close</translation>
+        </message>
+        <message>
             <source>Could not change canvas click-through</source>
             <translation>Could not change canvas click-through</translation>
         </message>
@@ -1734,6 +1738,10 @@
             <translation>Hold time in seconds</translation>
         </message>
         <message>
+            <source>Keep marks</source>
+            <translation>Keep marks</translation>
+        </message>
+        <message>
             <source>Orange</source>
             <translation>Orange</translation>
         </message>
@@ -1744,6 +1752,10 @@
         <message>
             <source>Red</source>
             <translation>Red</translation>
+        </message>
+        <message>
+            <source>Rounded rectangle</source>
+            <translation>Rounded rectangle</translation>
         </message>
         <message>
             <source>Stroke color</source>

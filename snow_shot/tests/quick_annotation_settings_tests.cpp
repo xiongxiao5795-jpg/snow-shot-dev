@@ -3,10 +3,11 @@
 #include "snow_shot/storage/configurationstore.h"
 
 #include <QApplication>
-#include <QComboBox>
-#include <QDoubleSpinBox>
+#include "widgets/color_picker.h"
+#include "widgets/input_number.h"
+#include "widgets/select.h"
+#include "widgets/switch.h"
 #include <QJsonObject>
-#include <QSpinBox>
 #include <QTemporaryDir>
 
 #include <cstdlib>
@@ -28,23 +29,39 @@ int main(int argc, char** argv) {
             "initialize isolated storage");
     {
         snow_shot::presentation::QuickAnnotationSettingsWidget widget;
-        auto* color = widget.findChild<QComboBox*>(QStringLiteral("quickAnnotationSettingsColor"));
-        auto* width = widget.findChild<QSpinBox*>(QStringLiteral("quickAnnotationSettingsWidth"));
-        auto* hold =
-            widget.findChild<QDoubleSpinBox*>(QStringLiteral("quickAnnotationSettingsHold"));
-        auto* fade =
-            widget.findChild<QDoubleSpinBox*>(QStringLiteral("quickAnnotationSettingsFade"));
-        require(color && width && hold && fade && hold->value() == 1.5 && fade->value() == 0.6,
-                "quick annotation settings expose defaults");
-        color->setCurrentIndex(3);
+        auto* tool = widget.findChild<adqt::widgets::AdSelect*>(
+            QStringLiteral("quickAnnotationSettingsTool"));
+        auto* color = widget.findChild<adqt::widgets::AdColorPicker*>(
+            QStringLiteral("quickAnnotationSettingsColor"));
+        auto* width = widget.findChild<adqt::widgets::AdInputNumber*>(
+            QStringLiteral("quickAnnotationSettingsWidth"));
+        auto* shadow = widget.findChild<adqt::widgets::AdInputNumber*>(
+            QStringLiteral("quickAnnotationSettingsShadow"));
+        auto* hold = widget.findChild<adqt::widgets::AdInputNumber*>(
+            QStringLiteral("quickAnnotationSettingsHold"));
+        auto* fade = widget.findChild<adqt::widgets::AdInputNumber*>(
+            QStringLiteral("quickAnnotationSettingsFade"));
+        auto* showWidth = widget.findChild<adqt::widgets::AdSwitch*>(
+            QStringLiteral("quickAnnotationSettingsShowWidth"));
+        require(tool && color && width && shadow && hold && fade && showWidth &&
+                    tool->currentValue().toString() == QStringLiteral("rounded_rectangle") &&
+                    hold->value() == 1.5 && fade->value() == 0.6 && shadow->value() == 0,
+                "quick annotation settings expose requested defaults");
+        tool->setCurrentValue(QStringLiteral("ellipse"));
+        color->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#1890ff"))));
         width->setValue(7);
+        shadow->setValue(12);
         hold->setValue(3.0);
         fade->setValue(1.2);
+        showWidth->setChecked(false);
         const auto key = QStringLiteral("quick_annotation/options");
         auto& configuration = storage.configuration();
         const auto saved = configuration.value(key).toObject();
-        require(saved.value(QStringLiteral("color")) == QStringLiteral("#1890ff") &&
+        require(saved.value(QStringLiteral("default_tool")) == QStringLiteral("ellipse") &&
+                    saved.value(QStringLiteral("color")) == QStringLiteral("#1890ff") &&
                     saved.value(QStringLiteral("width")).toInt() == 7 &&
+                    saved.value(QStringLiteral("shadow_radius")).toInt() == 12 &&
+                    !saved.value(QStringLiteral("toolbar_width")).toBool() &&
                     saved.value(QStringLiteral("hold_ms")).toInt() == 3000 &&
                     saved.value(QStringLiteral("fade_ms")).toInt() == 1200,
                 "settings persist independently");

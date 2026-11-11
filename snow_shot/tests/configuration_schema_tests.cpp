@@ -79,6 +79,7 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
         QStringLiteral("quick_annotation/last_tool"),
         QStringLiteral("quick_annotation/options"),
         QStringLiteral("quick_annotation/tray_menu_migrated"),
+        QStringLiteral("quick_annotation/shortcut_defaults_migrated"),
     };
     QJsonArray originalActual;
     QSet<QString> seenAdded;
@@ -147,8 +148,8 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
 
 void entryReferencesAndCopiesRemainIndependent() {
     require(ConfigurationSchema::defaultValue(QStringLiteral("quick_annotation/last_tool")) ==
-                QJsonValue(QStringLiteral("brush")),
-            "quick annotation defaults to the brush");
+                QJsonValue(QStringLiteral("rounded_rectangle")),
+            "quick annotation defaults to the rounded rectangle");
     require(
         ConfigurationSchema::defaultValue(QStringLiteral("quick_annotation/options")).isObject(),
         "quick annotation owns its settings object");
@@ -162,6 +163,23 @@ void entryReferencesAndCopiesRemainIndependent() {
         require(entry != nullptr && entry->maximumListItems == 2 && entry->defaultValue.isArray(),
                 "quick annotation shortcuts have bounded configuration entries");
     }
+#ifdef Q_OS_MACOS
+    const auto binding = snow_shot::shortcuts::shortcutBindingsFromJson(
+        ConfigurationSchema::defaultValue(QStringLiteral("global_shortcuts/quick_annotation")),
+        true);
+    require(binding.size() == 1 &&
+                binding.first().portableText ==
+                    snow_shot::shortcuts::canonicalPortableText(QStringLiteral("Meta+4")) &&
+                binding.first().physicalKeys.value(snow_shot::shortcuts::ShortcutPlatform::MacOS) ==
+                    21,
+            "quick annotation defaults to physical Control+4");
+    for (const auto& key : {"brush", "arrow", "rectangle", "ellipse", "toolbar"})
+        require(ConfigurationSchema::defaultValue(
+                    QStringLiteral("global_shortcuts/quick_annotation_") + QString::fromLatin1(key))
+                    .toArray()
+                    .isEmpty(),
+                "individual quick annotation tool shortcuts start unset");
+#endif
     const auto& entries = ConfigurationSchema::entries();
     require(!entries.isEmpty(), "the schema must contain entries");
     const auto* storage = entries.constData();
@@ -247,6 +265,47 @@ void nativeDefaultsRemainIntact(const QString& movies, const QString& pictures) 
     }
 #endif
 }
+#ifdef Q_OS_MACOS
+void quickAnnotationShortcutMigration() {
+    QTemporaryDir dir;
+    require(dir.isValid(), "create shortcut migration fixture");
+    const QString path = dir.filePath(QStringLiteral("config.json"));
+    using namespace snow_shot::shortcuts;
+    ShortcutBinding oldDefault{QStringLiteral("Meta+Alt+D")};
+    oldDefault.physicalKeys.insert(ShortcutPlatform::MacOS, 2);
+    ShortcutBinding oldBrush{QStringLiteral("Meta+Alt+B")};
+    oldBrush.physicalKeys.insert(ShortcutPlatform::MacOS, 11);
+    ShortcutBinding custom{QStringLiteral("Meta+Alt+F9")};
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "write previous shortcut settings");
+    file.write(
+        QJsonDocument(
+            QJsonObject{
+                {QStringLiteral("storage"),
+                 QJsonObject{{QStringLiteral("schema_version"),
+                              snow_shot::storage::ConfigurationStore::currentSchemaVersion()}}},
+                {QStringLiteral("global_shortcuts"),
+                 QJsonObject{
+                     {QStringLiteral("quick_annotation"), shortcutBindingsToJson({oldDefault})},
+                     {QStringLiteral("quick_annotation_brush"), shortcutBindingsToJson({oldBrush})},
+                     {QStringLiteral("quick_annotation_arrow"),
+                      shortcutBindingsToJson({custom})}}}})
+            .toJson());
+    file.close();
+    snow_shot::storage::ConfigurationStore config(path, true, true);
+    const auto quick = shortcutBindingsFromJson(
+        config.value(QStringLiteral("global_shortcuts/quick_annotation")), true);
+    const auto brush = shortcutBindingsFromJson(
+        config.value(QStringLiteral("global_shortcuts/quick_annotation_brush")), true);
+    const auto arrow = shortcutBindingsFromJson(
+        config.value(QStringLiteral("global_shortcuts/quick_annotation_arrow")), true);
+    require(quick.size() == 1 &&
+                quick.first().portableText == canonicalPortableText(QStringLiteral("Meta+4")) &&
+                brush.isEmpty() && arrow.size() == 1 &&
+                arrow.first().portableText == canonicalPortableText(custom.portableText),
+            "only previous default shortcuts migrate; custom bindings remain intact");
+}
+#endif
 void quickAnnotationTrayMigration() {
     QTemporaryDir dir;
     require(dir.isValid(), "create configuration fixture");
@@ -292,6 +351,9 @@ int main(int argc, char** argv) {
     publicMetadataMatchesOriginal(before);
     nativeDefaultsRemainIntact(movies, pictures);
     quickAnnotationTrayMigration();
+#ifdef Q_OS_MACOS
+    quickAnnotationShortcutMigration();
+#endif
     entryReferencesAndCopiesRemainIndependent();
     require(metadata() == before, "copy mutation must not change any public schema field");
     return 0;

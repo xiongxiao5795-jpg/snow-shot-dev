@@ -5,7 +5,7 @@
 
 namespace snow_shot::presentation {
 
-enum class QuickAnnotationTool { Brush, Arrow, Rectangle, Ellipse };
+enum class QuickAnnotationTool { Brush, Arrow, Rectangle, RoundedRectangle, Ellipse };
 
 // The host owns windows and marks; this state machine only describes one gesture.
 class QuickAnnotationState final {

@@ -21,6 +21,9 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QHBoxLayout>
+#include <QGraphicsDropShadowEffect>
+#include <QGraphicsPixmapItem>
+#include <QGraphicsScene>
 #include <QImage>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -32,6 +35,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QWindow>
+#include <QtMath>
 
 #include <algorithm>
 #include <functional>
@@ -46,23 +50,22 @@ class ToolPanel final : public QWidget {
   public:
     explicit ToolPanel(QuickAnnotationOptions options,
                        std::function<void(QuickAnnotationTool)> choose,
-                       std::function<void(QuickAnnotationOptions)> changeOptions)
-        : QWidget(nullptr, Qt::Popup | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
+                       std::function<void(QuickAnnotationOptions)> changeOptions,
+                       std::function<void()> exitSession)
+        : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
           m_options(options), m_choose(std::move(choose)),
-          m_changeOptions(std::move(changeOptions)) {
+          m_changeOptions(std::move(changeOptions)), m_exitSession(std::move(exitSession)) {
         setObjectName(QStringLiteral("quickAnnotationToolbar"));
         auto* layout = new QHBoxLayout(this);
         const auto add = [this, layout](QToolButton*& button, QuickAnnotationTool tool) {
             button = new QToolButton(this);
             layout->addWidget(button);
-            connect(button, &QToolButton::clicked, this, [this, tool] {
-                hide();
-                m_choose(tool);
-            });
+            connect(button, &QToolButton::clicked, this, [this, tool] { m_choose(tool); });
         };
         add(m_brush, QuickAnnotationTool::Brush);
         add(m_arrow, QuickAnnotationTool::Arrow);
         add(m_rectangle, QuickAnnotationTool::Rectangle);
+        add(m_roundedRectangle, QuickAnnotationTool::RoundedRectangle);
         add(m_ellipse, QuickAnnotationTool::Ellipse);
         m_color = new QComboBox(this);
         m_color->setObjectName(QStringLiteral("quickAnnotationColor"));
@@ -95,6 +98,22 @@ class ToolPanel final : public QWidget {
             m_options.holdMs = qRound(value * 1000.0);
             m_changeOptions(m_options);
         });
+        m_persistent = new QToolButton(this);
+        m_persistent->setObjectName(QStringLiteral("quickAnnotationPersistent"));
+        m_persistent->setCheckable(true);
+        m_persistent->setChecked(m_options.persistent);
+        layout->addWidget(m_persistent);
+        connect(m_persistent, &QToolButton::toggled, this, [this](bool enabled) {
+            m_options.persistent = enabled;
+            m_changeOptions(m_options);
+        });
+        m_close = new QToolButton(this);
+        m_close->setObjectName(QStringLiteral("quickAnnotationClose"));
+        layout->addWidget(m_close);
+        connect(m_close, &QToolButton::clicked, this, [this] { m_exitSession(); });
+        m_color->setVisible(m_options.showColor);
+        m_width->setVisible(m_options.showWidth);
+        m_hold->setVisible(m_options.showHold);
 #ifdef Q_OS_MACOS
         platform::configureGlobalCanvasToolbarWindow(this);
 #endif
@@ -103,10 +122,15 @@ class ToolPanel final : public QWidget {
 
     void setOptions(const QuickAnnotationOptions& options) {
         m_options = options;
-        const QSignalBlocker colorBlocker(m_color), widthBlocker(m_width), holdBlocker(m_hold);
+        const QSignalBlocker colorBlocker(m_color), widthBlocker(m_width), holdBlocker(m_hold),
+            persistentBlocker(m_persistent);
         m_color->setCurrentIndex(std::max(0, m_color->findData(options.color.name())));
         m_width->setValue(options.width);
         m_hold->setValue(options.holdMs / 1000.0);
+        m_persistent->setChecked(options.persistent);
+        m_color->setVisible(options.showColor);
+        m_width->setVisible(options.showWidth);
+        m_hold->setVisible(options.showHold);
     }
 
   protected:
@@ -124,6 +148,12 @@ class ToolPanel final : public QWidget {
             "snow_shot::presentation::QuickAnnotationController", "Arrow"));
         m_rectangle->setText(QCoreApplication::translate(
             "snow_shot::presentation::QuickAnnotationController", "Rectangle"));
+        m_roundedRectangle->setText(QCoreApplication::translate(
+            "snow_shot::presentation::QuickAnnotationController", "Rounded rectangle"));
+        m_persistent->setText(QCoreApplication::translate(
+            "snow_shot::presentation::QuickAnnotationController", "Keep marks"));
+        m_close->setText(QCoreApplication::translate(
+            "snow_shot::presentation::QuickAnnotationController", "Close"));
         m_ellipse->setText(QCoreApplication::translate(
             "snow_shot::presentation::QuickAnnotationController", "Ellipse"));
         m_color->setItemText(0, QCoreApplication::translate(
@@ -155,9 +185,13 @@ class ToolPanel final : public QWidget {
     QuickAnnotationOptions m_options;
     std::function<void(QuickAnnotationTool)> m_choose;
     std::function<void(QuickAnnotationOptions)> m_changeOptions;
+    std::function<void()> m_exitSession;
     QToolButton* m_brush = nullptr;
     QToolButton* m_arrow = nullptr;
     QToolButton* m_rectangle = nullptr;
+    QToolButton* m_roundedRectangle = nullptr;
+    QToolButton* m_persistent = nullptr;
+    QToolButton* m_close = nullptr;
     QToolButton* m_ellipse = nullptr;
     QComboBox* m_color = nullptr;
     QSpinBox* m_width = nullptr;
@@ -204,11 +238,15 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
   public:
     explicit AnnotationWindow(QScreen* screen, std::function<void()> onError,
                               std::function<qint64()> clock,
-                              std::function<bool(QWidget*, bool)> setInputTransparent)
+                              std::function<bool(QWidget*, bool)> setInputTransparent,
+                              std::function<void()> onComplete, std::function<void()> onExit,
+                              std::function<bool()> toolbarActive)
         : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
           m_screen(screen), m_runtime(SnowCanvasRuntimeConfig{screenshotCanvasToolStyleDefaults()}),
           m_canvas(m_runtime, this), m_onError(std::move(onError)), m_now(std::move(clock)),
-          m_setInputTransparent(std::move(setInputTransparent)) {
+          m_setInputTransparent(std::move(setInputTransparent)),
+          m_onComplete(std::move(onComplete)), m_onExit(std::move(onExit)),
+          m_toolbarActive(std::move(toolbarActive)) {
         setObjectName(QStringLiteral("quickAnnotationWindow"));
         m_canvas.setObjectName(QStringLiteral("quickAnnotationCanvas"));
         setAttribute(Qt::WA_TranslucentBackground);
@@ -221,7 +259,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         applyScreenshotCanvasToolStyles(m_canvas, screenshotCanvasToolStyleDefaults());
         m_canvas.pressed = [this] { m_state.begin(); };
         m_canvas.released = [this] { completeGesture(); };
-        m_canvas.cancelled = [this] { cancel(); };
+        m_canvas.cancelled = [this] { m_onExit(); };
         m_clock.start();
         if (!m_now)
             m_now = [this] { return m_clock.elapsed(); };
@@ -231,16 +269,16 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         connect(&m_timer, &QTimer::timeout, this, [this] {
             const auto now = m_now();
             std::erase_if(m_marks, [now](const Mark& mark) {
-                return QuickAnnotationState::opacity(now - mark.created, mark.holdMs,
-                                                     mark.fadeMs) == 0.0;
+                return !mark.persistent && QuickAnnotationState::opacity(
+                                               now - mark.created, mark.holdMs, mark.fadeMs) == 0.0;
             });
             ++m_revision;
             m_canvas.update();
-            if (m_marks.empty()) {
+            if (std::none_of(m_marks.begin(), m_marks.end(),
+                             [](const Mark& mark) { return !mark.persistent; }))
                 m_timer.stop();
-                if (m_state.phase() == QuickAnnotationState::Phase::Idle)
-                    hide();
-            }
+            if (m_marks.empty() && m_state.phase() == QuickAnnotationState::Phase::Idle)
+                hide();
         });
         connect(screen, &QScreen::geometryChanged, this, [this] { updateGeometryForScreen(); });
 #ifdef Q_OS_MACOS
@@ -266,12 +304,17 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         m_canvas.clearDocument();
         m_holdMs = options.holdMs;
         m_fadeMs = options.fadeMs;
+        m_shadowRadius = options.shadowRadius;
+        m_persistent = options.persistent;
         auto defaults = screenshotCanvasToolStyleDefaults();
         for (auto* style : {&defaults.rectangle, &defaults.arrow, &defaults.freeDraw}) {
             style->stroke = options.color;
             style->strokeWidth = options.width;
         }
         defaults.rectangle.fillStyle = SnowCanvasFillStyle::Border;
+        defaults.rectangle.cornerRadii = tool == QuickAnnotationTool::RoundedRectangle
+                                             ? SnowCanvasCornerRadii{8, 8, 8, 8}
+                                             : SnowCanvasCornerRadii{};
         defaults.freeDraw.fill = options.color;
         applyScreenshotCanvasToolStyles(m_canvas, defaults);
         SnowCanvasShapeStyle shape;
@@ -308,6 +351,17 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         return true;
     }
 
+    void fadeMarks() {
+        const auto now = m_now();
+        for (auto& mark : m_marks) {
+            mark.persistent = false;
+            mark.created = now;
+            mark.holdMs = 0;
+        }
+        if (!m_marks.empty())
+            m_timer.start();
+    }
+
     void cancel() {
         m_state.cancel();
         m_canvas.resetEditingState();
@@ -326,8 +380,10 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         if (context.purpose == SnowCanvasRenderContext::Purpose::Widget) {
             const auto now = m_now();
             for (const Mark& mark : m_marks) {
-                painter.setOpacity(
-                    QuickAnnotationState::opacity(now - mark.created, mark.holdMs, mark.fadeMs));
+                painter.setOpacity((mark.persistent
+                                        ? 1.0
+                                        : QuickAnnotationState::opacity(now - mark.created,
+                                                                        mark.holdMs, mark.fadeMs)));
                 painter.drawImage(mark.rect, mark.image);
             }
         }
@@ -352,7 +408,8 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         if (event->type() == QEvent::WindowDeactivate &&
             m_state.phase() != QuickAnnotationState::Phase::Idle) {
             QTimer::singleShot(0, this, [this] {
-                if (!isActiveWindow() && m_state.phase() != QuickAnnotationState::Phase::Idle)
+                if (!isActiveWindow() && !m_toolbarActive() &&
+                    m_state.phase() != QuickAnnotationState::Phase::Idle)
                     cancel();
             });
         }
@@ -372,6 +429,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         qint64 created;
         int holdMs;
         int fadeMs;
+        bool persistent;
     };
 
     void updateGeometryForScreen() {
@@ -388,6 +446,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         if (!releaseInput(true)) {
             m_canvas.resetEditingState();
             m_canvas.clearDocument();
+            m_onComplete();
             return;
         }
         if (m_canvas.canvasHistoryState().canUndo) {
@@ -410,11 +469,36 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
                 }
                 if (right >= left && bottom >= top) {
                     const QRect bounds(QPoint(left, top), QPoint(right, bottom));
+                    QImage markImage = image.copy(bounds);
+                    QRectF markRect(left / dpr, top / dpr, bounds.width() / dpr,
+                                    bounds.height() / dpr);
+                    if (m_shadowRadius > 0) {
+                        const int margin = qCeil(m_shadowRadius * dpr * 2);
+                        QGraphicsScene scene;
+                        QPixmap pixmap = QPixmap::fromImage(markImage);
+                        pixmap.setDevicePixelRatio(1);
+                        auto* item = scene.addPixmap(pixmap);
+                        auto* shadow = new QGraphicsDropShadowEffect;
+                        shadow->setBlurRadius(m_shadowRadius * dpr);
+                        shadow->setOffset(0, 0);
+                        shadow->setColor(QColor(0, 0, 0, 180));
+                        item->setGraphicsEffect(shadow);
+                        const QRectF source(-margin, -margin, bounds.width() + margin * 2,
+                                            bounds.height() + margin * 2);
+                        QImage withShadow(source.size().toSize(),
+                                          QImage::Format_ARGB32_Premultiplied);
+                        withShadow.fill(Qt::transparent);
+                        QPainter shadowPainter(&withShadow);
+                        scene.render(&shadowPainter, QRectF(withShadow.rect()), source);
+                        shadowPainter.end();
+                        markImage = withShadow;
+                        markRect = QRectF((left - margin) / dpr, (top - margin) / dpr,
+                                          withShadow.width() / dpr, withShadow.height() / dpr);
+                    }
                     m_marks.push_back(
-                        {image.copy(bounds),
-                         QRectF(left / dpr, top / dpr, bounds.width() / dpr, bounds.height() / dpr),
-                         m_now(), m_holdMs, m_fadeMs});
-                    m_timer.start();
+                        {markImage, markRect, m_now(), m_holdMs, m_fadeMs, m_persistent});
+                    if (!m_persistent)
+                        m_timer.start();
                 }
             }
         }
@@ -424,6 +508,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         if (m_marks.empty())
             hide();
         m_canvas.update();
+        m_onComplete();
     }
 
     bool releaseInput(bool keepVisible = false) {
@@ -458,9 +543,14 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     QuickAnnotationState m_state;
     int m_holdMs = 1500;
     int m_fadeMs = 600;
+    int m_shadowRadius = 0;
+    bool m_persistent = false;
     std::function<void()> m_onError;
     std::function<qint64()> m_now;
     std::function<bool(QWidget*, bool)> m_setInputTransparent;
+    std::function<void()> m_onComplete;
+    std::function<void()> m_onExit;
+    std::function<bool()> m_toolbarActive;
     QElapsedTimer m_clock;
     QTimer m_timer;
     std::vector<Mark> m_marks;
@@ -495,7 +585,9 @@ class QuickAnnotationController::Impl {
             const QString saved = storage.configuration()
                                       .value(QStringLiteral("quick_annotation/last_tool"))
                                       .toString();
-            if (saved == QStringLiteral("arrow"))
+            if (saved == QStringLiteral("brush"))
+                lastTool = QuickAnnotationTool::Brush;
+            else if (saved == QStringLiteral("arrow"))
                 lastTool = QuickAnnotationTool::Arrow;
             else if (saved == QStringLiteral("rectangle"))
                 lastTool = QuickAnnotationTool::Rectangle;
@@ -517,9 +609,26 @@ class QuickAnnotationController::Impl {
         });
     }
 
-    void arm(QuickAnnotationTool tool) {
+    void fadeMarks() {
+        for (const auto& window : windows)
+            window->fadeMarks();
+    }
+    void exitSession() {
         if (toolbar)
             toolbar->hide();
+        for (const auto& window : windows)
+            window->cancel();
+        fadeMarks();
+    }
+    QuickAnnotationTool defaultTool() const {
+        return options.defaultTool == QStringLiteral("brush")       ? QuickAnnotationTool::Brush
+               : options.defaultTool == QStringLiteral("arrow")     ? QuickAnnotationTool::Arrow
+               : options.defaultTool == QStringLiteral("rectangle") ? QuickAnnotationTool::Rectangle
+               : options.defaultTool == QStringLiteral("ellipse")
+                   ? QuickAnnotationTool::Ellipse
+                   : QuickAnnotationTool::RoundedRectangle;
+    }
+    void arm(QuickAnnotationTool tool) {
         for (const auto& window : windows) {
             if (window->drawing())
                 return;
@@ -541,7 +650,17 @@ class QuickAnnotationController::Impl {
                     emit q.errorOccurred(
                         QuickAnnotationController::tr("Could not change canvas click-through"));
                 },
-                now, input));
+                now, input,
+                [this] {
+                    if (toolbar)
+                        toolbar->hide();
+                },
+                [this] { exitSession(); },
+                [this] {
+                    QWidget* active = QApplication::activeWindow();
+                    return toolbar && active &&
+                           (active == toolbar.get() || toolbar->isAncestorOf(active));
+                }));
             it = std::prev(windows.end());
         }
         if ((*it)->arm(tool, options)) {
@@ -552,7 +671,9 @@ class QuickAnnotationController::Impl {
                     tool == QuickAnnotationTool::Arrow       ? QStringLiteral("arrow")
                     : tool == QuickAnnotationTool::Rectangle ? QStringLiteral("rectangle")
                     : tool == QuickAnnotationTool::Ellipse   ? QStringLiteral("ellipse")
-                                                             : QStringLiteral("brush");
+                    : tool == QuickAnnotationTool::RoundedRectangle
+                        ? QStringLiteral("rounded_rectangle")
+                        : QStringLiteral("brush");
                 storage.configuration().setValue(QStringLiteral("quick_annotation/last_tool"),
                                                  value);
             }
@@ -562,7 +683,7 @@ class QuickAnnotationController::Impl {
     QuickAnnotationController& q;
     std::function<qint64()> now;
     std::function<bool(QWidget*, bool)> input;
-    QuickAnnotationTool lastTool = QuickAnnotationTool::Brush;
+    QuickAnnotationTool lastTool = QuickAnnotationTool::RoundedRectangle;
     QuickAnnotationOptions options;
     std::vector<std::unique_ptr<AnnotationWindow>> windows;
     std::unique_ptr<ToolPanel> toolbar;
@@ -579,25 +700,30 @@ QuickAnnotationController::QuickAnnotationController(
       m_impl(std::make_unique<Impl>(*this, std::move(clock), std::move(setInputTransparent))) {}
 QuickAnnotationController::~QuickAnnotationController() = default;
 void QuickAnnotationController::arm(QuickAnnotationTool tool) {
+    showToolbar(false);
     m_impl->arm(tool);
 }
 void QuickAnnotationController::armLastTool() {
-    m_impl->arm(m_impl->lastTool);
+    showToolbar();
 }
-void QuickAnnotationController::showToolbar() {
+void QuickAnnotationController::showToolbar(bool armDefault) {
     if (std::any_of(m_impl->windows.begin(), m_impl->windows.end(),
                     [](const auto& window) { return window->drawing(); }))
         return;
     if (!m_impl->toolbar)
         m_impl->toolbar = std::make_unique<ToolPanel>(
-            m_impl->options, [this](QuickAnnotationTool tool) { arm(tool); },
+            m_impl->options, [this](QuickAnnotationTool tool) { m_impl->arm(tool); },
             [this](QuickAnnotationOptions options) {
+                if (m_impl->options.persistent && !options.persistent)
+                    m_impl->fadeMarks();
                 m_impl->options = options;
                 auto& storage = storage::ApplicationStorage::instance();
                 if (storage.isInitialized())
                     storage.configuration().setValue(QStringLiteral("quick_annotation/options"),
                                                      options.toJson());
-            });
+                m_impl->arm(m_impl->lastTool);
+            },
+            [this] { m_impl->exitSession(); });
     m_impl->toolbar->adjustSize();
     const QPoint cursor =
         platform::PhysicalCursor().logicalPosition().value_or(QCursor::pos()).toPoint();
@@ -616,5 +742,7 @@ void QuickAnnotationController::showToolbar() {
     }
     m_impl->toolbar->move(position);
     m_impl->toolbar->show();
+    if (armDefault)
+        m_impl->arm(m_impl->defaultTool());
 }
 } // namespace snow_shot::presentation
