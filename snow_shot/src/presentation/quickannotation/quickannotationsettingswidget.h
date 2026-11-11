@@ -6,6 +6,7 @@
 #include "snow_shot/storage/configurationstore.h"
 
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QLabel>
