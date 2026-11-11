@@ -1068,6 +1068,8 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
     {u"quick_annotation/tray_menu_migrated", booleanDefault(true), ConfigurationValueKind::Boolean},
     {u"quick_annotation/tray_menu_v2_migrated", booleanDefault(true),
      ConfigurationValueKind::Boolean},
+    {u"quick_annotation/fn_default_migrated", booleanDefault(true),
+     ConfigurationValueKind::Boolean},
     {u"quick_annotation/shortcut_defaults_migrated", booleanDefault(true),
      ConfigurationValueKind::Boolean},
     {u"global_shortcuts/stitch_selected_images", emptyArrayDefault(),

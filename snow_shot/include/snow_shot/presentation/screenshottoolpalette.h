@@ -1134,6 +1134,8 @@ class ScreenshotToolPalette final : public QWidget,
     adqt::widgets::AdButton* m_globalCanvasExitButton = nullptr;
     adqt::widgets::AdButton* m_quickAnnotationPersistentButton = nullptr;
     adqt::widgets::AdButton* m_quickAnnotationExitButton = nullptr;
+    adqt::widgets::AdButton* m_quickAnnotationUndoButton = nullptr;
+    adqt::widgets::AdButton* m_quickAnnotationRedoButton = nullptr;
     QLabel* m_selectionOpacityIcon = nullptr;
     adqt::widgets::AdSlider* m_selectionOpacitySlider = nullptr;
     adqt::widgets::AdSelect* m_drawTemplateSelect = nullptr;

@@ -86,7 +86,8 @@ class ToolPanel final : public ScreenshotFloatingToolPaletteWindow {
                        std::function<void(QuickAnnotationTool)> choose,
                        std::function<void(QuickAnnotationTool)> selectShape,
                        std::function<void(QuickAnnotationOptions, bool)> changeOptions,
-                       std::function<void()> exitSession)
+                       std::function<void()> exitSession, std::function<void()> undo,
+                       std::function<void()> redo)
         : ScreenshotFloatingToolPaletteWindow(quickPaletteOptions(options)), m_options(options),
           m_choose(std::move(choose)), m_selectShape(std::move(selectShape)),
           m_changeOptions(std::move(changeOptions)) {
@@ -106,6 +107,8 @@ class ToolPanel final : public ScreenshotFloatingToolPaletteWindow {
                 });
         connect(controls, &ScreenshotToolPalette::quickAnnotationExitRequested, this,
                 [exitSession = std::move(exitSession)] { exitSession(); });
+        connect(controls, &ScreenshotToolPalette::undoRequested, this, std::move(undo));
+        connect(controls, &ScreenshotToolPalette::redoRequested, this, std::move(redo));
         connect(this, &ScreenshotFloatingToolPaletteWindow::dragFinished, this, [this] {
             m_moved = true;
             m_placementScreen = QGuiApplication::screenAt(contentPosition());
@@ -240,13 +243,15 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
                               std::function<bool(QWidget*, bool)> setInputTransparent,
                               std::function<void()> onComplete, std::function<void()> onExit,
                               std::function<bool()> toolbarActive,
-                              std::function<bool()> ignoreModifiers)
+                              std::function<bool()> ignoreModifiers,
+                              std::function<void(AnnotationWindow*)> onPersistentMark)
         : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
           m_screen(screen), m_runtime(SnowCanvasRuntimeConfig{screenshotCanvasToolStyleDefaults()}),
           m_canvas(m_runtime, this), m_onError(std::move(onError)), m_now(std::move(clock)),
           m_setInputTransparent(std::move(setInputTransparent)),
           m_onComplete(std::move(onComplete)), m_onExit(std::move(onExit)),
-          m_toolbarActive(std::move(toolbarActive)) {
+          m_toolbarActive(std::move(toolbarActive)),
+          m_onPersistentMark(std::move(onPersistentMark)) {
         setObjectName(QStringLiteral("quickAnnotationWindow"));
         m_canvas.setObjectName(QStringLiteral("quickAnnotationCanvas"));
         setAttribute(Qt::WA_TranslucentBackground);
@@ -354,6 +359,35 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         }
         if (!m_marks.empty())
             m_timer.start();
+        m_redoMarks.clear();
+    }
+
+    bool undoPersistentMark() {
+        const auto it = std::find_if(m_marks.rbegin(), m_marks.rend(),
+                                     [](const auto& mark) { return mark.persistent; });
+        if (it == m_marks.rend())
+            return false;
+        const auto forward = std::next(it).base();
+        m_redoMarks.push_back(std::move(*forward));
+        m_marks.erase(forward);
+        ++m_revision;
+        m_canvas.update();
+        if (m_marks.empty() && m_state.phase() == QuickAnnotationState::Phase::Idle)
+            hide();
+        return true;
+    }
+    bool redoPersistentMark() {
+        if (m_redoMarks.empty())
+            return false;
+        m_marks.push_back(std::move(m_redoMarks.back()));
+        m_redoMarks.pop_back();
+        ++m_revision;
+        show();
+        m_canvas.update();
+        return true;
+    }
+    void clearRedoMarks() {
+        m_redoMarks.clear();
     }
 
     void cancel() {
@@ -468,6 +502,8 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
                                           bounds.height() / dpr);
                     m_marks.push_back(
                         {markImage, markRect, m_now(), m_holdMs, m_fadeMs, m_persistent});
+                    if (m_persistent)
+                        m_onPersistentMark(this);
                     if (!m_persistent)
                         m_timer.start();
                 }
@@ -521,9 +557,11 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     std::function<void()> m_onComplete;
     std::function<void()> m_onExit;
     std::function<bool()> m_toolbarActive;
+    std::function<void(AnnotationWindow*)> m_onPersistentMark;
     QElapsedTimer m_clock;
     QTimer m_timer;
     std::vector<Mark> m_marks;
+    std::vector<Mark> m_redoMarks;
     std::uint64_t m_revision = 0;
 #ifdef Q_OS_MACOS
     std::unique_ptr<platform::macos::ScreenshotSessionFocus> m_focus;
@@ -590,6 +628,42 @@ class QuickAnnotationController::Impl {
     void fadeMarks() {
         for (const auto& window : windows)
             window->fadeMarks();
+        undoHistory.clear();
+        redoHistory.clear();
+        updateHistory();
+    }
+    void updateHistory() {
+        std::erase_if(undoHistory, [](const auto& window) { return window.isNull(); });
+        std::erase_if(redoHistory, [](const auto& window) { return window.isNull(); });
+        if (toolbar)
+            toolbar->palette()->setHistoryState({!undoHistory.empty(), !redoHistory.empty()});
+    }
+    void recordPersistentMark(AnnotationWindow* window) {
+        for (const auto& candidate : windows)
+            candidate->clearRedoMarks();
+        redoHistory.clear();
+        undoHistory.emplace_back(window);
+        updateHistory();
+    }
+    void undo() {
+        updateHistory();
+        if (undoHistory.empty())
+            return;
+        const QPointer<AnnotationWindow> window = undoHistory.back();
+        undoHistory.pop_back();
+        if (window && window->undoPersistentMark())
+            redoHistory.push_back(window);
+        updateHistory();
+    }
+    void redo() {
+        updateHistory();
+        if (redoHistory.empty())
+            return;
+        const QPointer<AnnotationWindow> window = redoHistory.back();
+        redoHistory.pop_back();
+        if (window && window->redoPersistentMark())
+            undoHistory.push_back(window);
+        updateHistory();
     }
     void exitSession() {
         holdActive = false;
@@ -654,7 +728,8 @@ class QuickAnnotationController::Impl {
                     return toolbar && active &&
                            (active == toolbar.get() || toolbar->isAncestorOf(active));
                 },
-                [this] { return holdActive; }));
+                [this] { return holdActive; },
+                [this](AnnotationWindow* window) { recordPersistentMark(window); }));
             it = std::prev(windows.end());
         }
         if ((*it)->arm(tool, options)) {
@@ -684,6 +759,8 @@ class QuickAnnotationController::Impl {
     bool holdActive = false;
     bool holdKeyDown = false;
     std::vector<std::unique_ptr<AnnotationWindow>> windows;
+    std::vector<QPointer<AnnotationWindow>> undoHistory;
+    std::vector<QPointer<AnnotationWindow>> redoHistory;
     std::unique_ptr<ToolPanel> toolbar;
 };
 
@@ -750,7 +827,9 @@ void QuickAnnotationController::showToolbar(bool armDefault) {
                 if (rearm)
                     m_impl->arm(m_impl->lastTool);
             },
-            [this] { m_impl->exitSession(); });
+            [this] { m_impl->exitSession(); }, [this] { m_impl->undo(); },
+            [this] { m_impl->redo(); });
+    m_impl->updateHistory();
     m_impl->toolbar->place(QGuiApplication::primaryScreen());
     m_impl->toolbar->show();
     if (armDefault)

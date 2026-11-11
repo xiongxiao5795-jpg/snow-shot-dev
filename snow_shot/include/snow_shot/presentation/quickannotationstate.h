@@ -7,6 +7,12 @@ namespace snow_shot::presentation {
 
 enum class QuickAnnotationTool { Brush, Arrow, Rectangle, RoundedRectangle, Ellipse };
 
+// macOS sets the function modifier on navigation keys too; only key code 63 is Fn.
+[[nodiscard]] inline bool quickAnnotationFunctionKeyState(bool previous, unsigned keyCode,
+                                                          bool functionFlag) {
+    return keyCode == 63 ? functionFlag : previous;
+}
+
 // A short hold avoids stealing ordinary shortcuts that start with the same modifiers.
 class QuickAnnotationHoldState final {
   public:

@@ -16,6 +16,12 @@ static void require(bool condition, const char* message) {
 }
 
 int main() {
+    using snow_shot::presentation::quickAnnotationFunctionKeyState;
+    require(!quickAnnotationFunctionKeyState(false, 126, true) &&
+                quickAnnotationFunctionKeyState(false, 63, true) &&
+                quickAnnotationFunctionKeyState(true, 126, false) &&
+                !quickAnnotationFunctionKeyState(true, 63, false),
+            "Fn tracking distinguishes the physical Fn key from navigation keys");
     QuickAnnotationHoldState hold;
     using HoldChange = QuickAnnotationHoldState::Change;
     require(hold.modifiers(true) == HoldChange::Schedule && !hold.otherKey() && !hold.activate(),

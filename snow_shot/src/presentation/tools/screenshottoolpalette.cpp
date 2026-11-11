@@ -6344,6 +6344,12 @@ void ScreenshotToolPalette::applyMainToolbarLayout(bool notify) {
         m_globalCanvasLaserPointerButton,
         m_globalCanvasClickThroughButton,
         m_globalCanvasExitButton,
+        m_quickAnnotationPersistentButton && m_quickAnnotationPersistentButton->isChecked()
+            ? m_quickAnnotationUndoButton
+            : nullptr,
+        m_quickAnnotationPersistentButton && m_quickAnnotationPersistentButton->isChecked()
+            ? m_quickAnnotationRedoButton
+            : nullptr,
         m_quickAnnotationPersistentButton,
         m_quickAnnotationExitButton,
     };
@@ -6579,6 +6585,10 @@ void ScreenshotToolPalette::setCropToolsState(bool rowsActive, bool columnsActiv
 }
 
 void ScreenshotToolPalette::updateHistoryActionAvailability() {
+    if (m_quickAnnotationUndoButton)
+        m_quickAnnotationUndoButton->setEnabled(m_canvasHistoryState.canUndo);
+    if (m_quickAnnotationRedoButton)
+        m_quickAnnotationRedoButton->setEnabled(m_canvasHistoryState.canRedo);
     if (m_undoButton != nullptr) {
         m_undoButton->setEnabled(historyActionEnabled(QStringLiteral("undo")));
     }
@@ -7084,8 +7094,28 @@ void ScreenshotToolPalette::addMainActionButtons(const Options& options, QBoxLay
                 [this](bool enabled) {
                     setScreenshotToolPaletteButtonActive(m_quickAnnotationPersistentButton,
                                                          enabled);
+                    if (!enabled) {
+                        m_quickAnnotationUndoButton->hide();
+                        m_quickAnnotationRedoButton->hide();
+                    }
+                    applyMainToolbarLayout(false);
+                    emit visibleContentChanged();
                     emit quickAnnotationPersistentChanged(enabled);
                 });
+        m_quickAnnotationUndoButton = addActionButton("Undo", outlined_icons::Undo());
+        m_quickAnnotationUndoButton->setObjectName(QStringLiteral("quickAnnotationUndo"));
+        m_quickAnnotationUndoButton->setEnabled(false);
+        addButton(m_quickAnnotationUndoButton);
+        m_quickAnnotationUndoButton->hide();
+        connect(m_quickAnnotationUndoButton, &adqt::widgets::AdButton::clicked, this,
+                &ScreenshotToolPalette::undoRequested);
+        m_quickAnnotationRedoButton = addActionButton("Redo", outlined_icons::Redo());
+        m_quickAnnotationRedoButton->setObjectName(QStringLiteral("quickAnnotationRedo"));
+        m_quickAnnotationRedoButton->setEnabled(false);
+        addButton(m_quickAnnotationRedoButton);
+        m_quickAnnotationRedoButton->hide();
+        connect(m_quickAnnotationRedoButton, &adqt::widgets::AdButton::clicked, this,
+                &ScreenshotToolPalette::redoRequested);
         addButton(m_quickAnnotationPersistentButton);
         m_quickAnnotationExitButton = addActionButton("Exit", outlined_icons::Close(), true);
         m_quickAnnotationExitButton->setObjectName(QStringLiteral("quickAnnotationClose"));

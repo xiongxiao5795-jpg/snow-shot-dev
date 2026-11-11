@@ -770,13 +770,13 @@ void builtInCatalogIsCompleteAndValid() {
         }
     }
 #ifdef Q_OS_MACOS
-    require(sectionCount == 54, "macOS includes permissions and merged storage and desktop groups");
+    require(sectionCount == 55, "macOS includes permissions and merged storage and desktop groups");
 #elif defined(Q_OS_WIN)
     require(
-        sectionCount == 55,
+        sectionCount == 56,
         "Windows includes the context menu shortcut category with capture and recording groups");
 #else
-    require(sectionCount == 54,
+    require(sectionCount == 55,
             "catalog includes capture and recording groups with merged storage and desktop groups");
 #endif
     // Verify platform membership directly; shared features have their own binding and metadata
@@ -2999,11 +2999,24 @@ void globalShortcutActionsHaveStableContracts() {
                       QStringLiteral("quick.pin-selected-files")});
     const auto* quickSection =
         catalog.section(QStringLiteral("global-hotkeys"), QStringLiteral("quick-annotation"));
-    require(quickSection && quickSection->items.size() == 6 &&
+    require(quickSection &&
+                quickSection->items.size() ==
+#ifdef Q_OS_MACOS
+                    7 &&
+#else
+                    6 &&
+#endif
                 quickSection->items.first().id == QStringLiteral("quick.quick-annotation") &&
-                quickSection->items.last().id == QStringLiteral("quick.quick-annotation-toolbar") &&
+                quickSection->items.at(5).id == QStringLiteral("quick.quick-annotation-toolbar") &&
                 catalog.page(QStringLiteral("quick-annotation")) != nullptr,
             "quick annotation has a dedicated page and shortcut group");
+#ifdef Q_OS_MACOS
+    require(quickSection->items.last().id == QStringLiteral("quick-annotation.hold-shortcuts"),
+            "macOS quick annotation includes editable hold shortcuts");
+#endif
+    require(catalog.section(QStringLiteral("quick-annotation"), QStringLiteral("toolbar")) !=
+                nullptr,
+            "quick annotation has its own toolbar section");
     const auto* otherShortcuts =
         catalog.section(QStringLiteral("global-hotkeys"), QStringLiteral("other"));
     require(otherShortcuts != nullptr &&

@@ -81,6 +81,7 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
         QStringLiteral("quick_annotation/hold_bindings"),
         QStringLiteral("quick_annotation/toolbar_layout"),
         QStringLiteral("quick_annotation/tray_menu_v2_migrated"),
+        QStringLiteral("quick_annotation/fn_default_migrated"),
         QStringLiteral("quick_annotation/tray_menu_migrated"),
         QStringLiteral("quick_annotation/shortcut_defaults_migrated"),
     };
@@ -287,6 +288,10 @@ void quickAnnotationShortcutMigration() {
                 {QStringLiteral("storage"),
                  QJsonObject{{QStringLiteral("schema_version"),
                               snow_shot::storage::ConfigurationStore::currentSchemaVersion()}}},
+                {QStringLiteral("quick_annotation"),
+                 QJsonObject{
+                     {QStringLiteral("options"), QJsonObject{{QStringLiteral("hold_shortcut"),
+                                                              QStringLiteral("command_option")}}}}},
                 {QStringLiteral("global_shortcuts"),
                  QJsonObject{
                      {QStringLiteral("quick_annotation"), shortcutBindingsToJson({oldDefault})},
@@ -296,6 +301,10 @@ void quickAnnotationShortcutMigration() {
             .toJson());
     file.close();
     snow_shot::storage::ConfigurationStore config(path, true, true);
+    require(config.value(QStringLiteral("quick_annotation/options"))
+                    .toObject()
+                    .value(QStringLiteral("hold_shortcut")) == QStringLiteral("function"),
+            "migrate the previous default hold shortcut to fn");
     const auto quick = shortcutBindingsFromJson(
         config.value(QStringLiteral("global_shortcuts/quick_annotation")), true);
     const auto brush = shortcutBindingsFromJson(
@@ -345,6 +354,24 @@ void quickAnnotationTrayMigration() {
                 "removed menu entry stays removed after restart");
     }
 }
+
+void quickAnnotationToolbarIsIndependent() {
+    QTemporaryDir dir;
+    require(dir.isValid(), "create quick annotation toolbar fixture");
+    snow_shot::storage::ConfigurationStore config(dir.filePath(QStringLiteral("config.json")), true,
+                                                  true);
+    const auto screenshotLayout = config.value(QStringLiteral("screenshot_toolbar/layout"));
+    const QJsonObject quickLayout{
+        {QStringLiteral("positions"),
+         QJsonArray{QJsonArray{QStringLiteral("arrow")}, QJsonArray{QStringLiteral("shape")}}},
+        {QStringLiteral("hidden"), QJsonArray{QStringLiteral("free-draw")}}};
+    require(config.setValue(QStringLiteral("quick_annotation/toolbar_layout"), quickLayout),
+            "save quick annotation toolbar layout");
+    require(config.value(QStringLiteral("screenshot_toolbar/layout")) == screenshotLayout &&
+                config.value(QStringLiteral("quick_annotation/toolbar_layout")).toObject() ==
+                    quickLayout,
+            "quick toolbar edits do not change screenshot toolbar layout");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -356,6 +383,7 @@ int main(int argc, char** argv) {
     publicMetadataMatchesOriginal(before);
     nativeDefaultsRemainIntact(movies, pictures);
     quickAnnotationTrayMigration();
+    quickAnnotationToolbarIsIndependent();
 #ifdef Q_OS_MACOS
     quickAnnotationShortcutMigration();
 #endif

@@ -271,6 +271,20 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
             }
         }
 #endif
+#ifdef Q_OS_MACOS
+        if (entry.key == QStringLiteral("quick_annotation/options") && mutateDocument &&
+            raw.isObject() &&
+            !currentOverlay.contains(QStringLiteral("quick_annotation/fn_default_migrated"))) {
+            QJsonObject options = raw.toObject();
+            if (options.value(QStringLiteral("hold_shortcut")).toString() ==
+                QStringLiteral("command_option")) {
+                options.insert(QStringLiteral("hold_shortcut"), QStringLiteral("function"));
+                raw = options;
+                insertPath(&result.document, entry.key, raw);
+                result.dirty = true;
+            }
+        }
+#endif
         // Add the new menu entry once for existing profiles, preserving all custom options.
         if (entry.key == QStringLiteral("tray/menu_options") && mutateDocument && raw.isArray() &&
             !currentOverlay.contains(QStringLiteral("quick_annotation/tray_menu_v2_migrated"))) {

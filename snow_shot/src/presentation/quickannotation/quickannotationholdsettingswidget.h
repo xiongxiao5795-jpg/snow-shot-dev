@@ -75,7 +75,8 @@ class QuickAnnotationHoldSettingsWidget final : public SettingsCustomWidget {
             m_titles.at(i)->setText(QCoreApplication::translate("SettingsCatalog", labels[i]));
         const QSignalBlocker blocker(m_legacy);
         const auto value = m_legacy->currentValue();
-        m_legacy->setOptions({{QStringLiteral("command_option"), QStringLiteral("⌘ + ⌥")},
+        m_legacy->setOptions({{QStringLiteral("function"), QStringLiteral("fn")},
+                              {QStringLiteral("command_option"), QStringLiteral("⌘ + ⌥")},
                               {QStringLiteral("command_shift"), QStringLiteral("⌘ + ⇧")},
                               {QStringLiteral("control_option"), QStringLiteral("⌃ + ⌥")},
                               {QStringLiteral("control_shift"), QStringLiteral("⌃ + ⇧")},
@@ -126,6 +127,11 @@ class QuickAnnotationHoldSettingsWidget final : public SettingsCustomWidget {
             text.isEmpty() ||
             (!binding.portableText.isEmpty() &&
              m_session.validateShortcut(GlobalShortcutAction::QuickAnnotation, binding).supported);
+        const auto defaults = shortcuts::shortcutBindingsFromJson(
+            config.value(QStringLiteral("global_shortcuts/quick_annotation")), true);
+        for (const auto& existing : defaults)
+            if (valid && !text.isEmpty() && shortcuts::bindingsConflict(binding, existing))
+                valid = false;
         for (auto it = bindings.begin(); valid && it != bindings.end(); ++it)
             if (it.key() != key(i) && !it.value().toString().isEmpty() &&
                 shortcuts::bindingsConflict(

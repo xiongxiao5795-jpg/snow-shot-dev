@@ -20,7 +20,7 @@ struct QuickAnnotationOptions {
     int holdMs = 300;
     int fadeMs = 500;
     QString defaultTool = QStringLiteral("rounded_rectangle");
-    QString holdShortcut = QStringLiteral("command_option");
+    QString holdShortcut = QStringLiteral("function");
     bool persistent = false;
     bool showColor = true;
     bool showWidth = true;
@@ -46,9 +46,9 @@ struct QuickAnnotationOptions {
             tool == QStringLiteral("ellipse"))
             result.defaultTool = tool;
         const QString hold = object.value(QStringLiteral("hold_shortcut")).toString();
-        if (hold == QStringLiteral("disabled") || hold == QStringLiteral("command_option") ||
-            hold == QStringLiteral("command_shift") || hold == QStringLiteral("control_option") ||
-            hold == QStringLiteral("control_shift"))
+        if (hold == QStringLiteral("disabled") || hold == QStringLiteral("function") ||
+            hold == QStringLiteral("command_option") || hold == QStringLiteral("command_shift") ||
+            hold == QStringLiteral("control_option") || hold == QStringLiteral("control_shift"))
             result.holdShortcut = hold;
         result.persistent = object.value(QStringLiteral("persistent")).toBool(false);
         result.showColor = object.value(QStringLiteral("toolbar_color")).toBool(true);

@@ -70,8 +70,8 @@ void require(bool condition, const char* message) {
     }
 }
 void mouse(QWidget* widget, QEvent::Type type, QPointF point, Qt::MouseButton button,
-           Qt::MouseButtons buttons) {
-    QMouseEvent event(type, point, widget->mapToGlobal(point), button, buttons, Qt::NoModifier);
+           Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    QMouseEvent event(type, point, widget->mapToGlobal(point), button, buttons, modifiers);
     QApplication::sendEvent(widget, &event);
 }
 class SignalConnectionProbe : public QObject {
@@ -1608,14 +1608,24 @@ int main(int argc, char** argv) {
         auto* keep =
             toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationPersistent"));
         auto* close = toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationClose"));
-        require(keep && close, "toolbar provides persistent mode and explicit exit");
+        auto* undo = toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationUndo"));
+        auto* redo = toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationRedo"));
+        require(keep && close && undo && redo && undo->isHidden() && redo->isHidden(),
+                "temporary mode hides persistent history actions");
         keep->setChecked(true);
+        require(!undo->isHidden() && !redo->isHidden() && !undo->isEnabled() && !redo->isEnabled(),
+                "persistent mode displays history actions without an empty history");
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
         require(toolbar->isVisible() && window->isVisible() &&
                     !window->testAttribute(Qt::WA_TransparentForMouseEvents),
                 "persistent mode retains the toolbar and remains ready for another mark");
+        require(undo->isEnabled() && !redo->isEnabled(), "a persistent mark can be undone");
+        undo->click();
+        require(!undo->isEnabled() && redo->isEnabled(), "undo moves the mark into redo history");
+        redo->click();
+        require(undo->isEnabled() && !redo->isEnabled(), "redo restores the persistent mark");
         now += 60000;
         require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
                     window->isVisible(),
@@ -1630,11 +1640,28 @@ int main(int argc, char** argv) {
                 "explicit exit fades persistent marks");
         controller.beginHold();
         keep->setChecked(false);
-        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
-        mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
-        mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        const auto heldModifiers = Qt::ShiftModifier | Qt::AltModifier;
+        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton,
+              heldModifiers);
+        mouse(canvas, QEvent::MouseMove, {150, 90}, Qt::NoButton, Qt::LeftButton, heldModifiers);
+        mouse(canvas, QEvent::MouseButtonRelease, {150, 90}, Qt::LeftButton, Qt::NoButton,
+              heldModifiers);
         require(toolbar->isVisible() && !window->testAttribute(Qt::WA_TransparentForMouseEvents),
                 "while held, the toolbar remains visible and another gesture remains available");
+        const QImage heldMark = canvas->grab().toImage();
+        int left = heldMark.width(), top = heldMark.height(), right = -1, bottom = -1;
+        for (int y = 0; y < heldMark.height(); ++y) {
+            for (int x = 0; x < heldMark.width(); ++x) {
+                if (qAlpha(heldMark.pixel(x, y)) == 0)
+                    continue;
+                left = std::min(left, x);
+                right = std::max(right, x);
+                top = std::min(top, y);
+                bottom = y;
+            }
+        }
+        require(right > left && bottom > top && (right - left) > (bottom - top) * 3 / 2,
+                "held shortcut modifiers do not constrain rectangle drag geometry");
         controller.endHold();
         require(window->testAttribute(Qt::WA_TransparentForMouseEvents),
                 "releasing hold without persistence restores mouse input");

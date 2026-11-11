@@ -38,7 +38,10 @@ class QuickAnnotationHoldMonitor::Impl final {
                     !AXIsProcessTrusted())
                     finish();
             } else {
-                modifiers([NSEvent modifierFlags]);
+                const auto flags = [NSEvent modifierFlags];
+                if (functionKeyDown && (flags & NSEventModifierFlagFunction) == 0)
+                    functionKeyDown = false;
+                modifiers(flags);
             }
         });
         const NSEventMask mask = NSEventMaskFlagsChanged | NSEventMaskKeyDown | NSEventMaskKeyUp;
@@ -70,7 +73,9 @@ class QuickAnnotationHoldMonitor::Impl final {
         currentChord = chord;
         finish();
         state = {};
-        if (chord == QStringLiteral("command_option"))
+        if (chord == QStringLiteral("function"))
+            required = NSEventModifierFlagFunction;
+        else if (chord == QStringLiteral("command_option"))
             required = NSEventModifierFlagCommand | NSEventModifierFlagOption;
         else if (chord == QStringLiteral("command_shift"))
             required = NSEventModifierFlagCommand | NSEventModifierFlagShift;
@@ -128,8 +133,11 @@ class QuickAnnotationHoldMonitor::Impl final {
             return;
         }
         if (event.type == NSEventTypeFlagsChanged) {
+            functionKeyDown = quickAnnotationFunctionKeyState(
+                functionKeyDown, event.keyCode,
+                (event.modifierFlags & NSEventModifierFlagFunction) != 0);
             if (activeKey >= 0) {
-                if ((event.modifierFlags & relevant) != activeFlags)
+                if (functionKeyDown || (event.modifierFlags & relevant) != activeFlags)
                     finish();
             } else {
                 modifiers(event.modifierFlags);
@@ -141,7 +149,7 @@ class QuickAnnotationHoldMonitor::Impl final {
         delay.stop();
         if (state.otherKey())
             finish();
-        if (!AXIsProcessTrusted() || active || activeKey >= 0)
+        if (!AXIsProcessTrusted() || active || activeKey >= 0 || functionKeyDown)
             return;
         for (const auto& binding : bindings) {
             if (binding.key == static_cast<int>(event.keyCode) &&
@@ -156,14 +164,17 @@ class QuickAnnotationHoldMonitor::Impl final {
         }
     }
     void modifiers(NSEventModifierFlags flags) {
-        const auto transition = state.modifiers(AXIsProcessTrusted() && required != 0 &&
-                                                (flags & relevant) == required);
+        const bool matched =
+            required == NSEventModifierFlagFunction
+                ? functionKeyDown && (flags & relevant) == 0
+                : !functionKeyDown && required != 0 && (flags & relevant) == required;
+        const auto transition = state.modifiers(AXIsProcessTrusted() && matched);
         if (transition == QuickAnnotationHoldState::Change::Schedule) {
             activeTool = QStringLiteral("default");
             delay.start();
         } else if (transition == QuickAnnotationHoldState::Change::End)
             finish();
-        else if (required == 0 || (flags & relevant) != required)
+        else if (!matched)
             delay.stop();
     }
     void finish() {
@@ -183,6 +194,7 @@ class QuickAnnotationHoldMonitor::Impl final {
     int activeKey = -1;
     NSEventModifierFlags activeFlags = 0;
     bool keyPending = false;
+    bool functionKeyDown = false;
     QuickAnnotationHoldState state;
     QTimer delay;
     QTimer watchdog;
