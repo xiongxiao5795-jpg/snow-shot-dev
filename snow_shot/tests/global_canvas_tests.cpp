@@ -1519,7 +1519,7 @@ int main(int argc, char** argv) {
                 toolbar = candidate;
         }
         require(toolbar && toolbar->isVisible(), "show quick annotation toolbar");
-        auto* floating = qobject_cast<presentation::ScreenshotFloatingToolPaletteWindow*>(toolbar);
+        auto* floating = qobject_cast<ScreenshotFloatingToolPaletteWindow*>(toolbar);
         require(floating && floating->palette()->dragHandle(),
                 "quick annotation reuses the draggable screenshot toolbar");
         const QRect screenBounds = QGuiApplication::primaryScreen()->availableGeometry();

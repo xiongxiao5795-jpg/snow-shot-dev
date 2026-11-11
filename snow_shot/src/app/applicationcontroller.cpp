@@ -1920,6 +1920,12 @@ class ApplicationController::Impl {
                              &floatingToolbar,
                              &presentation::FloatingToolbarController::setCaptureActive);
             QObject::connect(directCaptureController.get(),
+                             &presentation::DirectCaptureController::captureActivityChanged, &q,
+                             [this](const QString&, bool active) {
+                                 if (active && quickAnnotationController)
+                                     quickAnnotationController->suspendForScreenshot();
+                             });
+            QObject::connect(directCaptureController.get(),
                              &presentation::DirectCaptureController::operationFailed, &q,
                              [this](const QString& message, bool warning) {
                                  systemTray.showCaptureMessage(message, warning);
