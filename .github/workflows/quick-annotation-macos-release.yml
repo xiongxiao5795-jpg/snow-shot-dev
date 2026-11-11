@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: quick-annotation-macos-incremental-${{ github.ref }}
+  group: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[skip release]') && format('quick-annotation-skipped-{0}', github.run_id) || format('quick-annotation-macos-incremental-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
