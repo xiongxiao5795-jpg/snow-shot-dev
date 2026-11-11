@@ -986,6 +986,7 @@ set(SNOW_SHOT_SETTINGS_SOURCES
     src/presentation/components/customaimodelssettingswidget.cpp
     src/presentation/components/settingscustomwidget.cpp
     src/presentation/quickannotation/quickannotationsettingswidget.h
+    src/presentation/quickannotation/quickannotationholdsettingswidget.h
     src/presentation/components/settingspagewidget.cpp
     include/snow_shot/presentation/components/screenrecordingsettingsdialog.h
     include/snow_shot/presentation/components/screenrecordingmodal.h

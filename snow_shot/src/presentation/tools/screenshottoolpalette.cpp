@@ -1084,6 +1084,7 @@ ScreenshotToolPalette::ScreenshotToolPalette(const Options& options, QWidget* pa
                             ? SnowCanvasStyleEditTarget::Selection
                             : SnowCanvasStyleEditTarget::Creation}));
                 },
+                options.showQuickAnnotationActions,
             },
             m_styleDefaults, options.watermarkTemplateClock);
     }

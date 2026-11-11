@@ -2,6 +2,7 @@
 
 #include "screenshottoolbarperfinstrumentation.h"
 #include "screenshottoolpalettestylepresets.h"
+#include "../quickannotation/quickannotationoptions.h"
 #include "snow_shot/storage/applicationstorage.h"
 #include "snow_shot/storage/configurationstore.h"
 
@@ -41,6 +42,15 @@ QVector<QColor> colorPresetsForSource(ScreenshotToolPaletteColorPresetSource sou
         return fixedColors;
     case ScreenshotToolPaletteColorPresetSource::Stroke:
         return style_presets::strokeColors();
+    case ScreenshotToolPaletteColorPresetSource::QuickAnnotation: {
+        auto& storage = storage::ApplicationStorage::instance();
+        return storage.isInitialized() ? QuickAnnotationOptions::fromJson(
+                                             storage.configuration()
+                                                 .value(QStringLiteral("quick_annotation/options"))
+                                                 .toObject())
+                                             .colorPresets
+                                       : QuickAnnotationOptions{}.colorPresets;
+    }
     case ScreenshotToolPaletteColorPresetSource::Fill:
         return style_presets::shapeFillColors();
     case ScreenshotToolPaletteColorPresetSource::Highlight:
@@ -55,6 +65,8 @@ QString colorPresetSettingsKey(ScreenshotToolPaletteColorPresetSource source) {
         return {};
     case ScreenshotToolPaletteColorPresetSource::Stroke:
         return QStringLiteral("screenshot/stroke_color_presets");
+    case ScreenshotToolPaletteColorPresetSource::QuickAnnotation:
+        return QStringLiteral("quick_annotation/options");
     case ScreenshotToolPaletteColorPresetSource::Fill:
         return QStringLiteral("screenshot/fill_color_presets");
     case ScreenshotToolPaletteColorPresetSource::Highlight:

@@ -100,6 +100,7 @@ struct ScreenshotToolPaletteStyleControlCallbacks {
     std::function<QWidget*()> watermarkTemplateModalOwnerWindow;
     std::function<void(const SnowCanvasMagnifierStyle& style, quint32 properties)>
         magnifierStyleChanged;
+    bool quickAnnotation = false;
 };
 
 // Palette-owned row services used by the family builders. The palette supplies

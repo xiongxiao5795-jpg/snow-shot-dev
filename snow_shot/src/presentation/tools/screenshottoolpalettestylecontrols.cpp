@@ -1708,7 +1708,9 @@ ScreenshotToolPaletteShapeFamilyResult ScreenshotToolPaletteStyleControls::build
     };
     strokeConfig.colorValues = buildingStyle.strokeColorValues();
     strokeConfig.presetSource =
-        snow_shot::presentation::ScreenshotToolPaletteColorPresetSource::Stroke;
+        m_callbacks.quickAnnotation
+            ? snow_shot::presentation::ScreenshotToolPaletteColorPresetSource::QuickAnnotation
+            : snow_shot::presentation::ScreenshotToolPaletteColorPresetSource::Stroke;
     strokeConfig.colorTooltip = [](const QColor& color) {
         return ScreenshotToolPaletteTranslationText("Stroke color %1").arg(color.name());
     };
@@ -1935,7 +1937,9 @@ QWidget* ScreenshotToolPaletteStyleControls::buildArrowFamily(
     };
     arrowStrokeConfig.colorValues = style_presets::strokeColors();
     arrowStrokeConfig.presetSource =
-        snow_shot::presentation::ScreenshotToolPaletteColorPresetSource::Stroke;
+        m_callbacks.quickAnnotation
+            ? snow_shot::presentation::ScreenshotToolPaletteColorPresetSource::QuickAnnotation
+            : snow_shot::presentation::ScreenshotToolPaletteColorPresetSource::Stroke;
     arrowStrokeConfig.colorTooltip = [](const QColor& color) {
         return ScreenshotToolPaletteTranslationText("Arrow color %1").arg(color.name());
     };

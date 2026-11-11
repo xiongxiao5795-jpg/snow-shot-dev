@@ -54,7 +54,13 @@ adqt::widgets::AdColorPicker* createScreenshotToolPaletteColorPicker(
 
 // Non-owning group of identical color preset buttons, whether in a toolbar or popup.
 // Widget ownership remains with the supplied parent; clear() releases the bindings.
-enum class ScreenshotToolPaletteColorPresetSource { Fixed, Stroke, Fill, Highlight };
+enum class ScreenshotToolPaletteColorPresetSource {
+    Fixed,
+    Stroke,
+    Fill,
+    Highlight,
+    QuickAnnotation
+};
 
 class ScreenshotToolPaletteColorPresets final {
   public:
