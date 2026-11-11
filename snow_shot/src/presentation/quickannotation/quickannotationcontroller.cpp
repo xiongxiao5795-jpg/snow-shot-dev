@@ -241,7 +241,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     explicit AnnotationWindow(QScreen* screen, std::function<void()> onError,
                               std::function<qint64()> clock,
                               std::function<bool(QWidget*, bool)> setInputTransparent,
-                              std::function<void()> onComplete, std::function<void()> onExit,
+                              std::function<void(bool)> onComplete, std::function<void()> onExit,
                               std::function<bool()> toolbarActive,
                               std::function<bool()> ignoreModifiers,
                               std::function<void(AnnotationWindow*)> onPersistentMark)
@@ -474,7 +474,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         if (!releaseInput(true)) {
             m_canvas.resetEditingState();
             m_canvas.clearDocument();
-            m_onComplete();
+            m_onComplete(false);
             return;
         }
         if (m_canvas.canvasHistoryState().canUndo) {
@@ -515,7 +515,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         if (m_marks.empty())
             hide();
         m_canvas.update();
-        m_onComplete();
+        m_onComplete(true);
     }
 
     bool releaseInput(bool keepVisible = false) {
@@ -554,7 +554,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     std::function<void()> m_onError;
     std::function<qint64()> m_now;
     std::function<bool(QWidget*, bool)> m_setInputTransparent;
-    std::function<void()> m_onComplete;
+    std::function<void(bool)> m_onComplete;
     std::function<void()> m_onExit;
     std::function<bool()> m_toolbarActive;
     std::function<void(AnnotationWindow*)> m_onPersistentMark;
@@ -715,7 +715,15 @@ class QuickAnnotationController::Impl {
                         QuickAnnotationController::tr("Could not change canvas click-through"));
                 },
                 now, input,
-                [this] {
+                [this](bool success) {
+                    if (!success) {
+                        holdActive = false;
+                        holdKeyDown = false;
+                        if (toolbar)
+                            toolbar->hide();
+                        fadeMarks();
+                        return;
+                    }
                     if (options.persistent || holdActive) {
                         arm(lastTool);
                         if (toolbar)

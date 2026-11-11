@@ -1693,7 +1693,7 @@ int main(int argc, char** argv) {
         int errors = 0;
         QObject::connect(&failed, &presentation::QuickAnnotationController::errorOccurred, &failed,
                          [&errors](const QString&) { ++errors; });
-        failed.arm(presentation::QuickAnnotationTool::Brush);
+        failed.beginHold();
         require(failedWindow && failedWindow->isVisible(), "failure fixture arms the canvas");
         auto* failedCanvas =
             failedWindow->findChild<SnowCanvasWidget*>(QStringLiteral("quickAnnotationCanvas"));
@@ -1702,7 +1702,7 @@ int main(int argc, char** argv) {
         mouse(failedCanvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
         mouse(failedCanvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
         require(!failedWindow->isVisible() && errors == 1,
-                "failed click-through hides the input blocker and reports an error");
+                "failed click-through exits held mode, hides the blocker and reports an error");
         auto* secondary = new CanvasTestScreen;
         QWindowSystemInterface::handleScreenAdded(secondary);
         {
