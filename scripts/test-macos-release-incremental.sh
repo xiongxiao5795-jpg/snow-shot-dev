@@ -30,6 +30,29 @@ ccache clang++ -c "$work/value.cpp" -o "$work/value.o"
 clang++ "$work/value.o" -o "$work/cpp-fixture"
 [[ "$("$work/cpp-fixture")" == new ]]
 
+# Apple's ThinLTO cache must reuse prior work without hiding a changed object.
+mkdir -p "$work/thinlto-cache"
+cat > "$work/lto-main.cpp" <<'CPP'
+#include <cstdio>
+const char* value();
+int main() { std::puts(value()); }
+CPP
+printf 'const char* value() { return "old"; }\n' > "$work/lto-value.cpp"
+clang++ -O2 -flto=thin -c "$work/lto-main.cpp" -o "$work/lto-main.o"
+clang++ -O2 -flto=thin -c "$work/lto-value.cpp" -o "$work/lto-value.o"
+clang++ -O2 -flto=thin -Wl,-cache_path_lto,"$work/thinlto-cache" \
+    "$work/lto-main.o" "$work/lto-value.o" -o "$work/lto-fixture"
+[[ "$("$work/lto-fixture")" == old ]]
+[[ -n "$(find "$work/thinlto-cache" -type f -name 'llvmcache-*' -print -quit)" ]]
+clang++ -O2 -flto=thin -Wl,-cache_path_lto,"$work/thinlto-cache" \
+    "$work/lto-main.o" "$work/lto-value.o" -o "$work/lto-fixture"
+[[ "$("$work/lto-fixture")" == old ]]
+printf 'const char* value() { return "new"; }\n' > "$work/lto-value.cpp"
+clang++ -O2 -flto=thin -c "$work/lto-value.cpp" -o "$work/lto-value.o"
+clang++ -O2 -flto=thin -Wl,-cache_path_lto,"$work/thinlto-cache" \
+    "$work/lto-main.o" "$work/lto-value.o" -o "$work/lto-fixture"
+[[ "$("$work/lto-fixture")" == new ]]
+
 manifest="$work/rust/snow-crates/cache-fixture/Cargo.toml"
 source="$work/rust/snow-crates/cache-fixture/src/main.rs"
 cat > "$manifest" <<'TOML'
@@ -69,4 +92,4 @@ python3 "$GITHUB_WORKSPACE/scripts/macos-release-cache.py" prepare \
     --root "$work/rust" --expected "$new_sha" --cargo-dir "$CARGO_TARGET_DIR"
 cargo build --offline --release --manifest-path "$manifest"
 [[ "$("$CARGO_TARGET_DIR/release/snow-release-cache-fixture")" == new ]]
-printf 'C++ and Rust caches reused unchanged inputs and rebuilt changed inputs.\n'
+printf 'C++, ThinLTO and Rust caches reused unchanged inputs and rebuilt changed inputs.\n'
