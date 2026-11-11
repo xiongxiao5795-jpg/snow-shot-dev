@@ -54,7 +54,8 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         m_fade = slider("quickAnnotationSettingsFade", 0, 3, 0.1);
         const styles::ThemeAliasMetricToken metric;
         QVector<QWidget*> controls{m_tool};
-        controls += {m_color, presetsHost, m_width, m_hold, m_fade};
+        controls += {m_color, presetsHost, sliderControl(m_width, &m_widthLabel),
+                     sliderControl(m_hold, &m_holdLabel), sliderControl(m_fade, &m_fadeLabel)};
         for (QWidget* control : controls) {
             QLabel* title = nullptr;
             QLabel* description = nullptr;
@@ -135,6 +136,7 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
              {QStringLiteral("arrow"), QCoreApplication::translate("SettingsCatalog", "Arrow")},
              {QStringLiteral("brush"), QCoreApplication::translate("SettingsCatalog", "Brush")}});
         m_tool->setCurrentValue(selected);
+        updateValueLabels();
     }
 
   private:
@@ -145,6 +147,31 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         value->setSingleStep(step);
         value->setFixedWidth(160);
         return value;
+    }
+    QWidget* sliderControl(adqt::widgets::AdSlider* slider, QLabel** valueLabel) {
+        auto* host = new QWidget(this);
+        auto* layout = new QHBoxLayout(host);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto* label = new QLabel(host);
+        label->setObjectName(slider->objectName() + QStringLiteral("Value"));
+        *valueLabel = label;
+        label->setMinimumWidth(48);
+        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        layout->addWidget(slider);
+        layout->addWidget(label);
+        connect(slider, &adqt::widgets::AdSlider::valueChanged, host,
+                [this](double) { updateValueLabels(); });
+        return host;
+    }
+    void updateValueLabels() {
+        if (m_widthLabel)
+            m_widthLabel->setText(QString::number(m_width->value(), 'f', 0));
+        if (m_holdLabel)
+            m_holdLabel->setText(QCoreApplication::translate("SettingsCatalog", "%1 s")
+                                     .arg(QString::number(m_hold->value(), 'f', 1)));
+        if (m_fadeLabel)
+            m_fadeLabel->setText(QCoreApplication::translate("SettingsCatalog", "%1 s")
+                                     .arg(QString::number(m_fade->value(), 'f', 1)));
     }
     void refresh() {
         auto& storage = storage::ApplicationStorage::instance();
@@ -167,6 +194,7 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         m_width->setValue(options.width);
         m_hold->setValue(options.holdMs / 1000.0);
         m_fade->setValue(options.fadeMs / 1000.0);
+        updateValueLabels();
     }
     template <typename Change> void save(Change change) {
         auto& storage = storage::ApplicationStorage::instance();
@@ -185,6 +213,9 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
     adqt::widgets::AdSlider* m_width = nullptr;
     adqt::widgets::AdSlider* m_hold = nullptr;
     adqt::widgets::AdSlider* m_fade = nullptr;
+    QLabel* m_widthLabel = nullptr;
+    QLabel* m_holdLabel = nullptr;
+    QLabel* m_fadeLabel = nullptr;
     QVector<QLabel*> m_titles;
     QVector<QLabel*> m_descriptions;
 };

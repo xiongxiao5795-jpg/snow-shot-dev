@@ -1136,6 +1136,10 @@
             <translation>%</translation>
         </message>
         <message>
+            <source>%1 s</source>
+            <translation>%1 秒</translation>
+        </message>
+        <message>
             <source>10</source>
             <translation>10</translation>
         </message>

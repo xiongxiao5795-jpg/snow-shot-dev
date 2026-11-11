@@ -9,6 +9,7 @@
 #include "widgets/switch.h"
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QLabel>
 #include <QTemporaryDir>
 
 #include <cstdlib>
@@ -42,7 +43,10 @@ int main(int argc, char** argv) {
             QStringLiteral("quickAnnotationSettingsHold"));
         auto* fade = widget.findChild<adqt::widgets::AdSlider*>(
             QStringLiteral("quickAnnotationSettingsFade"));
-        require(tool && color && preset && width && hold && fade &&
+        auto* holdValue =
+            widget.findChild<QLabel*>(QStringLiteral("quickAnnotationSettingsHoldValue"));
+        require(tool && color && preset && width && hold && fade && holdValue &&
+                    holdValue->text() == QStringLiteral("0.3 s") &&
                     tool->currentValue().toString() == QStringLiteral("rounded_rectangle") &&
                     hold->value() == 0.3 && fade->value() == 0.5 && color->presets().size() == 1 &&
                     color->presets().front().colors.size() == 5,
@@ -52,6 +56,8 @@ int main(int argc, char** argv) {
         preset->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#abcdef"))));
         width->setValue(7);
         hold->setValue(3.0);
+        require(holdValue->text() == QStringLiteral("3.0 s"),
+                "the duration slider displays its current value");
         fade->setValue(1.2);
         const auto key = QStringLiteral("quick_annotation/options");
         auto& configuration = storage.configuration();
