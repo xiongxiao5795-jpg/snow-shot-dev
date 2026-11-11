@@ -572,8 +572,10 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
 class QuickAnnotationController::Impl {
   public:
     Impl(QuickAnnotationController& owner, std::function<qint64()> clock,
-         std::function<bool(QWidget*, bool)> setInputTransparent)
-        : q(owner), now(std::move(clock)), input(std::move(setInputTransparent)) {
+         std::function<bool(QWidget*, bool)> setInputTransparent,
+         std::function<QScreen*()> screenAtCursor)
+        : q(owner), now(std::move(clock)), input(std::move(setInputTransparent)),
+          cursorScreen(std::move(screenAtCursor)) {
         if (!input)
             input = setGlobalCanvasInputTransparent;
         auto& storage = storage::ApplicationStorage::instance();
@@ -698,7 +700,7 @@ class QuickAnnotationController::Impl {
         }
         const QPoint position =
             platform::PhysicalCursor().logicalPosition().value_or(QCursor::pos()).toPoint();
-        QScreen* screen = QGuiApplication::screenAt(position);
+        QScreen* screen = cursorScreen ? cursorScreen() : QGuiApplication::screenAt(position);
         if (!screen)
             screen = QGuiApplication::primaryScreen();
         if (!screen)
@@ -754,6 +756,7 @@ class QuickAnnotationController::Impl {
     QuickAnnotationController& q;
     std::function<qint64()> now;
     std::function<bool(QWidget*, bool)> input;
+    std::function<QScreen*()> cursorScreen;
     QuickAnnotationTool lastTool = QuickAnnotationTool::RoundedRectangle;
     QuickAnnotationOptions options;
     bool holdActive = false;
@@ -771,8 +774,14 @@ QuickAnnotationController::QuickAnnotationController(QObject* parent, std::funct
 QuickAnnotationController::QuickAnnotationController(
     QObject* parent, std::function<qint64()> clock,
     std::function<bool(QWidget*, bool)> setInputTransparent)
+    : QuickAnnotationController(parent, std::move(clock), std::move(setInputTransparent), {}) {}
+QuickAnnotationController::QuickAnnotationController(
+    QObject* parent, std::function<qint64()> clock,
+    std::function<bool(QWidget*, bool)> setInputTransparent,
+    std::function<QScreen*()> screenAtCursor)
     : QObject(parent),
-      m_impl(std::make_unique<Impl>(*this, std::move(clock), std::move(setInputTransparent))) {}
+      m_impl(std::make_unique<Impl>(*this, std::move(clock), std::move(setInputTransparent),
+                                    std::move(screenAtCursor))) {}
 QuickAnnotationController::~QuickAnnotationController() = default;
 void QuickAnnotationController::arm(QuickAnnotationTool tool) {
     showToolbar(false);

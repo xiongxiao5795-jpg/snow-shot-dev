@@ -36,6 +36,7 @@
 #include <QTabletEvent>
 #include <QPainter>
 #include <QScreen>
+#include <QSet>
 #include <QSpinBox>
 #include <QScopeGuard>
 #include <QTemporaryDir>
@@ -1693,6 +1694,36 @@ int main(int argc, char** argv) {
         mouse(failedCanvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
         require(!failedWindow->isVisible() && errors == 1,
                 "failed click-through hides the input blocker and reports an error");
+        auto* secondary = new CanvasTestScreen;
+        QWindowSystemInterface::handleScreenAdded(secondary);
+        {
+            QSet<QWidget*> existing;
+            for (QWidget* candidate : QApplication::topLevelWidgets())
+                existing.insert(candidate);
+            presentation::QuickAnnotationController otherScreen(
+                nullptr, [&now] { return now; }, [](QWidget*, bool) { return true; },
+                [secondary] { return secondary->screen(); });
+            otherScreen.showToolbar();
+            QApplication::processEvents();
+            QWidget* secondaryOverlay = nullptr;
+            QWidget* primaryToolbar = nullptr;
+            for (QWidget* candidate : QApplication::topLevelWidgets()) {
+                if (existing.contains(candidate))
+                    continue;
+                if (candidate->objectName() == QStringLiteral("quickAnnotationWindow"))
+                    secondaryOverlay = candidate;
+                if (candidate->objectName() == QStringLiteral("quickAnnotationToolbar"))
+                    primaryToolbar = candidate;
+            }
+            require(secondaryOverlay &&
+                        secondaryOverlay->geometry() == secondary->screen()->geometry() &&
+                        primaryToolbar && primaryToolbar->isVisible() &&
+                        primaryToolbar->windowHandle() &&
+                        primaryToolbar->windowHandle()->transientParent() == nullptr,
+                    "secondary-screen annotation keeps the primary toolbar independently visible");
+        }
+        QWindowSystemInterface::handleScreenRemoved(secondary);
+        QApplication::processEvents();
         storage.shutdown();
         return 0;
     }
