@@ -82,6 +82,7 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
         QStringLiteral("quick_annotation/toolbar_layout"),
         QStringLiteral("quick_annotation/tray_menu_v2_migrated"),
         QStringLiteral("quick_annotation/fn_default_migrated"),
+        QStringLiteral("quick_annotation/duration_defaults_migrated"),
         QStringLiteral("quick_annotation/tray_menu_migrated"),
         QStringLiteral("quick_annotation/shortcut_defaults_migrated"),
     };
@@ -291,7 +292,9 @@ void quickAnnotationShortcutMigration() {
                 {QStringLiteral("quick_annotation"),
                  QJsonObject{
                      {QStringLiteral("options"), QJsonObject{{QStringLiteral("hold_shortcut"),
-                                                              QStringLiteral("command_option")}}}}},
+                                                              QStringLiteral("command_option")},
+                                                             {QStringLiteral("hold_ms"), 1500},
+                                                             {QStringLiteral("fade_ms"), 600}}}}},
                 {QStringLiteral("global_shortcuts"),
                  QJsonObject{
                      {QStringLiteral("quick_annotation"), shortcutBindingsToJson({oldDefault})},
@@ -305,6 +308,13 @@ void quickAnnotationShortcutMigration() {
                     .toObject()
                     .value(QStringLiteral("hold_shortcut")) == QStringLiteral("function"),
             "migrate the previous default hold shortcut to fn");
+    require(config.value(QStringLiteral("quick_annotation/options"))
+                        .toObject()
+                        .value(QStringLiteral("hold_ms")) == 300 &&
+                config.value(QStringLiteral("quick_annotation/options"))
+                        .toObject()
+                        .value(QStringLiteral("fade_ms")) == 500,
+            "migrate the previous default durations");
     const auto quick = shortcutBindingsFromJson(
         config.value(QStringLiteral("global_shortcuts/quick_annotation")), true);
     const auto brush = shortcutBindingsFromJson(
@@ -372,6 +382,32 @@ void quickAnnotationToolbarIsIndependent() {
                     quickLayout,
             "quick toolbar edits do not change screenshot toolbar layout");
 }
+
+void quickAnnotationCustomDurationsRemain() {
+    QTemporaryDir dir;
+    require(dir.isValid(), "create quick annotation duration fixture");
+    const QString path = dir.filePath(QStringLiteral("config.json"));
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "write custom quick annotation durations");
+    file.write(QJsonDocument(QJsonObject{
+        {
+            QStringLiteral("quick_annotation"), QJsonObject {
+                {
+                    QStringLiteral("options"), QJsonObject {
+                        {QStringLiteral("hold_ms"), 1500}, {QStringLiteral("fade_ms"), 1200}
+                    }
+                }
+            }
+        }}
+})
+                   .toJson());
+file.close();
+snow_shot::storage::ConfigurationStore config(path, true, true);
+const auto options = config.value(QStringLiteral("quick_annotation/options")).toObject();
+require(options.value(QStringLiteral("hold_ms")) == 1500 &&
+            options.value(QStringLiteral("fade_ms")) == 1200,
+        "custom duration values survive default migration");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -384,6 +420,7 @@ int main(int argc, char** argv) {
     nativeDefaultsRemainIntact(movies, pictures);
     quickAnnotationTrayMigration();
     quickAnnotationToolbarIsIndependent();
+    quickAnnotationCustomDurationsRemain();
 #ifdef Q_OS_MACOS
     quickAnnotationShortcutMigration();
 #endif

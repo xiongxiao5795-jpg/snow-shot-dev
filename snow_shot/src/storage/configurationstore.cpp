@@ -285,6 +285,20 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
             }
         }
 #endif
+        if (entry.key == QStringLiteral("quick_annotation/options") && mutateDocument &&
+            raw.isObject() &&
+            !currentOverlay.contains(
+                QStringLiteral("quick_annotation/duration_defaults_migrated"))) {
+            QJsonObject options = raw.toObject();
+            if (options.value(QStringLiteral("hold_ms")).toInt(-1) == 1500 &&
+                options.value(QStringLiteral("fade_ms")).toInt(-1) == 600) {
+                options.insert(QStringLiteral("hold_ms"), 300);
+                options.insert(QStringLiteral("fade_ms"), 500);
+                raw = options;
+                insertPath(&result.document, entry.key, raw);
+                result.dirty = true;
+            }
+        }
         // Add the new menu entry once for existing profiles, preserving all custom options.
         if (entry.key == QStringLiteral("tray/menu_options") && mutateDocument && raw.isArray() &&
             !currentOverlay.contains(QStringLiteral("quick_annotation/tray_menu_v2_migrated"))) {
