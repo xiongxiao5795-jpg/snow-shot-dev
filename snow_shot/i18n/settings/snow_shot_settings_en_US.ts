@@ -2764,10 +2764,6 @@
             <translation>Highlight color presets</translation>
         </message>
         <message>
-            <source>Hold the modifier keys to annotate; release to exit unless marks are kept. Requires Accessibility permission</source>
-            <translation>Hold the modifier keys to annotate; release to exit unless marks are kept. Requires Accessibility permission</translation>
-        </message>
-        <message>
             <source>Hold time</source>
             <translation>Hold time</translation>
         </message>
@@ -4260,14 +4256,6 @@
             <translation>Shadow color</translation>
         </message>
         <message>
-            <source>Shadow radius</source>
-            <translation>Shadow radius</translation>
-        </message>
-        <message>
-            <source>Shadow range around marks, from 0 to 25 pt</source>
-            <translation>Shadow range around marks, from 0 to 25 pt</translation>
-        </message>
-        <message>
             <source>Shake a window to hide/show other windows</source>
             <translation>Shake a window to hide/show other windows</translation>
         </message>
@@ -4286,6 +4274,10 @@
         <message>
             <source>Shortcut hint opacity</source>
             <translation>Shortcut hint opacity</translation>
+        </message>
+        <message>
+            <source>Shortcut is invalid or already in use</source>
+            <translation>Shortcut is invalid or already in use</translation>
         </message>
         <message>
             <source>Shortcut keys for annotation tools</source>

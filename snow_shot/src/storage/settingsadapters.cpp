@@ -2458,6 +2458,8 @@ bool ScreenshotToolbarSettings::setLastDrawingTool(const QString& tool) const {
 namespace {
 QString screenshotToolbarLayoutKey(ScreenshotToolbarLayoutKind kind) {
     switch (kind) {
+    case ScreenshotToolbarLayoutKind::QuickAnnotationTools:
+        return QStringLiteral("quick_annotation/toolbar_layout");
     case ScreenshotToolbarLayoutKind::FloatingTools:
         return QStringLiteral("floating_toolbar/layout");
     case ScreenshotToolbarLayoutKind::DrawingTools:

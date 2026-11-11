@@ -78,6 +78,9 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
         QStringLiteral("global_shortcuts/quick_annotation_toolbar"),
         QStringLiteral("quick_annotation/last_tool"),
         QStringLiteral("quick_annotation/options"),
+        QStringLiteral("quick_annotation/hold_bindings"),
+        QStringLiteral("quick_annotation/toolbar_layout"),
+        QStringLiteral("quick_annotation/tray_menu_v2_migrated"),
         QStringLiteral("quick_annotation/tray_menu_migrated"),
         QStringLiteral("quick_annotation/shortcut_defaults_migrated"),
     };
@@ -319,6 +322,8 @@ void quickAnnotationTrayMigration() {
                 {QStringLiteral("storage"),
                  QJsonObject{{QStringLiteral("schema_version"),
                               snow_shot::storage::ConfigurationStore::currentSchemaVersion()}}},
+                {QStringLiteral("quick_annotation"),
+                 QJsonObject{{QStringLiteral("tray_menu_migrated"), true}}},
                 {QStringLiteral("tray"), QJsonObject{{QStringLiteral("menu_options"), original}}}})
             .toJson());
     file.close();

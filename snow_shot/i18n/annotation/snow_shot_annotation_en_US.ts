@@ -1702,10 +1702,6 @@
     <context>
         <name>snow_shot::presentation::QuickAnnotationController</name>
         <message>
-            <source> s</source>
-            <translation> s</translation>
-        </message>
-        <message>
             <source>Could not change canvas click-through</source>
             <translation>Could not change canvas click-through</translation>
         </message>

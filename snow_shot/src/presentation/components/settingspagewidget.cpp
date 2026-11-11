@@ -95,12 +95,14 @@ permissionForRenderer(settings::SettingsCustomRenderer renderer) {
         return Permission::InputMonitoring;
     case Renderer::PermissionMicrophone:
         return Permission::Microphone;
+    case Renderer::QuickAnnotationHoldShortcuts:
     case Renderer::QuickAnnotationOptions:
     case Renderer::CloudUploadConfigurations:
     case Renderer::TextTranslationConfigurations:
     case Renderer::CustomAiModels:
     case Renderer::McpStatus:
     case Renderer::StorageStatus:
+    case Renderer::QuickAnnotationToolbarEditor:
     case Renderer::DrawingToolbarEditor:
     case Renderer::ScreenshotToolbarEditor:
     case Renderer::RecordingToolbarEditor:
@@ -709,6 +711,8 @@ class SettingsPageWidget::Impl {
                         // visible section. Defer their drag surfaces and tool buttons
                         // independently from the section's ordinary settings rows.
                         if (payload.renderer ==
+                                settings::SettingsCustomRenderer::QuickAnnotationToolbarEditor ||
+                            payload.renderer ==
                                 settings::SettingsCustomRenderer::DrawingToolbarEditor ||
                             payload.renderer ==
                                 settings::SettingsCustomRenderer::ScreenshotToolbarEditor ||

@@ -21,6 +21,8 @@ namespace snow_shot::presentation::settings {
 namespace {
 SettingsCustomRenderer toolbarRenderer(storage::ScreenshotToolbarLayoutKind kind) {
     switch (kind) {
+    case storage::ScreenshotToolbarLayoutKind::QuickAnnotationTools:
+        return SettingsCustomRenderer::QuickAnnotationToolbarEditor;
     case storage::ScreenshotToolbarLayoutKind::DrawingTools:
         return SettingsCustomRenderer::DrawingToolbarEditor;
     case storage::ScreenshotToolbarLayoutKind::ActionTools:
@@ -1007,6 +1009,7 @@ QVariant SettingsRuntimeSession::readValue(const SettingsFieldDescriptor& descri
                 switch (payload.renderer) {
                 case SettingsCustomRenderer::CloudUploadConfigurations:
                     return QVariant::fromValue(m_backend.cloudUploadSettings());
+                case SettingsCustomRenderer::QuickAnnotationHoldShortcuts:
                 case SettingsCustomRenderer::QuickAnnotationOptions:
                 case SettingsCustomRenderer::McpStatus:
                 case SettingsCustomRenderer::PermissionScreenRecording:
@@ -1014,6 +1017,9 @@ QVariant SettingsRuntimeSession::readValue(const SettingsFieldDescriptor& descri
                 case SettingsCustomRenderer::PermissionInputMonitoring:
                 case SettingsCustomRenderer::PermissionMicrophone:
                     return {};
+                case SettingsCustomRenderer::QuickAnnotationToolbarEditor:
+                    return QVariant::fromValue(m_backend.toolbarLayout(
+                        storage::ScreenshotToolbarLayoutKind::QuickAnnotationTools));
                 case SettingsCustomRenderer::DrawingToolbarEditor:
                     return QVariant::fromValue(m_backend.toolbarLayout(
                         storage::ScreenshotToolbarLayoutKind::DrawingTools));
@@ -1099,6 +1105,7 @@ bool SettingsRuntimeSession::writeValue(const SettingsFieldDescriptor& descripto
                     payload.action, value.value<SettingsGlobalMouseCombination>());
             } else if constexpr (std::is_same_v<Payload, SettingsCustomDefinition>) {
                 switch (payload.renderer) {
+                case SettingsCustomRenderer::QuickAnnotationHoldShortcuts:
                 case SettingsCustomRenderer::QuickAnnotationOptions:
                 case SettingsCustomRenderer::McpStatus:
                 case SettingsCustomRenderer::PermissionScreenRecording:
@@ -1106,6 +1113,11 @@ bool SettingsRuntimeSession::writeValue(const SettingsFieldDescriptor& descripto
                 case SettingsCustomRenderer::PermissionInputMonitoring:
                 case SettingsCustomRenderer::PermissionMicrophone:
                     return {};
+                case SettingsCustomRenderer::QuickAnnotationToolbarEditor:
+                    return value.canConvert<storage::ScreenshotToolbarLayout>() &&
+                           m_backend.applyToolbarLayout(
+                               storage::ScreenshotToolbarLayoutKind::QuickAnnotationTools,
+                               value.value<storage::ScreenshotToolbarLayout>());
                 case SettingsCustomRenderer::FloatingToolbarEditor:
                     return value.canConvert<storage::ScreenshotToolbarLayout>() &&
                            m_backend.applyToolbarLayout(
@@ -1253,7 +1265,8 @@ bool SettingsRuntimeSession::valuesEqual(const SettingsFieldDescriptor& descript
     }
     if (std::holds_alternative<SettingsCustomDefinition>(descriptor.definition->payload)) {
         const auto& custom = std::get<SettingsCustomDefinition>(descriptor.definition->payload);
-        if (custom.renderer == SettingsCustomRenderer::DrawingToolbarEditor ||
+        if (custom.renderer == SettingsCustomRenderer::QuickAnnotationToolbarEditor ||
+            custom.renderer == SettingsCustomRenderer::DrawingToolbarEditor ||
             custom.renderer == SettingsCustomRenderer::ScreenshotToolbarEditor ||
             custom.renderer == SettingsCustomRenderer::PinnedToolbarEditor ||
             custom.renderer == SettingsCustomRenderer::RecordingToolbarEditor ||

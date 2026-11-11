@@ -1,4 +1,5 @@
 #include "../quickannotation/quickannotationsettingswidget.h"
+#include "../quickannotation/quickannotationholdsettingswidget.h"
 #include "snow_shot/app/distribution.h"
 #include "snow_shot/app/mcp/mcpstartuperror.h"
 #include "snow_shot/presentation/components/clouduploadsettingswidget.h"
@@ -994,7 +995,9 @@ struct ToolbarEditorSettingsWidget::Private {
           runtimeSession(sourceRuntimeBindings),
           colorScheme(snow_shot::presentation::styles::ThemeManager::instance().themeColorScheme()),
           descriptors(toolbar_layout::editorDescriptors(layoutKind)) {
-        const bool drawing = layoutKind == storage::ScreenshotToolbarLayoutKind::DrawingTools;
+        const bool drawing =
+            layoutKind == storage::ScreenshotToolbarLayoutKind::DrawingTools ||
+            layoutKind == storage::ScreenshotToolbarLayoutKind::QuickAnnotationTools;
         objectNamePrefix = drawing ? QStringLiteral("settings-drawing-toolbar")
                                    : QStringLiteral("settings-screenshot-toolbar");
         translationContext = drawing ? "DrawingToolbarEditorSettingsWidget"
@@ -1556,6 +1559,9 @@ SettingsCustomWidget* createSettingsCustomWidget(
     snow_shot::presentation::settings::SettingsRuntimeSession& runtimeSession, QWidget* parent) {
     using snow_shot::presentation::settings::SettingsCustomRenderer;
     switch (renderer) {
+    case SettingsCustomRenderer::QuickAnnotationHoldShortcuts:
+        return new snow_shot::presentation::QuickAnnotationHoldSettingsWidget(runtimeSession,
+                                                                              parent);
     case SettingsCustomRenderer::QuickAnnotationOptions:
         return new snow_shot::presentation::QuickAnnotationSettingsWidget(parent);
     case SettingsCustomRenderer::CloudUploadConfigurations:
@@ -1581,6 +1587,10 @@ SettingsCustomWidget* createSettingsCustomWidget(
 #endif
     case SettingsCustomRenderer::StorageStatus:
         return new StorageStatusSettingsWidget(runtimeSession, parent);
+    case SettingsCustomRenderer::QuickAnnotationToolbarEditor:
+        return new ToolbarEditorSettingsWidget(
+            renderer, storage::ScreenshotToolbarLayoutKind::QuickAnnotationTools, runtimeSession,
+            parent);
     case SettingsCustomRenderer::DrawingToolbarEditor:
         return new ToolbarEditorSettingsWidget(
             renderer, storage::ScreenshotToolbarLayoutKind::DrawingTools, runtimeSession, parent);

@@ -6,13 +6,14 @@
 #include "snow_shot/storage/applicationstorage.h"
 #include "snow_shot/storage/configurationstore.h"
 #include "widgets/color_picker.h"
-#include "widgets/input_number.h"
+#include "widgets/slider.h"
 #include "widgets/select.h"
 #include "widgets/switch.h"
 
 #include <QCoreApplication>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 
 namespace snow_shot::presentation {
 
@@ -26,24 +27,34 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         m_tool = new adqt::widgets::AdSelect(this);
         m_tool->setObjectName(QStringLiteral("quickAnnotationSettingsTool"));
         m_tool->setSearchEnabled(false);
-#ifdef Q_OS_MACOS
-        m_holdShortcut = new adqt::widgets::AdSelect(this);
-        m_holdShortcut->setObjectName(QStringLiteral("quickAnnotationSettingsHoldShortcut"));
-        m_holdShortcut->setSearchEnabled(false);
-#endif
         m_color = new adqt::widgets::AdColorPicker(this);
         m_color->setObjectName(QStringLiteral("quickAnnotationSettingsColor"));
         m_color->setAlphaChannelEnabled(false);
-        m_width = number("quickAnnotationSettingsWidth", 1, 20, 1, 0);
-        m_shadow = number("quickAnnotationSettingsShadow", 0, 25, 1, 0);
-        m_hold = number("quickAnnotationSettingsHold", 0.5, 30, 0.5, 1);
-        m_fade = number("quickAnnotationSettingsFade", 0.1, 5, 0.1, 1);
+        auto* presetsHost = new QWidget(this);
+        auto* presetsLayout = new QHBoxLayout(presetsHost);
+        presetsLayout->setContentsMargins(0, 0, 0, 0);
+        presetsLayout->setSpacing(8);
+        for (int i = 0; i < 5; ++i) {
+            auto* picker = new adqt::widgets::AdColorPicker(presetsHost);
+            picker->setObjectName(QStringLiteral("quickAnnotationColorPreset%1").arg(i + 1));
+            picker->setAlphaChannelEnabled(false);
+            picker->setTriggerTextVisible(false);
+            picker->setAllowClear(false);
+            presetsLayout->addWidget(picker);
+            m_presets.push_back(picker);
+            connect(picker, &adqt::widgets::AdColorPicker::valueChanged, this,
+                    [this, i](const adqt::widgets::AdColorValue& value) {
+                        if (value.isSolid())
+                            save(
+                                [&](auto& options) { options.colorPresets[i] = value.solidColor; });
+                    });
+        }
+        m_width = slider("quickAnnotationSettingsWidth", 1, 20, 1);
+        m_hold = slider("quickAnnotationSettingsHold", 0, 3, 0.1);
+        m_fade = slider("quickAnnotationSettingsFade", 0, 3, 0.1);
         const styles::ThemeAliasMetricToken metric;
         QVector<QWidget*> controls{m_tool};
-#ifdef Q_OS_MACOS
-        controls.push_back(m_holdShortcut);
-#endif
-        controls += {m_color, m_width, m_shadow, m_hold, m_fade};
+        controls += {m_color, presetsHost, m_width, m_hold, m_fade};
         for (QWidget* control : controls) {
             QLabel* title = nullptr;
             QLabel* description = nullptr;
@@ -57,27 +68,18 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                 [this](const QVariant& value) {
                     save([&](auto& options) { options.defaultTool = value.toString(); });
                 });
-#ifdef Q_OS_MACOS
-        connect(m_holdShortcut, &adqt::widgets::AdSelect::currentValueChanged, this,
-                [this](const QVariant& value) {
-                    save([&](auto& options) { options.holdShortcut = value.toString(); });
-                });
-#endif
         connect(m_color, &adqt::widgets::AdColorPicker::valueChanged, this,
                 [this](const adqt::widgets::AdColorValue& value) {
                     if (value.isSolid())
                         save([&](auto& options) { options.color = value.solidColor; });
                 });
-        connect(m_width, &adqt::widgets::AdInputNumber::valueChanged, this, [this](double value) {
+        connect(m_width, &adqt::widgets::AdSlider::valueChanged, this, [this](double value) {
             save([&](auto& options) { options.width = qRound(value); });
         });
-        connect(m_shadow, &adqt::widgets::AdInputNumber::valueChanged, this, [this](double value) {
-            save([&](auto& options) { options.shadowRadius = qRound(value); });
-        });
-        connect(m_hold, &adqt::widgets::AdInputNumber::valueChanged, this, [this](double value) {
+        connect(m_hold, &adqt::widgets::AdSlider::valueChanged, this, [this](double value) {
             save([&](auto& options) { options.holdMs = qRound(value * 1000); });
         });
-        connect(m_fade, &adqt::widgets::AdInputNumber::valueChanged, this, [this](double value) {
+        connect(m_fade, &adqt::widgets::AdSlider::valueChanged, this, [this](double value) {
             save([&](auto& options) { options.fadeMs = qRound(value * 1000); });
         });
         auto& storage = storage::ApplicationStorage::instance();
@@ -98,30 +100,29 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
     }
     void retranslateUi() override {
         const char* titles[] = {QT_TRANSLATE_NOOP("SettingsCatalog", "Default tool"),
-#ifdef Q_OS_MACOS
-                                QT_TRANSLATE_NOOP("SettingsCatalog", "Hold-to-annotate shortcut"),
-#endif
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Default color"),
+                                QT_TRANSLATE_NOOP("SettingsCatalog", "Stroke color presets"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Stroke width"),
-                                QT_TRANSLATE_NOOP("SettingsCatalog", "Shadow radius"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Hold time"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Fade duration")};
         const char* descriptions[] = {
             QT_TRANSLATE_NOOP("SettingsCatalog", "Tool selected when quick annotation starts"),
-#ifdef Q_OS_MACOS
-            QT_TRANSLATE_NOOP("SettingsCatalog",
-                              "Hold the modifier keys to annotate; release to exit unless marks "
-                              "are kept. Requires Accessibility permission"),
-#endif
             QT_TRANSLATE_NOOP("SettingsCatalog", "Color used for new marks"),
+            QT_TRANSLATE_NOOP("SettingsCatalog",
+                              "Customize the quick-set buttons for annotation stroke colors"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "Width of new marks"),
-            QT_TRANSLATE_NOOP("SettingsCatalog", "Shadow range around marks, from 0 to 25 pt"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "How long temporary marks remain visible"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "How long marks take to fade out")};
         for (qsizetype i = 0; i < m_titles.size(); ++i) {
             m_titles.at(i)->setText(QCoreApplication::translate("SettingsCatalog", titles[i]));
             m_descriptions.at(i)->setText(
                 QCoreApplication::translate("SettingsCatalog", descriptions[i]));
+        }
+        for (qsizetype i = 0; i < m_presets.size(); ++i) {
+            const auto title =
+                QCoreApplication::translate("SettingsCatalog", "Stroke color preset %1").arg(i + 1);
+            m_presets[i]->setAccessibleName(title);
+            m_presets[i]->setToolTip(title);
         }
         const QSignalBlocker blocker(m_tool);
         const auto selected = m_tool->currentValue();
@@ -134,32 +135,14 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
              {QStringLiteral("arrow"), QCoreApplication::translate("SettingsCatalog", "Arrow")},
              {QStringLiteral("brush"), QCoreApplication::translate("SettingsCatalog", "Brush")}});
         m_tool->setCurrentValue(selected);
-#ifdef Q_OS_MACOS
-        const QSignalBlocker holdBlocker(m_holdShortcut);
-        const auto selectedHold = m_holdShortcut->currentValue();
-        m_holdShortcut->setOptions({{QStringLiteral("command_option"), QStringLiteral("⌘ + ⌥")},
-                                    {QStringLiteral("command_shift"), QStringLiteral("⌘ + ⇧")},
-                                    {QStringLiteral("control_option"), QStringLiteral("⌃ + ⌥")},
-                                    {QStringLiteral("control_shift"), QStringLiteral("⌃ + ⇧")},
-                                    {QStringLiteral("disabled"),
-                                     QCoreApplication::translate("SettingsCatalog", "Disabled")}});
-        m_holdShortcut->setCurrentValue(selectedHold);
-#endif
-        m_shadow->setSuffixText(QStringLiteral(" pt"));
-        m_hold->setSuffixText(QCoreApplication::translate(
-            "snow_shot::presentation::QuickAnnotationController", " s"));
-        m_fade->setSuffixText(QCoreApplication::translate(
-            "snow_shot::presentation::QuickAnnotationController", " s"));
     }
 
   private:
-    adqt::widgets::AdInputNumber* number(const char* name, double minimum, double maximum,
-                                         double step, int decimals) {
-        auto* value = new adqt::widgets::AdInputNumber(this);
+    adqt::widgets::AdSlider* slider(const char* name, double minimum, double maximum, double step) {
+        auto* value = new adqt::widgets::AdSlider(this);
         value->setObjectName(QString::fromLatin1(name));
         value->setRange(minimum, maximum);
         value->setSingleStep(step);
-        value->setDecimals(decimals);
         value->setFixedWidth(160);
         return value;
     }
@@ -171,15 +154,17 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                                            .value(QStringLiteral("quick_annotation/options"))
                                            .toObject())
                                  : QuickAnnotationOptions{};
-        const QSignalBlocker a(m_tool), b(m_color), c(m_width), d(m_shadow), e(m_hold), f(m_fade);
+        const QSignalBlocker a(m_tool), b(m_color), c(m_width), e(m_hold), f(m_fade);
         m_tool->setCurrentValue(options.defaultTool);
-#ifdef Q_OS_MACOS
-        const QSignalBlocker holdShortcutBlocker(m_holdShortcut);
-        m_holdShortcut->setCurrentValue(options.holdShortcut);
-#endif
+        QVector<adqt::widgets::AdColorValue> presetValues;
+        for (qsizetype i = 0; i < m_presets.size(); ++i) {
+            const QSignalBlocker presetBlocker(m_presets[i]);
+            m_presets[i]->setValue(adqt::widgets::AdColorValue::solid(options.colorPresets[i]));
+            presetValues.push_back(adqt::widgets::AdColorValue::solid(options.colorPresets[i]));
+        }
+        m_color->setPresets({{QString(), presetValues, true, QStringLiteral("quick-annotation")}});
         m_color->setValue(adqt::widgets::AdColorValue::solid(options.color));
         m_width->setValue(options.width);
-        m_shadow->setValue(options.shadowRadius);
         m_hold->setValue(options.holdMs / 1000.0);
         m_fade->setValue(options.fadeMs / 1000.0);
     }
@@ -195,14 +180,11 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
             refresh();
     }
     adqt::widgets::AdSelect* m_tool = nullptr;
-#ifdef Q_OS_MACOS
-    adqt::widgets::AdSelect* m_holdShortcut = nullptr;
-#endif
     adqt::widgets::AdColorPicker* m_color = nullptr;
-    adqt::widgets::AdInputNumber* m_width = nullptr;
-    adqt::widgets::AdInputNumber* m_shadow = nullptr;
-    adqt::widgets::AdInputNumber* m_hold = nullptr;
-    adqt::widgets::AdInputNumber* m_fade = nullptr;
+    QVector<adqt::widgets::AdColorPicker*> m_presets;
+    adqt::widgets::AdSlider* m_width = nullptr;
+    adqt::widgets::AdSlider* m_hold = nullptr;
+    adqt::widgets::AdSlider* m_fade = nullptr;
     QVector<QLabel*> m_titles;
     QVector<QLabel*> m_descriptions;
 };

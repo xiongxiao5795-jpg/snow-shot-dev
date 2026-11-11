@@ -1476,7 +1476,7 @@ int main(int argc, char** argv) {
              {QStringLiteral("width"), 100},
              {QStringLiteral("hold_ms"), -1}});
         require(invalid.color == QColor(0xf5, 0x22, 0x2d) && invalid.width == 20 &&
-                    invalid.holdMs == 500,
+                    invalid.holdMs == 0,
                 "invalid option values fall back or are clamped");
         qint64 now = 0;
         presentation::QuickAnnotationController controller(nullptr, [&now] { return now; });
@@ -1546,11 +1546,11 @@ int main(int argc, char** argv) {
                 "one completed mark hides the toolbar and restores click-through");
         auto* timer = window->findChild<QTimer*>(QStringLiteral("quickAnnotationFadeTimer"));
         require(timer && timer->isActive(), "marks start the fade timer");
-        now = 2100;
+        now = 1100;
         require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection),
                 "advance fade timer deterministically");
         require(window->isVisible(), "a later mark remains after the first has expired");
-        now = 3100;
+        now = 1900;
         require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection),
                 "advance fade timer past the second mark");
         require(!window->isVisible() && !timer->isActive(), "expired marks release the overlay");
@@ -1613,9 +1613,9 @@ int main(int argc, char** argv) {
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
-        require(!toolbar->isVisible() && window->isVisible() &&
-                    window->testAttribute(Qt::WA_TransparentForMouseEvents),
-                "persistent mark survives automatic toolbar dismissal without blocking input");
+        require(toolbar->isVisible() && window->isVisible() &&
+                    !window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "persistent mode retains the toolbar and remains ready for another mark");
         now += 60000;
         require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
                     window->isVisible(),
@@ -1633,8 +1633,8 @@ int main(int argc, char** argv) {
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
-        require(!toolbar->isVisible() && !window->testAttribute(Qt::WA_TransparentForMouseEvents),
-                "while held, the toolbar hides and another gesture remains available");
+        require(toolbar->isVisible() && !window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "while held, the toolbar remains visible and another gesture remains available");
         controller.endHold();
         require(window->testAttribute(Qt::WA_TransparentForMouseEvents),
                 "releasing hold without persistence restores mouse input");

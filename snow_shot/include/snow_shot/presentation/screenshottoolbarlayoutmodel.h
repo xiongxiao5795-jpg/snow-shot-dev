@@ -350,6 +350,15 @@ struct EditorDescriptor {
 
 [[nodiscard]] inline QVector<EditorDescriptor>
 editorDescriptors(storage::ScreenshotToolbarLayoutKind kind) {
+    if (kind == storage::ScreenshotToolbarLayoutKind::QuickAnnotationTools) {
+        auto result = drawingEditorDescriptors();
+        result.removeIf([](const EditorDescriptor& item) {
+            const auto id = QLatin1String(item.id);
+            return id != QLatin1String("shape") && id != QLatin1String("arrow") &&
+                   id != QLatin1String("free-draw");
+        });
+        return result;
+    }
     if (kind == storage::ScreenshotToolbarLayoutKind::RecordingActionTools) {
         return recordingDescriptors();
     }
@@ -488,6 +497,9 @@ editorDescriptors(storage::ScreenshotToolbarLayoutKind kind) {
 
 [[nodiscard]] inline QVector<QStringList>
 defaultPositions(storage::ScreenshotToolbarLayoutKind kind) {
+    if (kind == storage::ScreenshotToolbarLayoutKind::QuickAnnotationTools)
+        return {
+            {QStringLiteral("shape")}, {QStringLiteral("arrow")}, {QStringLiteral("free-draw")}};
     if (kind == storage::ScreenshotToolbarLayoutKind::RecordingActionTools) {
         QVector<QStringList> positions;
         positions.reserve(recordingDescriptors().size());

@@ -370,6 +370,18 @@ SettingsItemDefinition quickAnnotationToolbarItem() {
                            {QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation")});
 }
 
+#ifdef Q_OS_MACOS
+SettingsItemDefinition quickAnnotationHoldShortcutsItem() {
+    return {QStringLiteral("quick-annotation.hold-shortcuts"),
+            settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Hold-to-annotate shortcut")),
+            settingsText(
+                QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation shortcuts and actions")),
+            {},
+            QStringLiteral("quick_annotation/hold_bindings"),
+            SettingsCustomDefinition{SettingsCustomRenderer::QuickAnnotationHoldShortcuts}};
+}
+#endif
+
 SettingsItemDefinition quickAnnotationOptionsItem() {
     return {QStringLiteral("quick-annotation.options"),
             settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation appearance")),
@@ -776,6 +788,18 @@ SettingsItemDefinition showEditSelectionToolbarItem() {
             {},
             QStringLiteral("screenshot_ui/show_edit_selection_toolbar"),
             SettingsSwitchDefinition{SettingsSwitchBinding::ShowEditSelectionToolbar}};
+}
+
+SettingsItemDefinition quickAnnotationToolbarEditorItem() {
+    return {
+        QStringLiteral("quick-annotation.toolbar-editor"),
+        settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation toolbar")),
+        settingsText(QT_TRANSLATE_NOOP(
+            "SettingsCatalog",
+            "Drag annotation tools to reorder them or stack them in the same toolbar position")),
+        {},
+        QStringLiteral("quick_annotation/toolbar_layout"),
+        SettingsCustomDefinition{SettingsCustomRenderer::QuickAnnotationToolbarEditor}};
 }
 
 SettingsItemDefinition drawingToolbarEditorItem() {
@@ -4044,8 +4068,15 @@ constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionScreenRecordingItems
 };
 
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionQuickAnnotationItems[] = {
-    {quickAnnotationItem},          {quickAnnotationBrushItem},   {quickAnnotationArrowItem},
-    {quickAnnotationRectangleItem}, {quickAnnotationEllipseItem}, {quickAnnotationToolbarItem},
+    {quickAnnotationItem},
+    {quickAnnotationBrushItem},
+    {quickAnnotationArrowItem},
+    {quickAnnotationRectangleItem},
+    {quickAnnotationEllipseItem},
+    {quickAnnotationToolbarItem},
+#ifdef Q_OS_MACOS
+    {quickAnnotationHoldShortcutsItem},
+#endif
 };
 
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionOtherItems[] = {
@@ -5168,21 +5199,31 @@ constexpr CatalogSectionRecord catalogPageAppPermissionsSections[] = {
 
 #endif
 constexpr CatalogItemFactory catalogPageQuickAnnotationItems[] = {{quickAnnotationOptionsItem}};
-constexpr CatalogSectionRecord catalogPageQuickAnnotationSections[] = {{
-    .id = u"appearance",
-    .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation appearance")),
-    .description = settingsText(
-        QT_TRANSLATE_NOOP("SettingsCatalog", "Configure quick annotation appearance and timing")),
-    .reset = SettingsSectionReset::None,
-    .items = catalogPageQuickAnnotationItems,
-    .factory = nullptr,
-    .layout = SettingsSectionItemLayout::VerticalList,
-    .collapsed = false,
-}};
-
+constexpr CatalogItemFactory catalogPageQuickAnnotationToolbarItems[] = {
+    {quickAnnotationToolbarEditorItem}};
+constexpr CatalogSectionRecord catalogPageQuickAnnotationSections[] = {
+    {.id = u"appearance",
+     .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation appearance")),
+     .description = settingsText(
+         QT_TRANSLATE_NOOP("SettingsCatalog", "Configure quick annotation appearance and timing")),
+     .reset = SettingsSectionReset::None,
+     .items = catalogPageQuickAnnotationItems,
+     .factory = nullptr,
+     .layout = SettingsSectionItemLayout::VerticalList,
+     .collapsed = false},
+    {.id = u"toolbar",
+     .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation toolbar")),
+     .description =
+         settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Choose a quick annotation tool")),
+     .reset = SettingsSectionReset::None,
+     .items = catalogPageQuickAnnotationToolbarItems,
+     .factory = nullptr,
+     .layout = SettingsSectionItemLayout::VerticalList,
+     .collapsed = false},
+};
 constexpr CatalogRelatedLinkRecord catalogPageQuickAnnotationLinks[] = {
-    {settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Annotation toolbar")), u"screenshots",
-     u"drawing", u"interface.toolbar.drawing-toolbar-editor"},
+    {settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation")), u"global-hotkeys",
+     u"quick-annotation", u"quick.quick-annotation"},
 };
 
 constexpr CatalogPageRecord catalogPages[] = {
@@ -7188,6 +7229,16 @@ QStringList SettingsCatalog::validationErrors() const {
                     case SettingsCustomRenderer::McpStatus:
                     case SettingsCustomRenderer::StorageStatus:
                         rendererSupported = true;
+                        break;
+                    case SettingsCustomRenderer::QuickAnnotationHoldShortcuts:
+                        rendererSupported = true;
+                        expectedKey = QStringLiteral("quick_annotation/hold_bindings");
+                        expectedKind = storage::ConfigurationValueKind::Structured;
+                        break;
+                    case SettingsCustomRenderer::QuickAnnotationToolbarEditor:
+                        rendererSupported = true;
+                        expectedKey = QStringLiteral("quick_annotation/toolbar_layout");
+                        expectedKind = storage::ConfigurationValueKind::Structured;
                         break;
                     case SettingsCustomRenderer::DrawingToolbarEditor:
                         rendererSupported = true;

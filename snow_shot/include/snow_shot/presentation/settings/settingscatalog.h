@@ -427,6 +427,8 @@ enum class SettingsCustomRenderer {
     TextTranslationConfigurations,
     StorageStatus,
     DrawingToolbarEditor,
+    QuickAnnotationToolbarEditor,
+    QuickAnnotationHoldShortcuts,
     ScreenshotToolbarEditor,
     RecordingToolbarEditor,
     PinnedToolbarEditor,

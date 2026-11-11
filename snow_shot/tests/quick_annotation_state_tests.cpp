@@ -46,15 +46,19 @@ int main() {
             "cancel preserves last tool");
     require(QuickAnnotationState::opacity(0) == 1.0 &&
                 QuickAnnotationState::opacity(std::numeric_limits<std::int64_t>::min()) == 1.0 &&
-                QuickAnnotationState::opacity(1500) == 1.0 &&
-                QuickAnnotationState::opacity(1800) == 0.5 &&
-                QuickAnnotationState::opacity(2100) == 0.0 &&
+                QuickAnnotationState::opacity(300) == 1.0 &&
+                QuickAnnotationState::opacity(550) == 0.5 &&
+                QuickAnnotationState::opacity(800) == 0.0 &&
                 QuickAnnotationState::opacity(4000) == 0.0,
             "hold and fade independently by elapsed time");
     require(QuickAnnotationState::opacity(3000, 3000) == 1.0 &&
-                QuickAnnotationState::opacity(3300, 3000) == 0.5 &&
-                QuickAnnotationState::opacity(3600, 3000) == 0.0,
+                QuickAnnotationState::opacity(3250, 3000) == 0.5 &&
+                QuickAnnotationState::opacity(3500, 3000) == 0.0,
             "custom hold duration changes only the selected mark");
+    require(QuickAnnotationState::opacity(0, 0, 0) == 0.0 &&
+                QuickAnnotationState::opacity(99, 100, 0) == 1.0 &&
+                QuickAnnotationState::opacity(100, 100, 0) == 0.0,
+            "zero fade duration expires immediately without division by zero");
     require(QuickAnnotationState::opacity(3000, 3000, 1200) == 1.0 &&
                 QuickAnnotationState::opacity(3600, 3000, 1200) == 0.5 &&
                 QuickAnnotationState::opacity(4200, 3000, 1200) == 0.0,

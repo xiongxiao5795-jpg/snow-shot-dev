@@ -22,6 +22,7 @@ class QuickAnnotationController final : public QObject {
     void arm(QuickAnnotationTool tool);
     void armLastTool();
     void beginHold();
+    void beginHold(QuickAnnotationTool tool);
     void endHold();
     void exitMode();
     void suspendForScreenshot();

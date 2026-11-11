@@ -1702,10 +1702,6 @@
     <context>
         <name>snow_shot::presentation::QuickAnnotationController</name>
         <message>
-            <source> s</source>
-            <translation> 秒</translation>
-        </message>
-        <message>
             <source>Could not change canvas click-through</source>
             <translation>无法切换画布的鼠标穿透状态</translation>
         </message>

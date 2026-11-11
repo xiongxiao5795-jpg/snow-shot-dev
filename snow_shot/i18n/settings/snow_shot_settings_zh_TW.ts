@@ -2764,10 +2764,6 @@
             <translation>醒目提示顏色預設</translation>
         </message>
         <message>
-            <source>Hold the modifier keys to annotate; release to exit unless marks are kept. Requires Accessibility permission</source>
-            <translation>按住組合鍵進入標註；放開後結束，開啟標註常駐時保持模式。需要輔助使用權限</translation>
-        </message>
-        <message>
             <source>Hold time</source>
             <translation>停留時間</translation>
         </message>
@@ -4260,14 +4256,6 @@
             <translation>陰影顏色</translation>
         </message>
         <message>
-            <source>Shadow radius</source>
-            <translation>陰影範圍</translation>
-        </message>
-        <message>
-            <source>Shadow range around marks, from 0 to 25 pt</source>
-            <translation>標記周圍的陰影範圍，0 至 25 pt</translation>
-        </message>
-        <message>
             <source>Shake a window to hide/show other windows</source>
             <translation>搖動視窗以隱藏/顯示其他視窗</translation>
         </message>
@@ -4286,6 +4274,10 @@
         <message>
             <source>Shortcut hint opacity</source>
             <translation>快速鍵提示不透明度</translation>
+        </message>
+        <message>
+            <source>Shortcut is invalid or already in use</source>
+            <translation>快捷鍵無效或已被佔用</translation>
         </message>
         <message>
             <source>Shortcut keys for annotation tools</source>

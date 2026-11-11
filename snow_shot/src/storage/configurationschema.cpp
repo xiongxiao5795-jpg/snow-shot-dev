@@ -122,6 +122,7 @@ enum class SchemaDefaultFactory : quint8 {
     MoviesDirectory,
     PicturesDirectory,
     DrawingToolbar,
+    QuickAnnotationToolbar,
     PinnedToolbar,
     ActionToolbar,
     RecordingToolbar,
@@ -1060,7 +1061,13 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
     {u"quick_annotation/last_tool", stringDefault(u"rounded_rectangle"),
      ConfigurationValueKind::String},
     {u"quick_annotation/options", emptyObjectDefault(), ConfigurationValueKind::Structured},
+    {u"quick_annotation/hold_bindings", emptyObjectDefault(), ConfigurationValueKind::Structured},
+    {u"quick_annotation/toolbar_layout",
+     factoryDefault(SchemaDefaultFactory::QuickAnnotationToolbar),
+     ConfigurationValueKind::Structured},
     {u"quick_annotation/tray_menu_migrated", booleanDefault(true), ConfigurationValueKind::Boolean},
+    {u"quick_annotation/tray_menu_v2_migrated", booleanDefault(true),
+     ConfigurationValueKind::Boolean},
     {u"quick_annotation/shortcut_defaults_migrated", booleanDefault(true),
      ConfigurationValueKind::Boolean},
     {u"global_shortcuts/stitch_selected_images", emptyArrayDefault(),
@@ -1766,6 +1773,9 @@ QJsonValue materializeFactory(SchemaDefaultFactory factory) {
         return defaultOutputDirectory(QStandardPaths::PicturesLocation);
     case SchemaDefaultFactory::DrawingToolbar:
         return defaultToolbarLayout(defaultDrawingToolbarPositions());
+    case SchemaDefaultFactory::QuickAnnotationToolbar:
+        return defaultToolbarLayout(
+            {{QStringLiteral("shape")}, {QStringLiteral("arrow")}, {QStringLiteral("free-draw")}});
     case SchemaDefaultFactory::PinnedToolbar:
         return defaultToolbarLayout(defaultPinnedActionToolbarPositions(), true);
     case SchemaDefaultFactory::ActionToolbar:
@@ -2882,6 +2892,11 @@ ConfigurationNormalization ConfigurationSchema::normalize(const QString& key,
         return normalizeToolbarLayout(value, floatingToolbarItemIds(),
                                       defaultFloatingToolbarLayout().positions, false,
                                       defaultFloatingToolbarLayout().hidden, false);
+    }
+    if (key == QStringLiteral("quick_annotation/toolbar_layout")) {
+        return normalizeToolbarLayout(
+            value, {QStringLiteral("shape"), QStringLiteral("arrow"), QStringLiteral("free-draw")},
+            {{QStringLiteral("shape")}, {QStringLiteral("arrow")}, {QStringLiteral("free-draw")}});
     }
     if (key == QStringLiteral("screenshot_toolbar/layout")) {
         return normalizeToolbarLayout(value, kDrawingToolbarItemIds,

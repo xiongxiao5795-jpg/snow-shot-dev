@@ -76,6 +76,7 @@
 #include "widgets/message.h"
 
 #include <QApplication>
+#include <QKeySequenceEdit>
 #include <QEvent>
 #include <QDir>
 #include <QJsonArray>
@@ -1190,8 +1191,8 @@ class ApplicationController::Impl {
         systemTray.show();
         globalShortcutManager.initialize();
 #ifdef Q_OS_MACOS
-        quickAnnotationHoldMonitor =
-            std::make_unique<presentation::QuickAnnotationHoldMonitor>([this](bool pressed) {
+        quickAnnotationHoldMonitor = std::make_unique<presentation::QuickAnnotationHoldMonitor>(
+            [this](bool pressed, const QString& tool) {
                 if (!pressed) {
                     if (quickAnnotationHoldTriggered && quickAnnotationController)
                         quickAnnotationController->endHold();
@@ -1200,9 +1201,25 @@ class ApplicationController::Impl {
                 }
                 if (!globalShortcutManager.globalShortcutsEnabled())
                     return;
+                if (QGuiApplication::applicationState() == Qt::ApplicationActive)
+                    for (QWidget* focus = QApplication::focusWidget(); focus;
+                         focus = focus->parentWidget())
+                        if (qobject_cast<QKeySequenceEdit*>(focus))
+                            return;
                 static_cast<void>(actionGate.dispatch(
-                    [this] {
-                        ensureQuickAnnotationController().beginHold();
+                    [this, tool] {
+                        auto& controller = ensureQuickAnnotationController();
+                        using Tool = presentation::QuickAnnotationTool;
+                        if (tool == QStringLiteral("brush"))
+                            controller.beginHold(Tool::Brush);
+                        else if (tool == QStringLiteral("arrow"))
+                            controller.beginHold(Tool::Arrow);
+                        else if (tool == QStringLiteral("rectangle"))
+                            controller.beginHold(Tool::Rectangle);
+                        else if (tool == QStringLiteral("ellipse"))
+                            controller.beginHold(Tool::Ellipse);
+                        else
+                            controller.beginHold();
                         quickAnnotationHoldTriggered = true;
                     },
                     [this] {
@@ -1217,11 +1234,18 @@ class ApplicationController::Impl {
         };
         updateHoldShortcut(storage::ApplicationStorage::instance().configuration().value(
             QStringLiteral("quick_annotation/options")));
+        quickAnnotationHoldMonitor->setBindings(
+            storage::ApplicationStorage::instance()
+                .configuration()
+                .value(QStringLiteral("quick_annotation/hold_bindings"))
+                .toObject());
         QObject::connect(&storage::ApplicationStorage::instance().configuration(),
                          &storage::ConfigurationStore::valueChanged, &q,
-                         [updateHoldShortcut](const QString& key, const QJsonValue& value) {
+                         [this, updateHoldShortcut](const QString& key, const QJsonValue& value) {
                              if (key == QStringLiteral("quick_annotation/options"))
                                  updateHoldShortcut(value);
+                             else if (key == QStringLiteral("quick_annotation/hold_bindings"))
+                                 quickAnnotationHoldMonitor->setBindings(value.toObject());
                          });
 #endif
         globalMouseManager.setCaptureAvailable(ensureScreenshotController()->captureAvailable());

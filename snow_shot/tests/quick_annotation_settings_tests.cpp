@@ -4,10 +4,11 @@
 
 #include <QApplication>
 #include "widgets/color_picker.h"
-#include "widgets/input_number.h"
+#include "widgets/slider.h"
 #include "widgets/select.h"
 #include "widgets/switch.h"
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QTemporaryDir>
 
 #include <cstdlib>
@@ -33,30 +34,23 @@ int main(int argc, char** argv) {
             QStringLiteral("quickAnnotationSettingsTool"));
         auto* color = widget.findChild<adqt::widgets::AdColorPicker*>(
             QStringLiteral("quickAnnotationSettingsColor"));
-        auto* width = widget.findChild<adqt::widgets::AdInputNumber*>(
+        auto* preset = widget.findChild<adqt::widgets::AdColorPicker*>(
+            QStringLiteral("quickAnnotationColorPreset2"));
+        auto* width = widget.findChild<adqt::widgets::AdSlider*>(
             QStringLiteral("quickAnnotationSettingsWidth"));
-        auto* shadow = widget.findChild<adqt::widgets::AdInputNumber*>(
-            QStringLiteral("quickAnnotationSettingsShadow"));
-        auto* hold = widget.findChild<adqt::widgets::AdInputNumber*>(
+        auto* hold = widget.findChild<adqt::widgets::AdSlider*>(
             QStringLiteral("quickAnnotationSettingsHold"));
-        auto* fade = widget.findChild<adqt::widgets::AdInputNumber*>(
+        auto* fade = widget.findChild<adqt::widgets::AdSlider*>(
             QStringLiteral("quickAnnotationSettingsFade"));
-        require(tool && color && width && shadow && hold && fade &&
+        require(tool && color && preset && width && hold && fade &&
                     tool->currentValue().toString() == QStringLiteral("rounded_rectangle") &&
-                    hold->value() == 1.5 && fade->value() == 0.6 && shadow->value() == 0,
+                    hold->value() == 0.3 && fade->value() == 0.5 && color->presets().size() == 1 &&
+                    color->presets().front().colors.size() == 5,
                 "quick annotation settings expose requested defaults");
-#ifdef Q_OS_MACOS
-        auto* holdShortcut = widget.findChild<adqt::widgets::AdSelect*>(
-            QStringLiteral("quickAnnotationSettingsHoldShortcut"));
-        require(holdShortcut &&
-                    holdShortcut->currentValue().toString() == QStringLiteral("command_option"),
-                "hold shortcut defaults to Command+Option");
-        holdShortcut->setCurrentValue(QStringLiteral("control_option"));
-#endif
         tool->setCurrentValue(QStringLiteral("ellipse"));
         color->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#1890ff"))));
+        preset->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#abcdef"))));
         width->setValue(7);
-        shadow->setValue(12);
         hold->setValue(3.0);
         fade->setValue(1.2);
         const auto key = QStringLiteral("quick_annotation/options");
@@ -64,8 +58,9 @@ int main(int argc, char** argv) {
         const auto saved = configuration.value(key).toObject();
         require(saved.value(QStringLiteral("default_tool")) == QStringLiteral("ellipse") &&
                     saved.value(QStringLiteral("color")) == QStringLiteral("#1890ff") &&
+                    saved.value(QStringLiteral("color_presets")).toArray().at(1).toString() ==
+                        QStringLiteral("#abcdef") &&
                     saved.value(QStringLiteral("width")).toInt() == 7 &&
-                    saved.value(QStringLiteral("shadow_radius")).toInt() == 12 &&
                     saved.value(QStringLiteral("hold_ms")).toInt() == 3000 &&
                     saved.value(QStringLiteral("fade_ms")).toInt() == 1200,
                 "settings persist independently");
