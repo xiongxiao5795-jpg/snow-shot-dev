@@ -614,6 +614,8 @@ class QuickAnnotationController::Impl {
             window->fadeMarks();
     }
     void exitSession() {
+        holdActive = false;
+        holdKeyDown = false;
         if (toolbar)
             toolbar->hide();
         for (const auto& window : windows)
@@ -654,6 +656,8 @@ class QuickAnnotationController::Impl {
                 [this] {
                     if (toolbar)
                         toolbar->hide();
+                    if (holdActive)
+                        arm(lastTool);
                 },
                 [this] { exitSession(); },
                 [this] {
@@ -685,6 +689,8 @@ class QuickAnnotationController::Impl {
     std::function<bool(QWidget*, bool)> input;
     QuickAnnotationTool lastTool = QuickAnnotationTool::RoundedRectangle;
     QuickAnnotationOptions options;
+    bool holdActive = false;
+    bool holdKeyDown = false;
     std::vector<std::unique_ptr<AnnotationWindow>> windows;
     std::unique_ptr<ToolPanel> toolbar;
 };
@@ -706,6 +712,19 @@ void QuickAnnotationController::arm(QuickAnnotationTool tool) {
 void QuickAnnotationController::armLastTool() {
     showToolbar();
 }
+void QuickAnnotationController::beginHold() {
+    m_impl->holdActive = true;
+    m_impl->holdKeyDown = true;
+    showToolbar();
+}
+void QuickAnnotationController::endHold() {
+    m_impl->holdKeyDown = false;
+    if (!m_impl->options.persistent)
+        m_impl->exitSession();
+}
+void QuickAnnotationController::exitMode() {
+    m_impl->exitSession();
+}
 void QuickAnnotationController::showToolbar(bool armDefault) {
     if (std::any_of(m_impl->windows.begin(), m_impl->windows.end(),
                     [](const auto& window) { return window->drawing(); }))
@@ -714,13 +733,18 @@ void QuickAnnotationController::showToolbar(bool armDefault) {
         m_impl->toolbar = std::make_unique<ToolPanel>(
             m_impl->options, [this](QuickAnnotationTool tool) { m_impl->arm(tool); },
             [this](QuickAnnotationOptions options) {
-                if (m_impl->options.persistent && !options.persistent)
-                    m_impl->fadeMarks();
+                const bool endingPersistent = m_impl->options.persistent && !options.persistent;
                 m_impl->options = options;
+                if (endingPersistent)
+                    m_impl->fadeMarks();
                 auto& storage = storage::ApplicationStorage::instance();
                 if (storage.isInitialized())
                     storage.configuration().setValue(QStringLiteral("quick_annotation/options"),
                                                      options.toJson());
+                if (endingPersistent && m_impl->holdActive && !m_impl->holdKeyDown) {
+                    m_impl->exitSession();
+                    return;
+                }
                 m_impl->arm(m_impl->lastTool);
             },
             [this] { m_impl->exitSession(); });

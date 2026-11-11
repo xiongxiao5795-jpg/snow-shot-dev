@@ -16,7 +16,8 @@ int main() {
     const auto defaults = QuickAnnotationOptions::fromJson({});
     require(defaults.color == QColor(0xf5, 0x22, 0x2d) && defaults.width == 3 &&
                 defaults.holdMs == 1500 && defaults.fadeMs == 600 && defaults.shadowRadius == 0 &&
-                defaults.defaultTool == QStringLiteral("rounded_rectangle") && !defaults.persistent,
+                defaults.defaultTool == QStringLiteral("rounded_rectangle") &&
+                defaults.holdShortcut == QStringLiteral("command_option") && !defaults.persistent,
             "independent default appearance and 1.5 second hold");
     const auto configured = QuickAnnotationOptions::fromJson(
         {{QStringLiteral("color"), QStringLiteral("#1890ff")},

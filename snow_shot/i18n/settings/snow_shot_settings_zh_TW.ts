@@ -2764,8 +2764,16 @@
             <translation>醒目提示顏色預設</translation>
         </message>
         <message>
+            <source>Hold the modifier keys to annotate; release to exit unless marks are kept. Requires Accessibility permission</source>
+            <translation>按住組合鍵進入標註；放開後結束，開啟標註常駐時保持模式。需要輔助使用權限</translation>
+        </message>
+        <message>
             <source>Hold time</source>
             <translation>停留時間</translation>
+        </message>
+        <message>
+            <source>Hold-to-annotate shortcut</source>
+            <translation>按住標註快捷鍵</translation>
         </message>
         <message>
             <source>How long marks take to fade out</source>

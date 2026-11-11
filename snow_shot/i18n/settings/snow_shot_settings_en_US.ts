@@ -2764,8 +2764,16 @@
             <translation>Highlight color presets</translation>
         </message>
         <message>
+            <source>Hold the modifier keys to annotate; release to exit unless marks are kept. Requires Accessibility permission</source>
+            <translation>Hold the modifier keys to annotate; release to exit unless marks are kept. Requires Accessibility permission</translation>
+        </message>
+        <message>
             <source>Hold time</source>
             <translation>Hold time</translation>
+        </message>
+        <message>
+            <source>Hold-to-annotate shortcut</source>
+            <translation>Hold-to-annotate shortcut</translation>
         </message>
         <message>
             <source>How long marks take to fade out</source>

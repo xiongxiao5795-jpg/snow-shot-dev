@@ -47,6 +47,14 @@ int main(int argc, char** argv) {
                     tool->currentValue().toString() == QStringLiteral("rounded_rectangle") &&
                     hold->value() == 1.5 && fade->value() == 0.6 && shadow->value() == 0,
                 "quick annotation settings expose requested defaults");
+#ifdef Q_OS_MACOS
+        auto* holdShortcut = widget.findChild<adqt::widgets::AdSelect*>(
+            QStringLiteral("quickAnnotationSettingsHoldShortcut"));
+        require(holdShortcut &&
+                    holdShortcut->currentValue().toString() == QStringLiteral("command_option"),
+                "hold shortcut defaults to Command+Option");
+        holdShortcut->setCurrentValue(QStringLiteral("control_option"));
+#endif
         tool->setCurrentValue(QStringLiteral("ellipse"));
         color->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#1890ff"))));
         width->setValue(7);

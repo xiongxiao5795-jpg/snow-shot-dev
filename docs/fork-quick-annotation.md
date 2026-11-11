@@ -16,9 +16,17 @@ It configures the default tool, color, width, shadow radius (0–25 pt), hold ti
 and optional toolbar controls. The default tool is a rounded rectangle. On macOS, Control+4
 starts quick annotation; the other quick annotation shortcuts are unset by default. Old fork
 shortcuts are migrated only when they still match the earlier defaults; customized bindings stay.
-The toolbar opens on activation and hides after one gesture while mouse input is restored. A
-persistent mark remains until persistence is disabled or the toolbar is explicitly closed; those
-marks then fade out. Settings belong to `quick_annotation/options`, not screenshot drawing styles.
+The toolbar opens on activation and hides after one gesture. With the normal Control+4 action,
+mouse input returns immediately after the gesture. A persistent mark remains until persistence is
+disabled or the toolbar is explicitly closed; those marks then fade out.
+
+A separate, configurable macOS modifier-only hold shortcut defaults to Command+Option. A short
+hold starts annotation, and an ordinary additional key cancels activation to reduce conflicts
+with normal keyboard shortcuts. This passive global listener requires Accessibility permission.
+While the shortcut remains held, additional gestures can be drawn after the toolbar hides. On
+release, the mode exits and marks fade unless persistence is enabled. If persistence is enabled,
+the mode remains active after release; disable persistence, press Escape, or reopen the toolbar
+and close it to exit. Settings belong to `quick_annotation/options`, not screenshot styles.
 
 Release artifacts include the upstream installer and the matching DMG checksum. The installer can
 stage a locally signed app with a persistent identity; future updates must reuse that identity and

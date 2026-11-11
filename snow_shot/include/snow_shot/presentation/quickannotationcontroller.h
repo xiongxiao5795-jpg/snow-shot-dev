@@ -21,6 +21,9 @@ class QuickAnnotationController final : public QObject {
 
     void arm(QuickAnnotationTool tool);
     void armLastTool();
+    void beginHold();
+    void endHold();
+    void exitMode();
     void showToolbar(bool armDefault = true);
 
   signals:

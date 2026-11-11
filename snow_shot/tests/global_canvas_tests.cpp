@@ -1629,6 +1629,24 @@ int main(int argc, char** argv) {
         require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
                     !window->isVisible(),
                 "explicit exit fades persistent marks");
+        controller.beginHold();
+        keep->setChecked(false);
+        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        require(!toolbar->isVisible() && !window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "while held, the toolbar hides and another gesture remains available");
+        controller.endHold();
+        require(window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "releasing hold without persistence restores mouse input");
+        controller.beginHold();
+        keep->setChecked(true);
+        controller.endHold();
+        require(!window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "releasing hold with persistence keeps annotation mode active");
+        keep->setChecked(false);
+        require(window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "turning persistence off after release exits annotation mode");
         QWidget* failedWindow = nullptr;
         presentation::QuickAnnotationController failed(
             nullptr, [&now] { return now; },

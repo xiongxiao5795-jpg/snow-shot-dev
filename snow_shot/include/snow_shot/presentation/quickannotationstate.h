@@ -7,6 +7,45 @@ namespace snow_shot::presentation {
 
 enum class QuickAnnotationTool { Brush, Arrow, Rectangle, RoundedRectangle, Ellipse };
 
+// A short hold avoids stealing ordinary shortcuts that start with the same modifiers.
+class QuickAnnotationHoldState final {
+  public:
+    enum class Change { None, Schedule, End };
+    Change modifiers(bool matched) {
+        if (!matched) {
+            const bool wasActive = m_active;
+            m_pending = false;
+            m_active = false;
+            m_cancelled = false;
+            return wasActive ? Change::End : Change::None;
+        }
+        if (!m_active && !m_pending && !m_cancelled) {
+            m_pending = true;
+            return Change::Schedule;
+        }
+        return Change::None;
+    }
+    bool activate() {
+        if (!m_pending)
+            return false;
+        m_pending = false;
+        m_active = true;
+        return true;
+    }
+    bool otherKey() {
+        const bool wasActive = m_active;
+        m_pending = false;
+        m_active = false;
+        m_cancelled = true;
+        return wasActive;
+    }
+
+  private:
+    bool m_pending = false;
+    bool m_active = false;
+    bool m_cancelled = false;
+};
+
 // The host owns windows and marks; this state machine only describes one gesture.
 class QuickAnnotationState final {
   public:

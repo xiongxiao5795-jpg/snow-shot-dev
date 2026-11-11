@@ -12,6 +12,8 @@
 #include "snow_shot/presentation/apppermissionservice.h"
 #ifdef Q_OS_MACOS
 #include "snow_shot/platform/macos/applicationactivation.h"
+#include "../presentation/quickannotation/quickannotationholdmonitor.h"
+#include "../presentation/quickannotation/quickannotationoptions.h"
 #include "snow_shot/presentation/permissionguidecontroller.h"
 #endif
 #include "snow_shot/platform/windows/administratorlaunch.h"
@@ -268,6 +270,8 @@ class ApplicationController::Impl {
         QObject::connect(&globalShortcutManager,
                          &presentation::GlobalShortcutManager::globalShortcutsEnabledChanged, &q,
                          [this](bool enabled) {
+                             if (!enabled && quickAnnotationController)
+                                 quickAnnotationController->exitMode();
                              systemTray.setQuickActionChecked(
                                  presentation::GlobalShortcutAction::ToggleGlobalShortcuts,
                                  !enabled);
@@ -1185,6 +1189,41 @@ class ApplicationController::Impl {
 #endif
         systemTray.show();
         globalShortcutManager.initialize();
+#ifdef Q_OS_MACOS
+        quickAnnotationHoldMonitor =
+            std::make_unique<presentation::QuickAnnotationHoldMonitor>([this](bool pressed) {
+                if (!pressed) {
+                    if (quickAnnotationHoldTriggered && quickAnnotationController)
+                        quickAnnotationController->endHold();
+                    quickAnnotationHoldTriggered = false;
+                    return;
+                }
+                if (!globalShortcutManager.globalShortcutsEnabled())
+                    return;
+                static_cast<void>(actionGate.dispatch(
+                    [this] {
+                        ensureQuickAnnotationController().beginHold();
+                        quickAnnotationHoldTriggered = true;
+                    },
+                    [this] {
+                        return allowPermissions(presentation::requiredPermissions(
+                            presentation::GlobalShortcutAction::QuickAnnotation,
+                            permissions.microphoneEnabled()));
+                    }));
+            });
+        const auto updateHoldShortcut = [this](const QJsonValue& value) {
+            quickAnnotationHoldMonitor->setChord(
+                presentation::QuickAnnotationOptions::fromJson(value.toObject()).holdShortcut);
+        };
+        updateHoldShortcut(storage::ApplicationStorage::instance().configuration().value(
+            QStringLiteral("quick_annotation/options")));
+        QObject::connect(&storage::ApplicationStorage::instance().configuration(),
+                         &storage::ConfigurationStore::valueChanged, &q,
+                         [updateHoldShortcut](const QString& key, const QJsonValue& value) {
+                             if (key == QStringLiteral("quick_annotation/options"))
+                                 updateHoldShortcut(value);
+                         });
+#endif
         globalMouseManager.setCaptureAvailable(ensureScreenshotController()->captureAvailable());
         globalMouseManager.initialize();
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &globalMouseManager,
@@ -1556,6 +1595,17 @@ class ApplicationController::Impl {
             }));
     }
 
+    presentation::QuickAnnotationController& ensureQuickAnnotationController() {
+        if (!quickAnnotationController) {
+            quickAnnotationController = std::make_unique<presentation::QuickAnnotationController>();
+            QObject::connect(
+                quickAnnotationController.get(),
+                &presentation::QuickAnnotationController::errorOccurred, &q,
+                [](const QString& message) { adqt::widgets::AdMessageService::error(message); });
+        }
+        return *quickAnnotationController;
+    }
+
     void dispatchQuickAction(presentation::GlobalShortcutAction action,
                              QuickActionOrigin origin = QuickActionOrigin::Other) {
         runtime::RuntimeActivityTracker::shared().markActivity();
@@ -1657,15 +1707,7 @@ class ApplicationController::Impl {
         case presentation::GlobalShortcutAction::QuickAnnotationRectangle:
         case presentation::GlobalShortcutAction::QuickAnnotationEllipse:
         case presentation::GlobalShortcutAction::QuickAnnotationToolbar: {
-            if (!quickAnnotationController) {
-                quickAnnotationController =
-                    std::make_unique<presentation::QuickAnnotationController>();
-                QObject::connect(quickAnnotationController.get(),
-                                 &presentation::QuickAnnotationController::errorOccurred, &q,
-                                 [](const QString& message) {
-                                     adqt::widgets::AdMessageService::error(message);
-                                 });
-            }
+            static_cast<void>(ensureQuickAnnotationController());
             using Action = presentation::GlobalShortcutAction;
             using Tool = presentation::QuickAnnotationTool;
             if (action == Action::QuickAnnotation)
@@ -1970,6 +2012,10 @@ class ApplicationController::Impl {
     std::unique_ptr<ScreenshotController> screenshotController;
     std::unique_ptr<presentation::GlobalCanvasController> globalCanvasController;
     std::unique_ptr<presentation::QuickAnnotationController> quickAnnotationController;
+#ifdef Q_OS_MACOS
+    std::unique_ptr<presentation::QuickAnnotationHoldMonitor> quickAnnotationHoldMonitor;
+    bool quickAnnotationHoldTriggered = false;
+#endif
     // Graph cancellation borrows direct capture even when construction unwinds before Impl's
     // destructor can run its explicit shutdown sequence. Destroy both MCP owners first.
     std::unique_ptr<presentation::DirectCaptureController> directCaptureController;

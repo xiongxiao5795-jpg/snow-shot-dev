@@ -26,6 +26,11 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         m_tool = new adqt::widgets::AdSelect(this);
         m_tool->setObjectName(QStringLiteral("quickAnnotationSettingsTool"));
         m_tool->setSearchEnabled(false);
+#ifdef Q_OS_MACOS
+        m_holdShortcut = new adqt::widgets::AdSelect(this);
+        m_holdShortcut->setObjectName(QStringLiteral("quickAnnotationSettingsHoldShortcut"));
+        m_holdShortcut->setSearchEnabled(false);
+#endif
         m_color = new adqt::widgets::AdColorPicker(this);
         m_color->setObjectName(QStringLiteral("quickAnnotationSettingsColor"));
         m_width = number("quickAnnotationSettingsWidth", 1, 20, 1, 0);
@@ -36,10 +41,16 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         m_showWidth = toggle("quickAnnotationSettingsShowWidth");
         m_showHold = toggle("quickAnnotationSettingsShowHold");
         const styles::ThemeAliasMetricToken metric;
-        int rowIndex = 0;
-        for (QWidget* control : QVector<QWidget*>{m_tool, m_color, m_width, m_shadow, m_hold,
-                                                  m_fade, m_showColor, m_showWidth, m_showHold}) {
-            if (rowIndex++ == 6) {
+        QVector<QWidget*> controls{m_tool};
+#ifdef Q_OS_MACOS
+        controls.push_back(m_holdShortcut);
+#endif
+        controls +=
+            {m_color, m_width, m_shadow, m_hold, m_fade, m_showColor, m_showWidth, m_showHold};
+        qsizetype rowIndex = 0;
+        const qsizetype toolbarStart = controls.size() - 3;
+        for (QWidget* control : controls) {
+            if (rowIndex++ == toolbarStart) {
                 m_toolbarHeading = new QLabel(this);
                 QFont font = m_toolbarHeading->font();
                 font.setBold(true);
@@ -58,6 +69,12 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                 [this](const QVariant& value) {
                     save([&](auto& options) { options.defaultTool = value.toString(); });
                 });
+#ifdef Q_OS_MACOS
+        connect(m_holdShortcut, &adqt::widgets::AdSelect::currentValueChanged, this,
+                [this](const QVariant& value) {
+                    save([&](auto& options) { options.holdShortcut = value.toString(); });
+                });
+#endif
         connect(m_color, &adqt::widgets::AdColorPicker::valueChanged, this,
                 [this](const adqt::widgets::AdColorValue& value) {
                     if (value.isSolid())
@@ -99,6 +116,9 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
     }
     void retranslateUi() override {
         const char* titles[] = {QT_TRANSLATE_NOOP("SettingsCatalog", "Default tool"),
+#ifdef Q_OS_MACOS
+                                QT_TRANSLATE_NOOP("SettingsCatalog", "Hold-to-annotate shortcut"),
+#endif
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Default color"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Stroke width"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Shadow radius"),
@@ -109,6 +129,11 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Toolbar hold-time control")};
         const char* descriptions[] = {
             QT_TRANSLATE_NOOP("SettingsCatalog", "Tool selected when quick annotation starts"),
+#ifdef Q_OS_MACOS
+            QT_TRANSLATE_NOOP("SettingsCatalog",
+                              "Hold the modifier keys to annotate; release to exit unless marks "
+                              "are kept. Requires Accessibility permission"),
+#endif
             QT_TRANSLATE_NOOP("SettingsCatalog", "Color used for new marks"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "Width of new marks"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "Shadow range around marks, from 0 to 25 pt"),
@@ -135,6 +160,17 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
              {QStringLiteral("arrow"), QCoreApplication::translate("SettingsCatalog", "Arrow")},
              {QStringLiteral("brush"), QCoreApplication::translate("SettingsCatalog", "Brush")}});
         m_tool->setCurrentValue(selected);
+#ifdef Q_OS_MACOS
+        const QSignalBlocker holdBlocker(m_holdShortcut);
+        const auto selectedHold = m_holdShortcut->currentValue();
+        m_holdShortcut->setOptions({{QStringLiteral("command_option"), QStringLiteral("⌘ + ⌥")},
+                                    {QStringLiteral("command_shift"), QStringLiteral("⌘ + ⇧")},
+                                    {QStringLiteral("control_option"), QStringLiteral("⌃ + ⌥")},
+                                    {QStringLiteral("control_shift"), QStringLiteral("⌃ + ⇧")},
+                                    {QStringLiteral("disabled"),
+                                     QCoreApplication::translate("SettingsCatalog", "Disabled")}});
+        m_holdShortcut->setCurrentValue(selectedHold);
+#endif
         m_shadow->setSuffixText(QStringLiteral(" pt"));
         m_hold->setSuffixText(QCoreApplication::translate(
             "snow_shot::presentation::QuickAnnotationController", " s"));
@@ -169,6 +205,10 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         const QSignalBlocker a(m_tool), b(m_color), c(m_width), d(m_shadow), e(m_hold), f(m_fade),
             g(m_showColor), h(m_showWidth), i(m_showHold);
         m_tool->setCurrentValue(options.defaultTool);
+#ifdef Q_OS_MACOS
+        const QSignalBlocker holdShortcutBlocker(m_holdShortcut);
+        m_holdShortcut->setCurrentValue(options.holdShortcut);
+#endif
         m_color->setValue(adqt::widgets::AdColorValue::solid(options.color));
         m_width->setValue(options.width);
         m_shadow->setValue(options.shadowRadius);
@@ -190,6 +230,9 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
             refresh();
     }
     adqt::widgets::AdSelect* m_tool = nullptr;
+#ifdef Q_OS_MACOS
+    adqt::widgets::AdSelect* m_holdShortcut = nullptr;
+#endif
     adqt::widgets::AdColorPicker* m_color = nullptr;
     adqt::widgets::AdInputNumber* m_width = nullptr;
     adqt::widgets::AdInputNumber* m_shadow = nullptr;

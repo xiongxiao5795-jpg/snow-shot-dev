@@ -2253,7 +2253,9 @@ target_link_libraries(snow_shot PRIVATE snow_shot_system_notification_controller
 if(APPLE)
     target_link_libraries(snow_shot PRIVATE ${SNOW_SELECTED_FILES_LIBRARIES})
     target_link_libraries(snow_shot PRIVATE snow_shot_system_notifications)
-    target_sources(snow_shot PRIVATE src/platform/macos/camerashuttersound.mm)
+    target_sources(snow_shot PRIVATE src/platform/macos/camerashuttersound.mm
+        src/presentation/quickannotation/quickannotationholdmonitor.h
+        src/presentation/quickannotation/quickannotationholdmonitor.mm)
     target_link_libraries(snow_shot PRIVATE "-framework AVFoundation" "-framework Foundation" objc)
     qt_add_resources(snow_shot "snow_shot_shutter_audio"
         PREFIX "/snow-shot"

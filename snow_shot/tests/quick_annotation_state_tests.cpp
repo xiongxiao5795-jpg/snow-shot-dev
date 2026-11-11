@@ -4,6 +4,7 @@
 #include <iostream>
 #include <limits>
 
+using snow_shot::presentation::QuickAnnotationHoldState;
 using snow_shot::presentation::QuickAnnotationState;
 using snow_shot::presentation::QuickAnnotationTool;
 
@@ -15,6 +16,17 @@ static void require(bool condition, const char* message) {
 }
 
 int main() {
+    QuickAnnotationHoldState hold;
+    using HoldChange = QuickAnnotationHoldState::Change;
+    require(hold.modifiers(true) == HoldChange::Schedule && !hold.otherKey() && !hold.activate(),
+            "another key cancels pending modifier-only activation");
+    require(hold.modifiers(true) == HoldChange::None && hold.modifiers(false) == HoldChange::None,
+            "cancelled modifier chord cannot reactivate until released");
+    require(hold.modifiers(true) == HoldChange::Schedule && hold.activate() &&
+                hold.modifiers(true) == HoldChange::None &&
+                hold.modifiers(false) == HoldChange::End,
+            "a held modifier chord activates once and releases once");
+    require(hold.modifiers(false) == HoldChange::None, "duplicate release is ignored");
     QuickAnnotationState state;
     using Phase = QuickAnnotationState::Phase;
     require(state.phase() == Phase::Idle && state.tool() == QuickAnnotationTool::Brush,

@@ -16,6 +16,7 @@ struct QuickAnnotationOptions {
     int fadeMs = 600;
     int shadowRadius = 0;
     QString defaultTool = QStringLiteral("rounded_rectangle");
+    QString holdShortcut = QStringLiteral("command_option");
     bool persistent = false;
     bool showColor = true;
     bool showWidth = true;
@@ -36,6 +37,11 @@ struct QuickAnnotationOptions {
             tool == QStringLiteral("rectangle") || tool == QStringLiteral("rounded_rectangle") ||
             tool == QStringLiteral("ellipse"))
             result.defaultTool = tool;
+        const QString hold = object.value(QStringLiteral("hold_shortcut")).toString();
+        if (hold == QStringLiteral("disabled") || hold == QStringLiteral("command_option") ||
+            hold == QStringLiteral("command_shift") || hold == QStringLiteral("control_option") ||
+            hold == QStringLiteral("control_shift"))
+            result.holdShortcut = hold;
         result.persistent = object.value(QStringLiteral("persistent")).toBool(false);
         result.showColor = object.value(QStringLiteral("toolbar_color")).toBool(true);
         result.showWidth = object.value(QStringLiteral("toolbar_width")).toBool(true);
@@ -50,6 +56,7 @@ struct QuickAnnotationOptions {
                 {QStringLiteral("fade_ms"), fadeMs},
                 {QStringLiteral("shadow_radius"), shadowRadius},
                 {QStringLiteral("default_tool"), defaultTool},
+                {QStringLiteral("hold_shortcut"), holdShortcut},
                 {QStringLiteral("persistent"), persistent},
                 {QStringLiteral("toolbar_color"), showColor},
                 {QStringLiteral("toolbar_width"), showWidth},
