@@ -1657,7 +1657,9 @@ int main(int argc, char** argv) {
         int left = heldMark.width(), top = heldMark.height(), right = -1, bottom = -1;
         for (int y = 0; y < heldMark.height(); ++y) {
             for (int x = 0; x < heldMark.width(); ++x) {
-                if (qAlpha(heldMark.pixel(x, y)) == 0)
+                const QRgb pixel = heldMark.pixel(x, y);
+                if (qAlpha(pixel) == 0 || qBlue(pixel) < 120 || qBlue(pixel) <= qRed(pixel) * 2 ||
+                    qBlue(pixel) <= qGreen(pixel) + 20)
                     continue;
                 left = std::min(left, x);
                 right = std::max(right, x);
@@ -1665,6 +1667,9 @@ int main(int argc, char** argv) {
                 bottom = y;
             }
         }
+        if (right <= left || bottom <= top || (right - left) <= (bottom - top) * 3 / 2)
+            std::cerr << "held mark bounds: " << left << ',' << top << ' ' << right << ',' << bottom
+                      << " image: " << heldMark.width() << 'x' << heldMark.height() << '\n';
         require(right > left && bottom > top && (right - left) > (bottom - top) * 3 / 2,
                 "held shortcut modifiers do not constrain rectangle drag geometry");
         controller.endHold();
