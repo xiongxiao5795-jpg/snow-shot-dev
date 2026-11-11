@@ -10,6 +10,7 @@ on:
       - '!.github/workflows/quick-annotation-release-cache-check.yml'
       - '!.github/workflows/quick-annotation-macos-diagnostic.yml'
       - '!.github/workflows/quick-annotation-macos.yml'
+      - '!.github/workflows/quick-annotation-republish-dmg.yml'
       - '!scripts/macos-release-cache.py'
       - '!scripts/test-macos-release-cache.py'
       - '!scripts/test-macos-release-incremental.sh'
@@ -196,11 +197,26 @@ jobs:
           done
           printf 'source_commit=%s\n' "$GITHUB_SHA" > build/snow-shot-macos-arm64-release/source-receipt.txt
           shasum -a 256 "${packages[@]}" >> build/snow-shot-macos-arm64-release/source-receipt.txt
-      - uses: actions/upload-artifact@v4
+      - name: Upload DMG for direct download
+        id: dmg
+        uses: actions/upload-artifact@v7
         with:
-          name: snow-shot-release-macos-arm64
-          path: |
-            build/snow-shot-macos-arm64-release/*.dmg
-            build/snow-shot-macos-arm64-release/*.dmg.sha256
-            build/snow-shot-macos-arm64-release/source-receipt.txt
+          path: build/snow-shot-macos-arm64-release/*.dmg
+          archive: false
           if-no-files-found: error
+      - name: Upload DMG checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/snow-shot-macos-arm64-release/*.dmg.sha256
+          archive: false
+          if-no-files-found: error
+      - name: Upload source receipt
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/snow-shot-macos-arm64-release/source-receipt.txt
+          archive: false
+          if-no-files-found: error
+      - name: Link the DMG in the run summary
+        env:
+          DMG_URL: ${{ steps.dmg.outputs.artifact-url }}
+        run: printf '[Download the macOS ARM64 DMG](%s)\n' "$DMG_URL" >> "$GITHUB_STEP_SUMMARY"

@@ -31,6 +31,7 @@ jobs:
             .github/workflows/quick-annotation-macos-release.yml \
             .github/workflows/quick-annotation-macos-diagnostic.yml \
             .github/workflows/quick-annotation-macos.yml \
+            .github/workflows/quick-annotation-republish-dmg.yml \
             .github/workflows/quick-annotation-release-cache-check.yml
       - name: Check release cache safety
         run: |

@@ -1,0 +1,63 @@
+name: Make verified DMG directly downloadable
+
+on:
+  push:
+    branches: [codex/quick-annotation-package]
+    paths: ['.github/workflows/quick-annotation-republish-dmg.yml']
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Retrieve the verified build on the GitHub runner
+        uses: actions/download-artifact@v4
+        with:
+          name: snow-shot-release-macos-arm64
+          run-id: 42860080069
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/verified-dmg
+      - name: Verify the exact original DMG
+        run: |
+          cd "$RUNNER_TEMP/verified-dmg"
+          printf '%s  %s\n' '292ae3e0125e8784d09a38437b7132394e3b0a8c145c7f51bfbf76f226343e53' \
+            'snow-shot-1.5.3-macos-arm64.dmg' | sha256sum --check
+          test "$(find . -maxdepth 1 -name '*.dmg' | wc -l)" -eq 1
+      - name: Upload the original DMG without a ZIP
+        id: dmg
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ runner.temp }}/verified-dmg/snow-shot-1.5.3-macos-arm64.dmg
+          archive: false
+          if-no-files-found: error
+      - name: Upload the original checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ runner.temp }}/verified-dmg/snow-shot-1.5.3-macos-arm64.dmg.sha256
+          archive: false
+          if-no-files-found: error
+      - name: Upload the original source receipt
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ runner.temp }}/verified-dmg/source-receipt.txt
+          archive: false
+          if-no-files-found: error
+      - name: Verify the direct-download artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: snow-shot-1.5.3-macos-arm64.dmg
+          path: ${{ runner.temp }}/roundtrip-dmg
+      - name: Check the downloaded DMG hash
+        run: |
+          cd "$RUNNER_TEMP/roundtrip-dmg"
+          printf '%s  %s\n' '292ae3e0125e8784d09a38437b7132394e3b0a8c145c7f51bfbf76f226343e53' \
+            'snow-shot-1.5.3-macos-arm64.dmg' | sha256sum --check
+      - name: Link the DMG in the run summary
+        env:
+          DMG_URL: ${{ steps.dmg.outputs.artifact-url }}
+        run: printf '[Download the macOS ARM64 DMG](%s)\n' "$DMG_URL" >> "$GITHUB_STEP_SUMMARY"

@@ -9,6 +9,7 @@ on:
       - '.github/workflows/quick-annotation-macos-release.yml'
       - '.github/workflows/quick-annotation-macos-diagnostic.yml'
       - '.github/workflows/quick-annotation-release-cache-check.yml'
+      - '.github/workflows/quick-annotation-republish-dmg.yml'
       - 'scripts/package-snow-shot.sh'
       - 'scripts/macos-release-cache.py'
       - 'scripts/test-macos-build-support.py'
