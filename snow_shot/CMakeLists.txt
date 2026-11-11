@@ -3481,11 +3481,6 @@ if(SNOW_SHOT_BUILD_TESTS)
         snow_shot_settings snow_shot_image_codec Qt6::Test)
     snow_shot_import_offscreen_platform(snow-shot-settings-page-loading-tests)
     snow_shot_add_translations(snow-shot-settings-page-loading-tests)
-    add_test(NAME snow-shot-quick-annotation-settings-tests
-        COMMAND snow-shot-settings-page-loading-tests --quick-annotation-settings-only -platform offscreen)
-    set_tests_properties(snow-shot-quick-annotation-settings-tests PROPERTIES
-        LABELS unit RUN_SERIAL TRUE TIMEOUT 60
-        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     add_test(NAME snow-shot-settings-select-tests
         COMMAND snow-shot-settings-page-loading-tests --selects-only)
     add_test(NAME snow-shot-pinned-text-color-settings-tests
@@ -7387,6 +7382,16 @@ if(SNOW_SHOT_BUILD_TESTS)
         COMMAND snow-shot-quick-annotation-options-tests)
     set_tests_properties(snow-shot-quick-annotation-options-tests PROPERTIES
         LABELS "unit" TIMEOUT 30
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+
+    add_executable(snow-shot-quick-annotation-settings-tests tests/quick_annotation_settings_tests.cpp)
+    target_link_libraries(snow-shot-quick-annotation-settings-tests PRIVATE
+        snow_shot_storage ant_design_qt Qt6::Widgets)
+    snow_shot_import_offscreen_platform(snow-shot-quick-annotation-settings-tests)
+    add_test(NAME snow-shot-quick-annotation-settings-tests
+        COMMAND snow-shot-quick-annotation-settings-tests -platform offscreen)
+    set_tests_properties(snow-shot-quick-annotation-settings-tests PROPERTIES
+        LABELS unit RUN_SERIAL TRUE TIMEOUT 60
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
     add_executable(snow-shot-global-canvas-tests
