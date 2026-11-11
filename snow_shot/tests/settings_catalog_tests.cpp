@@ -1722,29 +1722,30 @@ void builtInCatalogIsCompleteAndValid() {
                 settingsGroup->pages.at(2).pageId == QStringLiteral("screenshots"),
             "Screenshots must appear below General and Appearance in the Settings navigation");
 #ifdef Q_OS_MACOS
-    constexpr int expectedSettingsPages = 11;
+    constexpr int expectedSettingsPages = 12;
     require(settingsGroup->pages.constLast().pageId == QStringLiteral("app-permissions"),
             "macOS App Permissions follows System settings");
 #else
-    constexpr int expectedSettingsPages = 10;
+    constexpr int expectedSettingsPages = 11;
 #endif
     require(settingsGroup->title.translated() == QStringLiteral("Settings") &&
                 settingsGroup->pages.size() == expectedSettingsPages &&
-                settingsGroup->pages.at(3).pageId == QStringLiteral("pinned-windows") &&
-                settingsGroup->pages.at(4).pageId == QStringLiteral("screen-recording") &&
-                settingsGroup->pages.at(5).pageId ==
+                settingsGroup->pages.at(3).pageId == QStringLiteral("quick-annotation") &&
+                settingsGroup->pages.at(4).pageId == QStringLiteral("pinned-windows") &&
+                settingsGroup->pages.at(5).pageId == QStringLiteral("screen-recording") &&
+                settingsGroup->pages.at(6).pageId ==
                     QStringLiteral("text-recognition-translation") &&
-                settingsGroup->pages.at(6).pageId == QStringLiteral("shortcuts-mouse") &&
-                settingsGroup->pages.at(7).pageId == QStringLiteral("desktop-tools") &&
-                settingsGroup->pages.at(8).pageId == QStringLiteral("files-history") &&
-                settingsGroup->pages.at(9).pageId == QStringLiteral("connections-services"),
+                settingsGroup->pages.at(7).pageId == QStringLiteral("shortcuts-mouse") &&
+                settingsGroup->pages.at(8).pageId == QStringLiteral("desktop-tools") &&
+                settingsGroup->pages.at(9).pageId == QStringLiteral("files-history") &&
+                settingsGroup->pages.at(10).pageId == QStringLiteral("connections-services"),
             "Settings navigation must group feature controls and shared preferences predictably");
     const auto* applicationShortcutsPage = catalog.page(QStringLiteral("shortcuts-mouse"));
     require(applicationShortcutsPage != nullptr &&
                 applicationShortcutsPage->route == QStringLiteral("/settings/shortcuts-mouse") &&
                 applicationShortcutsPage->title.translated() ==
                     QStringLiteral("Application shortcuts") &&
-                settingsGroup->pages.at(6).id == QStringLiteral("nav.shortcuts-mouse"),
+                settingsGroup->pages.at(7).id == QStringLiteral("nav.shortcuts-mouse"),
             "Application shortcuts must expose the renamed title, route, and navigation");
     const auto* drawingShortcuts =
         catalog.section(QStringLiteral("shortcuts-mouse"), QStringLiteral("drawing-shortcuts"));

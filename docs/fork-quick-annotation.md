@@ -11,11 +11,13 @@ The main integration points are `applicationcontroller.cpp`, `globalshortcuttype
 `globalshortcutmanager.cpp`, the settings catalog/backend and configuration schema, the macOS
 window policy, the application CMake source list, and the translation catalogs.
 
-The toolbar provides six stroke-color presets, stroke width (1–20), and hold time
-(0.5–30 seconds). The default hold is 1.5 seconds, followed by a 0.6-second fade. Options are
-stored under `quick_annotation/options` and do not change the regular screenshot drawing styles.
-Global shortcuts remain configurable in Snow Shot's shortcut settings. The last selected tool is
-stored separately and survives an application restart.
+The Settings > Quick annotation page provides six stroke-color presets, stroke width (1–20),
+hold time (0.5–30 seconds), and fade duration (0.1–5 seconds). The default hold is 1.5 seconds,
+followed by a 0.6-second fade. Options are stored under `quick_annotation/options` and do not
+change regular screenshot drawing styles. Global shortcuts have their own Quick annotation group;
+the menu-bar Quick annotation entry opens the compact tool palette. Existing tray configurations
+receive the entry once, and it can subsequently be hidden in tray menu settings. The last selected
+tool is stored separately and survives an application restart.
 
 Keep the feature on `codex/quick-annotation-package`. Syncing the fork's default `main` from
 upstream does not update this branch automatically: merge the updated `main` into this branch,
