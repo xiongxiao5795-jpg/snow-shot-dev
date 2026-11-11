@@ -24,6 +24,7 @@ class QuickAnnotationController final : public QObject {
     void beginHold();
     void endHold();
     void exitMode();
+    void suspendForScreenshot();
     void showToolbar(bool armDefault = true);
 
   signals:

@@ -4396,16 +4396,8 @@
             <translation>在新的一般截圖中預設顯示擷取的滑鼠游標</translation>
         </message>
         <message>
-            <source>Show the color control in the toolbar</source>
-            <translation>在工具列顯示顏色控制</translation>
-        </message>
-        <message>
             <source>Show the floating toolbar on the desktop</source>
             <translation>在桌面上顯示浮動工具列</translation>
-        </message>
-        <message>
-            <source>Show the hold-time control in the toolbar</source>
-            <translation>在工具列顯示停留時間控制</translation>
         </message>
         <message>
             <source>Show the shadow on new pinned windows</source>
@@ -4418,10 +4410,6 @@
         <message>
             <source>Show the video format and microphone and system audio status in the center of the motion preview area</source>
             <translation>在動效預覽區域中央顯示影片格式以及麥克風和系統音訊狀態</translation>
-        </message>
-        <message>
-            <source>Show the width control in the toolbar</source>
-            <translation>在工具列顯示粗細控制</translation>
         </message>
         <message>
             <source>Show toolbar</source>
@@ -4776,18 +4764,6 @@
             <translation>進入快速標註時選用的工具</translation>
         </message>
         <message>
-            <source>Toolbar color control</source>
-            <translation>工具列顏色控制</translation>
-        </message>
-        <message>
-            <source>Toolbar controls</source>
-            <translation>工具列設定</translation>
-        </message>
-        <message>
-            <source>Toolbar hold-time control</source>
-            <translation>工具列停留時間控制</translation>
-        </message>
-        <message>
             <source>Toolbar opacity</source>
             <translation>工具列不透明度</translation>
         </message>
@@ -4802,10 +4778,6 @@
         <message>
             <source>Toolbar skin position</source>
             <translation>工具列佈景位置</translation>
-        </message>
-        <message>
-            <source>Toolbar width control</source>
-            <translation>工具列粗細控制</translation>
         </message>
         <message>
             <source>Tools excluded from automatic selection</source>

@@ -4396,16 +4396,8 @@
             <translation>Show the captured mouse cursor by default in new normal screenshots</translation>
         </message>
         <message>
-            <source>Show the color control in the toolbar</source>
-            <translation>Show the color control in the toolbar</translation>
-        </message>
-        <message>
             <source>Show the floating toolbar on the desktop</source>
             <translation>Show the floating toolbar on the desktop</translation>
-        </message>
-        <message>
-            <source>Show the hold-time control in the toolbar</source>
-            <translation>Show the hold-time control in the toolbar</translation>
         </message>
         <message>
             <source>Show the shadow on new pinned windows</source>
@@ -4418,10 +4410,6 @@
         <message>
             <source>Show the video format and microphone and system audio status in the center of the motion preview area</source>
             <translation>Show the video format and microphone and system audio status in the center of the motion preview area</translation>
-        </message>
-        <message>
-            <source>Show the width control in the toolbar</source>
-            <translation>Show the width control in the toolbar</translation>
         </message>
         <message>
             <source>Show toolbar</source>
@@ -4776,18 +4764,6 @@
             <translation>Tool selected when quick annotation starts</translation>
         </message>
         <message>
-            <source>Toolbar color control</source>
-            <translation>Toolbar color control</translation>
-        </message>
-        <message>
-            <source>Toolbar controls</source>
-            <translation>Toolbar controls</translation>
-        </message>
-        <message>
-            <source>Toolbar hold-time control</source>
-            <translation>Toolbar hold-time control</translation>
-        </message>
-        <message>
             <source>Toolbar opacity</source>
             <translation>Toolbar opacity</translation>
         </message>
@@ -4802,10 +4778,6 @@
         <message>
             <source>Toolbar skin position</source>
             <translation>Toolbar skin position</translation>
-        </message>
-        <message>
-            <source>Toolbar width control</source>
-            <translation>Toolbar width control</translation>
         </message>
         <message>
             <source>Tools excluded from automatic selection</source>

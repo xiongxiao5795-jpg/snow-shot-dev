@@ -4396,16 +4396,8 @@
             <translation>在新的普通截图中默认显示捕获的鼠标光标</translation>
         </message>
         <message>
-            <source>Show the color control in the toolbar</source>
-            <translation>在工具栏显示颜色控件</translation>
-        </message>
-        <message>
             <source>Show the floating toolbar on the desktop</source>
             <translation>在桌面上显示悬浮工具栏</translation>
-        </message>
-        <message>
-            <source>Show the hold-time control in the toolbar</source>
-            <translation>在工具栏显示停留时间控件</translation>
         </message>
         <message>
             <source>Show the shadow on new pinned windows</source>
@@ -4418,10 +4410,6 @@
         <message>
             <source>Show the video format and microphone and system audio status in the center of the motion preview area</source>
             <translation>在动效预览区域中央显示视频格式以及麦克风和系统音频状态</translation>
-        </message>
-        <message>
-            <source>Show the width control in the toolbar</source>
-            <translation>在工具栏显示粗细控件</translation>
         </message>
         <message>
             <source>Show toolbar</source>
@@ -4776,18 +4764,6 @@
             <translation>进入快速标注时选用的工具</translation>
         </message>
         <message>
-            <source>Toolbar color control</source>
-            <translation>工具栏颜色控件</translation>
-        </message>
-        <message>
-            <source>Toolbar controls</source>
-            <translation>工具栏配置</translation>
-        </message>
-        <message>
-            <source>Toolbar hold-time control</source>
-            <translation>工具栏停留时间控件</translation>
-        </message>
-        <message>
             <source>Toolbar opacity</source>
             <translation>工具栏不透明度</translation>
         </message>
@@ -4802,10 +4778,6 @@
         <message>
             <source>Toolbar skin position</source>
             <translation>工具栏皮肤位置</translation>
-        </message>
-        <message>
-            <source>Toolbar width control</source>
-            <translation>工具栏粗细控件</translation>
         </message>
         <message>
             <source>Tools excluded from automatic selection</source>

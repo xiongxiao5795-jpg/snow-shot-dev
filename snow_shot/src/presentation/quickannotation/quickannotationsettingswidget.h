@@ -38,26 +38,13 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         m_shadow = number("quickAnnotationSettingsShadow", 0, 25, 1, 0);
         m_hold = number("quickAnnotationSettingsHold", 0.5, 30, 0.5, 1);
         m_fade = number("quickAnnotationSettingsFade", 0.1, 5, 0.1, 1);
-        m_showColor = toggle("quickAnnotationSettingsShowColor");
-        m_showWidth = toggle("quickAnnotationSettingsShowWidth");
-        m_showHold = toggle("quickAnnotationSettingsShowHold");
         const styles::ThemeAliasMetricToken metric;
         QVector<QWidget*> controls{m_tool};
 #ifdef Q_OS_MACOS
         controls.push_back(m_holdShortcut);
 #endif
-        controls +=
-            {m_color, m_width, m_shadow, m_hold, m_fade, m_showColor, m_showWidth, m_showHold};
-        qsizetype rowIndex = 0;
-        const qsizetype toolbarStart = controls.size() - 3;
+        controls += {m_color, m_width, m_shadow, m_hold, m_fade};
         for (QWidget* control : controls) {
-            if (rowIndex++ == toolbarStart) {
-                m_toolbarHeading = new QLabel(this);
-                QFont font = m_toolbarHeading->font();
-                font.setBold(true);
-                m_toolbarHeading->setFont(font);
-                layout->addWidget(m_toolbarHeading);
-            }
             QLabel* title = nullptr;
             QLabel* description = nullptr;
             auto* row = components::createSettingItemRow(this, metric, &title, &description,
@@ -93,12 +80,6 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         connect(m_fade, &adqt::widgets::AdInputNumber::valueChanged, this, [this](double value) {
             save([&](auto& options) { options.fadeMs = qRound(value * 1000); });
         });
-        connect(m_showColor, &QAbstractButton::toggled, this,
-                [this](bool value) { save([&](auto& options) { options.showColor = value; }); });
-        connect(m_showWidth, &QAbstractButton::toggled, this,
-                [this](bool value) { save([&](auto& options) { options.showWidth = value; }); });
-        connect(m_showHold, &QAbstractButton::toggled, this,
-                [this](bool value) { save([&](auto& options) { options.showHold = value; }); });
         auto& storage = storage::ApplicationStorage::instance();
         setEnabled(storage.isInitialized());
         if (storage.isInitialized())
@@ -124,10 +105,7 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Stroke width"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Shadow radius"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Hold time"),
-                                QT_TRANSLATE_NOOP("SettingsCatalog", "Fade duration"),
-                                QT_TRANSLATE_NOOP("SettingsCatalog", "Toolbar color control"),
-                                QT_TRANSLATE_NOOP("SettingsCatalog", "Toolbar width control"),
-                                QT_TRANSLATE_NOOP("SettingsCatalog", "Toolbar hold-time control")};
+                                QT_TRANSLATE_NOOP("SettingsCatalog", "Fade duration")};
         const char* descriptions[] = {
             QT_TRANSLATE_NOOP("SettingsCatalog", "Tool selected when quick annotation starts"),
 #ifdef Q_OS_MACOS
@@ -139,17 +117,12 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
             QT_TRANSLATE_NOOP("SettingsCatalog", "Width of new marks"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "Shadow range around marks, from 0 to 25 pt"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "How long temporary marks remain visible"),
-            QT_TRANSLATE_NOOP("SettingsCatalog", "How long marks take to fade out"),
-            QT_TRANSLATE_NOOP("SettingsCatalog", "Show the color control in the toolbar"),
-            QT_TRANSLATE_NOOP("SettingsCatalog", "Show the width control in the toolbar"),
-            QT_TRANSLATE_NOOP("SettingsCatalog", "Show the hold-time control in the toolbar")};
+            QT_TRANSLATE_NOOP("SettingsCatalog", "How long marks take to fade out")};
         for (qsizetype i = 0; i < m_titles.size(); ++i) {
             m_titles.at(i)->setText(QCoreApplication::translate("SettingsCatalog", titles[i]));
             m_descriptions.at(i)->setText(
                 QCoreApplication::translate("SettingsCatalog", descriptions[i]));
         }
-        m_toolbarHeading->setText(
-            QCoreApplication::translate("SettingsCatalog", "Toolbar controls"));
         const QSignalBlocker blocker(m_tool);
         const auto selected = m_tool->currentValue();
         m_tool->setOptions(
@@ -190,11 +163,6 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         value->setFixedWidth(160);
         return value;
     }
-    adqt::widgets::AdSwitch* toggle(const char* name) {
-        auto* value = new adqt::widgets::AdSwitch(this);
-        value->setObjectName(QString::fromLatin1(name));
-        return value;
-    }
     void refresh() {
         auto& storage = storage::ApplicationStorage::instance();
         const auto options = storage.isInitialized()
@@ -203,8 +171,7 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                                            .value(QStringLiteral("quick_annotation/options"))
                                            .toObject())
                                  : QuickAnnotationOptions{};
-        const QSignalBlocker a(m_tool), b(m_color), c(m_width), d(m_shadow), e(m_hold), f(m_fade),
-            g(m_showColor), h(m_showWidth), i(m_showHold);
+        const QSignalBlocker a(m_tool), b(m_color), c(m_width), d(m_shadow), e(m_hold), f(m_fade);
         m_tool->setCurrentValue(options.defaultTool);
 #ifdef Q_OS_MACOS
         const QSignalBlocker holdShortcutBlocker(m_holdShortcut);
@@ -215,9 +182,6 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         m_shadow->setValue(options.shadowRadius);
         m_hold->setValue(options.holdMs / 1000.0);
         m_fade->setValue(options.fadeMs / 1000.0);
-        m_showColor->setChecked(options.showColor);
-        m_showWidth->setChecked(options.showWidth);
-        m_showHold->setChecked(options.showHold);
     }
     template <typename Change> void save(Change change) {
         auto& storage = storage::ApplicationStorage::instance();
@@ -239,10 +203,6 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
     adqt::widgets::AdInputNumber* m_shadow = nullptr;
     adqt::widgets::AdInputNumber* m_hold = nullptr;
     adqt::widgets::AdInputNumber* m_fade = nullptr;
-    adqt::widgets::AdSwitch* m_showColor = nullptr;
-    adqt::widgets::AdSwitch* m_showWidth = nullptr;
-    adqt::widgets::AdSwitch* m_showHold = nullptr;
-    QLabel* m_toolbarHeading = nullptr;
     QVector<QLabel*> m_titles;
     QVector<QLabel*> m_descriptions;
 };

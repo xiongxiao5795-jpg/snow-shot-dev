@@ -41,9 +41,7 @@ int main(int argc, char** argv) {
             QStringLiteral("quickAnnotationSettingsHold"));
         auto* fade = widget.findChild<adqt::widgets::AdInputNumber*>(
             QStringLiteral("quickAnnotationSettingsFade"));
-        auto* showWidth = widget.findChild<adqt::widgets::AdSwitch*>(
-            QStringLiteral("quickAnnotationSettingsShowWidth"));
-        require(tool && color && width && shadow && hold && fade && showWidth &&
+        require(tool && color && width && shadow && hold && fade &&
                     tool->currentValue().toString() == QStringLiteral("rounded_rectangle") &&
                     hold->value() == 1.5 && fade->value() == 0.6 && shadow->value() == 0,
                 "quick annotation settings expose requested defaults");
@@ -61,7 +59,6 @@ int main(int argc, char** argv) {
         shadow->setValue(12);
         hold->setValue(3.0);
         fade->setValue(1.2);
-        showWidth->setChecked(false);
         const auto key = QStringLiteral("quick_annotation/options");
         auto& configuration = storage.configuration();
         const auto saved = configuration.value(key).toObject();
@@ -69,7 +66,6 @@ int main(int argc, char** argv) {
                     saved.value(QStringLiteral("color")) == QStringLiteral("#1890ff") &&
                     saved.value(QStringLiteral("width")).toInt() == 7 &&
                     saved.value(QStringLiteral("shadow_radius")).toInt() == 12 &&
-                    !saved.value(QStringLiteral("toolbar_width")).toBool() &&
                     saved.value(QStringLiteral("hold_ms")).toInt() == 3000 &&
                     saved.value(QStringLiteral("fade_ms")).toInt() == 1200,
                 "settings persist independently");

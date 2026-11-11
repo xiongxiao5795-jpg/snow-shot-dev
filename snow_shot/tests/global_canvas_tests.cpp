@@ -10,6 +10,8 @@
 #include "../src/presentation/globalcanvas/globalcanvasplatform.h"
 #include "../src/presentation/quickannotation/quickannotationoptions.h"
 #include "snow_shot/presentation/screenshotfloatingtoolpalettewindow.h"
+#include "snow_shot/presentation/screenshottoolpalette.h"
+#include <QAbstractButton>
 #include "snow_shot/presentation/shortcutdisplaytext.h"
 #include "snow_shot/presentation/styles/thememanager.h"
 #include "snow_shot/storage/applicationstorage.h"
@@ -1498,6 +1500,10 @@ int main(int argc, char** argv) {
                 "mouse release immediately restores click-through");
         require(window->isVisible() && !canvas->canvasHistoryState().canUndo,
                 "committed mark stays visible independently of the drawing document");
+        controller.beginHold();
+        controller.suspendForScreenshot();
+        require(window->isVisible() && window->testAttribute(Qt::WA_TransparentForMouseEvents),
+                "starting screenshot preserves marks and releases annotation input");
         controller.armLastTool();
         require(canvas->canvasTool() == SnowCanvasTool::Shape &&
                     canvas->canvasStyleToolbarState().shapeStyle.cornerRadii.topLeft > 0,
@@ -1513,9 +1519,22 @@ int main(int argc, char** argv) {
                 toolbar = candidate;
         }
         require(toolbar && toolbar->isVisible(), "show quick annotation toolbar");
-        const auto buttons = toolbar->findChildren<QToolButton*>();
-        require(buttons.size() >= 7, "quick annotation toolbar has tools, persistence and close");
-        buttons.at(2)->click();
+        auto* floating = qobject_cast<presentation::ScreenshotFloatingToolPaletteWindow*>(toolbar);
+        require(floating && floating->palette()->dragHandle(),
+                "quick annotation reuses the draggable screenshot toolbar");
+        const QRect screenBounds = QGuiApplication::primaryScreen()->availableGeometry();
+        const QPoint initial = floating->contentPosition();
+        const QSize size = floating->contentSizeHint();
+        require(qAbs(initial.x() + size.width() - screenBounds.right() - 1) <= 2 &&
+                    qAbs(initial.y() + size.height() - screenBounds.bottom() - 1) <= 2,
+                "toolbar initially appears at the bottom right of the primary screen");
+        const QPoint dragged = initial - QPoint(40, 40);
+        floating->moveContentTo(dragged);
+        floating->dragFinished();
+        controller.showToolbar();
+        require(floating->contentPosition() == dragged,
+                "reopening preserves the user's dragged toolbar position");
+        floating->palette()->shapeRequested();
         require(toolbar->isVisible() && canvas->canvasTool() == SnowCanvasTool::Shape &&
                     !window->testAttribute(Qt::WA_TransparentForMouseEvents),
                 "toolbar selection arms a rectangle without closing before drawing");
@@ -1536,43 +1555,16 @@ int main(int argc, char** argv) {
                 "advance fade timer past the second mark");
         require(!window->isVisible() && !timer->isActive(), "expired marks release the overlay");
         controller.showToolbar();
-        auto* color = toolbar->findChild<QComboBox*>(QStringLiteral("quickAnnotationColor"));
-        auto* width = toolbar->findChild<QSpinBox*>(QStringLiteral("quickAnnotationWidth"));
-        auto* hold =
-            toolbar->findChild<QDoubleSpinBox*>(QStringLiteral("quickAnnotationHoldSeconds"));
-        require(color && width && hold && hold->value() == 1.5,
-                "quick annotation exposes independent appearance and duration settings");
-        color->setCurrentIndex(3);
-        width->setValue(7);
-        hold->setValue(3.0);
-        const auto savedOptions =
+        auto externalOptions =
             storage.configuration().value(QStringLiteral("quick_annotation/options")).toObject();
-        require(savedOptions.value(QStringLiteral("color")).toString() ==
-                        QStringLiteral("#1890ff") &&
-                    savedOptions.value(QStringLiteral("width")).toInt() == 7 &&
-                    savedOptions.value(QStringLiteral("hold_ms")).toInt() == 3000,
-                "quick annotation settings persist independently");
-        auto externalOptions = savedOptions;
-        auto customColor = savedOptions;
-        customColor.insert(QStringLiteral("color"), QStringLiteral("#123456"));
-        require(storage.configuration().setValue(QStringLiteral("quick_annotation/options"),
-                                                 customColor) &&
-                    color->currentData().toString() == QStringLiteral("#123456"),
-                "toolbar displays an arbitrary color selected in settings");
+        externalOptions.insert(QStringLiteral("color"), QStringLiteral("#1890ff"));
+        externalOptions.insert(QStringLiteral("width"), 7);
+        externalOptions.insert(QStringLiteral("hold_ms"), 3000);
         externalOptions.insert(QStringLiteral("fade_ms"), 1200);
         externalOptions.insert(QStringLiteral("shadow_radius"), 12);
-        externalOptions.insert(QStringLiteral("hold_ms"), 2500);
         require(storage.configuration().setValue(QStringLiteral("quick_annotation/options"),
-                                                 externalOptions) &&
-                    hold->value() == 2.5,
-                "toolbar updates when settings change elsewhere");
-        hold->setValue(3.0);
-        require(storage.configuration()
-                        .value(QStringLiteral("quick_annotation/options"))
-                        .toObject()
-                        .value(QStringLiteral("fade_ms"))
-                        .toInt() == 1200,
-                "toolbar edits preserve separately configured fade duration");
+                                                 externalOptions),
+                "quick annotation settings update independently");
         toolbar->hide();
         controller.arm(presentation::QuickAnnotationTool::Ellipse);
         require(canvas->canvasTool() == SnowCanvasTool::Shape &&
@@ -1613,8 +1605,9 @@ int main(int argc, char** argv) {
                         .toString() == QStringLiteral("brush"),
                 "last selected tool is persisted");
         controller.showToolbar();
-        auto* keep = toolbar->findChild<QToolButton*>(QStringLiteral("quickAnnotationPersistent"));
-        auto* close = toolbar->findChild<QToolButton*>(QStringLiteral("quickAnnotationClose"));
+        auto* keep =
+            toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationPersistent"));
+        auto* close = toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationClose"));
         require(keep && close, "toolbar provides persistent mode and explicit exit");
         keep->setChecked(true);
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
@@ -1707,6 +1700,10 @@ int main(int argc, char** argv) {
             NSWindow* annotation = reinterpret_cast<NSView*>(overlay->winId()).window;
             require(annotation && annotation.sharingType != NSWindowSharingNone,
                     "annotation surface remains eligible for region recording");
+            require(platform::detail::captureWindowLevel(
+                        {platform::detail::CaptureFamily::Screenshot,
+                         platform::detail::kOverlayLayer}) > annotation.level,
+                    "screenshot overlay is above the annotation surface");
         }
         storage.shutdown();
         return 0;

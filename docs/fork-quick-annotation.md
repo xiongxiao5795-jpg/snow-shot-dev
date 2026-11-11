@@ -13,10 +13,10 @@ window policy, the application CMake source list, and the translation catalogs.
 
 The Settings > Quick annotation page uses the same settings-row controls as Screenshot settings.
 It configures the default tool, color, width, shadow radius (0–25 pt), hold time, fade duration,
-and optional toolbar controls. The default tool is a rounded rectangle. On macOS, Control+4
+and the modifier-only hold shortcut. The toolbar uses the existing screenshot drawing toolbar and its layout settings. The default tool is a rounded rectangle. On macOS, Control+4
 starts quick annotation; the other quick annotation shortcuts are unset by default. Old fork
 shortcuts are migrated only when they still match the earlier defaults; customized bindings stay.
-The toolbar opens on activation and hides after one gesture. With the normal Control+4 action,
+The toolbar opens at the lower right of the primary screen on first activation; a dragged position is retained for subsequent activations. It hides after one gesture. Starting a screenshot hides the toolbar and releases annotation input while retaining the existing marks. With the normal Control+4 action,
 mouse input returns immediately after the gesture. A persistent mark remains until persistence is
 disabled or the toolbar is explicitly closed; those marks then fade out.
 

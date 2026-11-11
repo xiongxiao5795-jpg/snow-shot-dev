@@ -263,6 +263,7 @@ class ScreenshotToolPalette final : public QWidget,
         bool showImageConversionTools = false;
         bool showScrollingScreenshotTool = false;
         bool showGlobalCanvasActions = false;
+        bool showQuickAnnotationActions = false;
         bool showSaveButton = false;
         bool showAirDropButton = false;
         bool saveButtonWithResultActions = false;
@@ -339,6 +340,7 @@ class ScreenshotToolPalette final : public QWidget,
     void setMoveOptionsToolbarVisible(bool visible);
     bool recordingExportSettingsVisible() const;
     void setActiveTool(Tool tool);
+    void setQuickAnnotationPersistent(bool enabled);
     void refreshConfirmShortcutHint();
     void refreshShortcutTooltips();
     void setGlobalCanvasClickThrough(bool enabled);
@@ -510,6 +512,8 @@ class ScreenshotToolPalette final : public QWidget,
     void globalCanvasClickThroughRequested();
     void globalCanvasLaserPointerRequested();
     void globalCanvasExitRequested();
+    void quickAnnotationPersistentChanged(bool enabled);
+    void quickAnnotationExitRequested();
     void undoRequested();
     void redoRequested();
     void moveRequested();
@@ -1128,6 +1132,8 @@ class ScreenshotToolPalette final : public QWidget,
     adqt::widgets::AdButton* m_globalCanvasClickThroughButton = nullptr;
     adqt::widgets::AdButton* m_globalCanvasLaserPointerButton = nullptr;
     adqt::widgets::AdButton* m_globalCanvasExitButton = nullptr;
+    adqt::widgets::AdButton* m_quickAnnotationPersistentButton = nullptr;
+    adqt::widgets::AdButton* m_quickAnnotationExitButton = nullptr;
     QLabel* m_selectionOpacityIcon = nullptr;
     adqt::widgets::AdSlider* m_selectionOpacitySlider = nullptr;
     adqt::widgets::AdSelect* m_drawTemplateSelect = nullptr;

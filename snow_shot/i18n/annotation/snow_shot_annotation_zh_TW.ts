@@ -791,6 +791,10 @@
             <translation>跳轉至翻譯頁面</translation>
         </message>
         <message>
+            <source>Keep marks</source>
+            <translation>標註常駐</translation>
+        </message>
+        <message>
             <source>Keyboard background color</source>
             <translation>鍵盤背景顏色</translation>
         </message>
@@ -1702,72 +1706,8 @@
             <translation> 秒</translation>
         </message>
         <message>
-            <source>Arrow</source>
-            <translation>箭頭</translation>
-        </message>
-        <message>
-            <source>Black</source>
-            <translation>黑色</translation>
-        </message>
-        <message>
-            <source>Blue</source>
-            <translation>藍色</translation>
-        </message>
-        <message>
-            <source>Brush</source>
-            <translation>畫筆</translation>
-        </message>
-        <message>
-            <source>Close</source>
-            <translation>結束</translation>
-        </message>
-        <message>
             <source>Could not change canvas click-through</source>
             <translation>無法切換畫布的滑鼠穿透狀態</translation>
-        </message>
-        <message>
-            <source>Ellipse</source>
-            <translation>橢圓</translation>
-        </message>
-        <message>
-            <source>Green</source>
-            <translation>綠色</translation>
-        </message>
-        <message>
-            <source>Hold time in seconds</source>
-            <translation>停留時間（秒）</translation>
-        </message>
-        <message>
-            <source>Keep marks</source>
-            <translation>標註常駐</translation>
-        </message>
-        <message>
-            <source>Orange</source>
-            <translation>橙色</translation>
-        </message>
-        <message>
-            <source>Rectangle</source>
-            <translation>矩形</translation>
-        </message>
-        <message>
-            <source>Red</source>
-            <translation>紅色</translation>
-        </message>
-        <message>
-            <source>Rounded rectangle</source>
-            <translation>圓角矩形</translation>
-        </message>
-        <message>
-            <source>Stroke color</source>
-            <translation>筆跡顏色</translation>
-        </message>
-        <message>
-            <source>Stroke width</source>
-            <translation>筆跡粗細</translation>
-        </message>
-        <message>
-            <source>White</source>
-            <translation>白色</translation>
         </message>
     </context>
 </TS>

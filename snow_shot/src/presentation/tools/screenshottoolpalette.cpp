@@ -4778,6 +4778,11 @@ void ScreenshotToolPalette::retranslateUi() {
     setQrCodeState(m_qrCodeAvailable, m_qrCodeVisible, m_qrCodeError);
 }
 
+void ScreenshotToolPalette::setQuickAnnotationPersistent(bool enabled) {
+    if (m_quickAnnotationPersistentButton != nullptr)
+        m_quickAnnotationPersistentButton->setChecked(enabled);
+}
+
 void ScreenshotToolPalette::setGlobalCanvasClickThrough(bool enabled) {
     if (m_globalCanvasClickThroughButton != nullptr) {
         m_globalCanvasClickThroughButton->setChecked(enabled);
@@ -4958,7 +4963,7 @@ void ScreenshotToolPalette::createMainToolbar(const Options& options) {
         addRecordingControls(panelLayout);
     } else {
         const bool hasResultActions =
-            options.showGlobalCanvasActions ||
+            options.showGlobalCanvasActions || options.showQuickAnnotationActions ||
             (options.actions & (CancelAction | CopyAction)) != 0 ||
             (options.showSaveButton && options.saveButtonWithResultActions) ||
             ((options.actions & ConfirmAction) != 0 &&
@@ -6338,6 +6343,8 @@ void ScreenshotToolPalette::applyMainToolbarLayout(bool notify) {
         m_globalCanvasLaserPointerButton,
         m_globalCanvasClickThroughButton,
         m_globalCanvasExitButton,
+        m_quickAnnotationPersistentButton,
+        m_quickAnnotationExitButton,
     };
     resultActions.erase(std::remove(resultActions.begin(), resultActions.end(), nullptr),
                         resultActions.end());
@@ -7062,6 +7069,28 @@ void ScreenshotToolPalette::addMainActionButtons(const Options& options, QBoxLay
         connect(m_globalCanvasExitButton, &adqt::widgets::AdButton::clicked, this,
                 &ScreenshotToolPalette::globalCanvasExitRequested);
         refreshShortcutTooltips();
+    }
+
+    if (options.showQuickAnnotationActions) {
+        m_quickAnnotationPersistentButton =
+            addToolButton(QT_TRANSLATE_NOOP("ScreenshotToolPalette", "Keep marks"),
+                          custom_outlined_icons::PinToScreen());
+        m_quickAnnotationPersistentButton->setObjectName(
+            QStringLiteral("quickAnnotationPersistent"));
+        m_quickAnnotationPersistentButton->setCheckable(true);
+        m_quickAnnotationPersistentButton->setCheckedUsesActiveStyle(false);
+        connect(m_quickAnnotationPersistentButton, &adqt::widgets::AdButton::toggled, this,
+                [this](bool enabled) {
+                    setScreenshotToolPaletteButtonActive(m_quickAnnotationPersistentButton,
+                                                         enabled);
+                    emit quickAnnotationPersistentChanged(enabled);
+                });
+        addButton(m_quickAnnotationPersistentButton);
+        m_quickAnnotationExitButton = addActionButton("Exit", outlined_icons::Close(), true);
+        m_quickAnnotationExitButton->setObjectName(QStringLiteral("quickAnnotationClose"));
+        addButton(m_quickAnnotationExitButton);
+        connect(m_quickAnnotationExitButton, &adqt::widgets::AdButton::clicked, this,
+                &ScreenshotToolPalette::quickAnnotationExitRequested);
     }
 
     if ((options.actions & CancelAction) != 0) {

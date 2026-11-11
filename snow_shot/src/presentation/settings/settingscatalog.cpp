@@ -5180,6 +5180,11 @@ constexpr CatalogSectionRecord catalogPageQuickAnnotationSections[] = {{
     .collapsed = false,
 }};
 
+constexpr CatalogRelatedLinkRecord catalogPageQuickAnnotationLinks[] = {
+    {settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Annotation toolbar")), u"screenshots",
+     u"drawing", u"interface.toolbar.drawing-toolbar-editor"},
+};
+
 constexpr CatalogPageRecord catalogPages[] = {
     {
         .id = u"global-hotkeys",
@@ -5199,7 +5204,7 @@ constexpr CatalogPageRecord catalogPages[] = {
             "SettingsCatalog", "Configure quick annotation appearance and timing")),
         .sections = catalogPageQuickAnnotationSections,
         .kind = SettingsPageKind::GeneratedSettings,
-        .links = {},
+        .links = catalogPageQuickAnnotationLinks,
         .aliases = {},
     },
     {
