@@ -389,24 +389,16 @@ void quickAnnotationCustomDurationsRemain() {
     const QString path = dir.filePath(QStringLiteral("config.json"));
     QFile file(path);
     require(file.open(QIODevice::WriteOnly), "write custom quick annotation durations");
-    file.write(QJsonDocument(QJsonObject{
-        {
-            QStringLiteral("quick_annotation"), QJsonObject {
-                {
-                    QStringLiteral("options"), QJsonObject {
-                        {QStringLiteral("hold_ms"), 1500}, {QStringLiteral("fade_ms"), 1200}
-                    }
-                }
-            }
-        }}
-})
-                   .toJson());
-file.close();
-snow_shot::storage::ConfigurationStore config(path, true, true);
-const auto options = config.value(QStringLiteral("quick_annotation/options")).toObject();
-require(options.value(QStringLiteral("hold_ms")) == 1500 &&
-            options.value(QStringLiteral("fade_ms")) == 1200,
-        "custom duration values survive default migration");
+    const QJsonObject options{{QStringLiteral("hold_ms"), 1500}, {QStringLiteral("fade_ms"), 1200}};
+    const QJsonObject quickAnnotation{{QStringLiteral("options"), options}};
+    const QJsonObject root{{QStringLiteral("quick_annotation"), quickAnnotation}};
+    file.write(QJsonDocument(root).toJson());
+    file.close();
+    snow_shot::storage::ConfigurationStore config(path, true, true);
+    const auto actual = config.value(QStringLiteral("quick_annotation/options")).toObject();
+    require(actual.value(QStringLiteral("hold_ms")) == 1500 &&
+                actual.value(QStringLiteral("fade_ms")) == 1200,
+            "custom duration values survive default migration");
 }
 } // namespace
 
