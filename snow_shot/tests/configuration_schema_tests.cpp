@@ -254,9 +254,14 @@ void quickAnnotationTrayMigration() {
     QFile file(path);
     require(file.open(QIODevice::WriteOnly), "write old tray settings");
     const QJsonArray original{QStringLiteral("quick.screenshot"), QStringLiteral("tray.exit")};
-    file.write(QJsonDocument(QJsonObject{{QStringLiteral("tray"),
-                                          QJsonObject{{QStringLiteral("menu_options"), original}}}})
-                   .toJson());
+    file.write(
+        QJsonDocument(
+            QJsonObject{
+                {QStringLiteral("storage"),
+                 QJsonObject{{QStringLiteral("schema_version"),
+                              snow_shot::storage::ConfigurationStore::currentSchemaVersion()}}},
+                {QStringLiteral("tray"), QJsonObject{{QStringLiteral("menu_options"), original}}}})
+            .toJson());
     file.close();
     const QString key = QStringLiteral("tray/menu_options");
     const QString entry = QStringLiteral("quick.quick-annotation-toolbar");
