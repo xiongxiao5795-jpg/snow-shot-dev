@@ -71,9 +71,13 @@ void require(bool condition, const char* message) {
     }
 }
 void mouse(QWidget* widget, QEvent::Type type, QPointF point, Qt::MouseButton button,
-           Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+           Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers) {
     QMouseEvent event(type, point, widget->mapToGlobal(point), button, buttons, modifiers);
     QApplication::sendEvent(widget, &event);
+}
+void mouse(QWidget* widget, QEvent::Type type, QPointF point, Qt::MouseButton button,
+           Qt::MouseButtons buttons) {
+    mouse(widget, type, point, button, buttons, Qt::NoModifier);
 }
 class SignalConnectionProbe : public QObject {
   public:
