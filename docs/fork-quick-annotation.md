@@ -60,8 +60,11 @@ so ordinary feature edits can reuse previous C++ and Rust work. Each Cargo snaps
 its tracked Rust inputs; unchanged inputs reuse the same snapshot, and the workflow retains the
 newest and one previous successful v2 Rust snapshot for this branch. It checks the new snapshot
 exists before deleting older ones. C++ compiler results are keyed separately and remain subject to
-ccache's own correctness checks. A matching older cache can seed the first v2 run. Cache deletion
-uses this repository's Actions permission and is non-fatal if unavailable. The first compatible
+ccache's own correctness checks. The Apple linker also keeps its ThinLTO incremental cache, without
+changing the Release optimization mode. Only successful nonempty ThinLTO snapshots up to 3 GiB on
+disk are saved; as with Rust, the newest and one prior snapshot are retained per branch. A matching
+older cache can seed the first v2 C++/Rust run. Cache deletion uses this repository's Actions
+permission and is non-fatal if unavailable. The first compatible
 Release run must populate its cache. Rust caches over 9.5 GiB on disk are skipped; GitHub's total
 cache quota and eviction can also affect later reuse. Automated offscreen
 tests cannot replace manual checks of real mouse pass-through, display layouts, shortcut conflicts,

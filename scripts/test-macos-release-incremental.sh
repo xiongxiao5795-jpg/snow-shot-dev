@@ -43,10 +43,13 @@ clang++ -O2 -flto=thin -c "$work/lto-value.cpp" -o "$work/lto-value.o"
 clang++ -O2 -flto=thin -Wl,-cache_path_lto,"$work/thinlto-cache" \
     "$work/lto-main.o" "$work/lto-value.o" -o "$work/lto-fixture"
 [[ "$("$work/lto-fixture")" == old ]]
-[[ -n "$(find "$work/thinlto-cache" -type f -name 'llvmcache-*' -print -quit)" ]]
+find "$work/thinlto-cache" -type f -name 'llvmcache-*' -print | sort > "$work/lto-before.txt"
+[[ -s "$work/lto-before.txt" ]]
 clang++ -O2 -flto=thin -Wl,-cache_path_lto,"$work/thinlto-cache" \
     "$work/lto-main.o" "$work/lto-value.o" -o "$work/lto-fixture"
 [[ "$("$work/lto-fixture")" == old ]]
+find "$work/thinlto-cache" -type f -name 'llvmcache-*' -print | sort > "$work/lto-after.txt"
+cmp "$work/lto-before.txt" "$work/lto-after.txt"
 printf 'const char* value() { return "new"; }\n' > "$work/lto-value.cpp"
 clang++ -O2 -flto=thin -c "$work/lto-value.cpp" -o "$work/lto-value.o"
 clang++ -O2 -flto=thin -Wl,-cache_path_lto,"$work/thinlto-cache" \
