@@ -1960,6 +1960,10 @@
             <translation>配置网络请求的代理使用方式</translation>
         </message>
         <message>
+            <source>Configure quick annotation appearance and timing</source>
+            <translation>设置快速标注的外观和时间</translation>
+        </message>
+        <message>
             <source>Configure text recognition models and processing</source>
             <translation>配置文本识别模型和处理方式</translation>
         </message>
@@ -2202,6 +2206,10 @@
         <message>
             <source>Default</source>
             <translation>默认</translation>
+        </message>
+        <message>
+            <source>Default color</source>
+            <translation>默认颜色</translation>
         </message>
         <message>
             <source>Default formatting</source>
@@ -2518,6 +2526,10 @@
         <message>
             <source>Extended features settings</source>
             <translation>扩展功能设置</translation>
+        </message>
+        <message>
+            <source>Fade duration in seconds</source>
+            <translation>淡出时长（秒）</translation>
         </message>
         <message>
             <source>Fast</source>
@@ -3540,8 +3552,16 @@
             <translation>快速标注</translation>
         </message>
         <message>
+            <source>Quick annotation appearance</source>
+            <translation>快速标注外观</translation>
+        </message>
+        <message>
             <source>Quick annotation for selected text</source>
             <translation>选中文字快速标注</translation>
+        </message>
+        <message>
+            <source>Quick annotation shortcuts and actions</source>
+            <translation>快速标注快捷键与操作</translation>
         </message>
         <message>
             <source>Quick annotation toolbar</source>

@@ -416,6 +416,7 @@ struct SettingsActionDefinition {
 };
 
 enum class SettingsCustomRenderer {
+    QuickAnnotationOptions,
     CloudUploadConfigurations,
     McpStatus,
     PermissionScreenRecording,

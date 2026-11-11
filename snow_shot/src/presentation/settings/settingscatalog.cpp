@@ -365,7 +365,19 @@ SettingsItemDefinition quickAnnotationToolbarItem() {
                            QT_TRANSLATE_NOOP("SettingsCatalog", "Choose a quick annotation tool"),
                            {}, GlobalShortcutAction::QuickAnnotationToolbar,
                            QStringLiteral("global_shortcuts/quick_annotation_toolbar"),
-                           []() { return custom_outlined_icons::FullScreenCanvas(); });
+                           []() { return custom_outlined_icons::FullScreenCanvas(); },
+                           SettingsShortcutAdjustment::None,
+                           {QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation")});
+}
+
+SettingsItemDefinition quickAnnotationOptionsItem() {
+    return {QStringLiteral("quick-annotation.options"),
+            settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation appearance")),
+            settingsText(QT_TRANSLATE_NOOP("SettingsCatalog",
+                                           "Configure quick annotation appearance and timing")),
+            {},
+            QStringLiteral("quick_annotation/options"),
+            SettingsCustomDefinition{SettingsCustomRenderer::QuickAnnotationOptions}};
 }
 
 SettingsItemDefinition stitchSelectedImagesItem() {
@@ -4031,15 +4043,14 @@ constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionScreenRecordingItems
     {openScreenRecordingFolderItem},
 };
 
+constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionQuickAnnotationItems[] = {
+    {quickAnnotationItem},          {quickAnnotationBrushItem},   {quickAnnotationArrowItem},
+    {quickAnnotationRectangleItem}, {quickAnnotationEllipseItem}, {quickAnnotationToolbarItem},
+};
+
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionOtherItems[] = {
     {openCaptureHistoryItem},
     {globalCanvasItem},
-    {quickAnnotationItem},
-    {quickAnnotationBrushItem},
-    {quickAnnotationArrowItem},
-    {quickAnnotationRectangleItem},
-    {quickAnnotationEllipseItem},
-    {quickAnnotationToolbarItem},
     {stitchSelectedImagesItem},
     {splitSelectedImagesItem},
     {editSelectedImagesItem},
@@ -4088,6 +4099,17 @@ constexpr CatalogSectionRecord catalogPageGlobalHotkeysSections[] = {
             QT_TRANSLATE_NOOP("SettingsCatalog", "Screen recording shortcuts and actions")),
         .reset = SettingsSectionReset ::None,
         .items = catalogPageGlobalHotkeysSectionScreenRecordingItems,
+        .factory = nullptr,
+        .layout = SettingsSectionItemLayout::VerticalList,
+        .collapsed = false,
+    },
+    {
+        .id = u"quick-annotation",
+        .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation")),
+        .description = settingsText(
+            QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation shortcuts and actions")),
+        .reset = SettingsSectionReset::None,
+        .items = catalogPageGlobalHotkeysSectionQuickAnnotationItems,
         .factory = nullptr,
         .layout = SettingsSectionItemLayout::VerticalList,
         .collapsed = false,
@@ -5145,6 +5167,19 @@ constexpr CatalogSectionRecord catalogPageAppPermissionsSections[] = {
 };
 
 #endif
+constexpr CatalogItemFactory catalogPageQuickAnnotationItems[] = {{quickAnnotationOptionsItem}};
+constexpr CatalogSectionRecord catalogPageQuickAnnotationSections[] = {{
+    .id = u"appearance",
+    .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation appearance")),
+    .description = settingsText(
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Configure quick annotation appearance and timing")),
+    .reset = SettingsSectionReset::None,
+    .items = catalogPageQuickAnnotationItems,
+    .factory = nullptr,
+    .layout = SettingsSectionItemLayout::VerticalList,
+    .collapsed = false,
+}};
+
 constexpr CatalogPageRecord catalogPages[] = {
     {
         .id = u"global-hotkeys",
@@ -5152,6 +5187,17 @@ constexpr CatalogPageRecord catalogPages[] = {
         .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Global shortcuts")),
         .description = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Global shortcuts page")),
         .sections = catalogPageGlobalHotkeysSections,
+        .kind = SettingsPageKind::GeneratedSettings,
+        .links = {},
+        .aliases = {},
+    },
+    {
+        .id = u"quick-annotation",
+        .route = u"/settings/quick-annotation",
+        .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation")),
+        .description = settingsText(QT_TRANSLATE_NOOP(
+            "SettingsCatalog", "Configure quick annotation appearance and timing")),
+        .sections = catalogPageQuickAnnotationSections,
         .kind = SettingsPageKind::GeneratedSettings,
         .links = {},
         .aliases = {},
@@ -5481,6 +5527,8 @@ QVector<SettingsNavigationNode> builtInNavigation() {
          []() { return outlined_icons::Control(); }},
         {QStringLiteral("nav.screenshots"), QStringLiteral("screenshots"),
          []() { return outlined_icons::Function(); }},
+        {QStringLiteral("nav.quick-annotation"), QStringLiteral("quick-annotation"),
+         []() { return custom_outlined_icons::FullScreenCanvas(); }},
         {QStringLiteral("nav.pinned-windows"), QStringLiteral("pinned-windows"),
          []() { return custom_outlined_icons::PinToScreen(); }},
         {QStringLiteral("nav.screen-recording"), QStringLiteral("screen-recording"),
@@ -5830,6 +5878,9 @@ QVector<SettingsTrayMenuGroupDefinition> SettingsCatalog::trayMenuGroups() const
     if (globalShortcutsPage != nullptr) {
         groups.reserve(globalShortcutsPage->sections.size() + 1);
         for (const SettingsSectionDefinition& sectionDefinition : globalShortcutsPage->sections) {
+            // Keep the tray customization order stable when shortcuts are regrouped.
+            if (sectionDefinition.id == QStringLiteral("quick-annotation"))
+                continue;
             SettingsTrayMenuGroupDefinition group;
             group.id = sectionDefinition.id;
             for (const SettingsItemDefinition& itemDefinition : sectionDefinition.items) {
@@ -5843,6 +5894,20 @@ QVector<SettingsTrayMenuGroupDefinition> SettingsCatalog::trayMenuGroups() const
                      shortcut->trayLabel.isValid() ? shortcut->trayLabel : itemDefinition.title,
                      SettingsTrayMenuOptionKind::QuickAction, shortcut->shortcutAction,
                      shortcut->iconFactory, shortcut->trayCheckable});
+                if (itemDefinition.id == QStringLiteral("quick.global-canvas")) {
+                    const auto* quick =
+                        itemForShortcut(GlobalShortcutAction::QuickAnnotationToolbar);
+                    if (quick) {
+                        const auto* payload =
+                            std::get_if<SettingsShortcutActionDefinition>(&quick->payload);
+                        if (payload && payload->showInTrayMenu)
+                            group.options.push_back(
+                                {quick->id,
+                                 payload->trayLabel.isValid() ? payload->trayLabel : quick->title,
+                                 SettingsTrayMenuOptionKind::QuickAction, payload->shortcutAction,
+                                 payload->iconFactory, payload->trayCheckable});
+                    }
+                }
             }
             if (!group.options.isEmpty()) {
                 groups.push_back(std::move(group));
@@ -6006,7 +6071,7 @@ TrayCommandManifest buildBuiltInTrayCommandManifest() {
                 GlobalShortcutAction::GlobalCanvas,
                 []() { return custom_outlined_icons::FullScreenCanvas(); }),
           quick(QStringLiteral("quick.quick-annotation-toolbar"),
-                QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation toolbar"),
+                QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation"),
                 GlobalShortcutAction::QuickAnnotationToolbar,
                 []() { return custom_outlined_icons::FullScreenCanvas(); }),
           quick(QStringLiteral("quick.stitch-selected-images"),
@@ -7095,6 +7160,10 @@ QStringList SettingsCatalog::validationErrors() const {
                     storage::ConfigurationValueKind expectedKind =
                         storage::ConfigurationValueKind::Structured;
                     switch (custom->renderer) {
+                    case SettingsCustomRenderer::QuickAnnotationOptions:
+                        rendererSupported = true;
+                        expectedKey = QStringLiteral("quick_annotation/options");
+                        break;
                     case SettingsCustomRenderer::CloudUploadConfigurations:
                         rendererSupported = true;
                         expectedKey = QStringLiteral("cloud_upload/configuration");

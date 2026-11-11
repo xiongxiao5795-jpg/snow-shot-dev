@@ -985,6 +985,7 @@ set(SNOW_SHOT_SETTINGS_SOURCES
     src/presentation/components/texttranslationsettingswidget.cpp
     src/presentation/components/customaimodelssettingswidget.cpp
     src/presentation/components/settingscustomwidget.cpp
+    src/presentation/quickannotation/quickannotationsettingswidget.h
     src/presentation/components/settingspagewidget.cpp
     include/snow_shot/presentation/components/screenrecordingsettingsdialog.h
     include/snow_shot/presentation/components/screenrecordingmodal.h
@@ -3480,6 +3481,11 @@ if(SNOW_SHOT_BUILD_TESTS)
         snow_shot_settings snow_shot_image_codec Qt6::Test)
     snow_shot_import_offscreen_platform(snow-shot-settings-page-loading-tests)
     snow_shot_add_translations(snow-shot-settings-page-loading-tests)
+    add_test(NAME snow-shot-quick-annotation-settings-tests
+        COMMAND snow-shot-settings-page-loading-tests --quick-annotation-settings-only -platform offscreen)
+    set_tests_properties(snow-shot-quick-annotation-settings-tests PROPERTIES
+        LABELS unit RUN_SERIAL TRUE TIMEOUT 60
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     add_test(NAME snow-shot-settings-select-tests
         COMMAND snow-shot-settings-page-loading-tests --selects-only)
     add_test(NAME snow-shot-pinned-text-color-settings-tests

@@ -1,3 +1,4 @@
+#include "../quickannotation/quickannotationsettingswidget.h"
 #include "snow_shot/app/distribution.h"
 #include "snow_shot/app/mcp/mcpstartuperror.h"
 #include "snow_shot/presentation/components/clouduploadsettingswidget.h"
@@ -1555,6 +1556,8 @@ SettingsCustomWidget* createSettingsCustomWidget(
     snow_shot::presentation::settings::SettingsRuntimeSession& runtimeSession, QWidget* parent) {
     using snow_shot::presentation::settings::SettingsCustomRenderer;
     switch (renderer) {
+    case SettingsCustomRenderer::QuickAnnotationOptions:
+        return new snow_shot::presentation::QuickAnnotationSettingsWidget(parent);
     case SettingsCustomRenderer::CloudUploadConfigurations:
         return new CloudUploadSettingsWidget(runtimeSession, parent);
     case SettingsCustomRenderer::McpStatus:

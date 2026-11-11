@@ -243,6 +243,18 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
                 result.dirty = true;
             }
         }
+        // Add the new menu entry once for existing profiles, preserving all custom options.
+        if (entry.key == QStringLiteral("tray/menu_options") && mutateDocument && raw.isArray() &&
+            !currentOverlay.contains(QStringLiteral("quick_annotation/tray_menu_migrated"))) {
+            QJsonArray options = raw.toArray();
+            const QString action = QStringLiteral("quick.quick-annotation-toolbar");
+            if (!options.contains(action)) {
+                options.append(action);
+                raw = options;
+                insertPath(&result.document, entry.key, raw);
+                result.dirty = true;
+            }
+        }
         if (entry.key == QStringLiteral("cloud_upload/configuration")) {
             bool valid = false;
             const auto canonical =

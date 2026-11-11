@@ -1960,6 +1960,10 @@
             <translation>設定網路請求的代理使用方式</translation>
         </message>
         <message>
+            <source>Configure quick annotation appearance and timing</source>
+            <translation>設定快速標註的外觀和時間</translation>
+        </message>
+        <message>
             <source>Configure text recognition models and processing</source>
             <translation>設定文字辨識模型與處理方式</translation>
         </message>
@@ -2202,6 +2206,10 @@
         <message>
             <source>Default</source>
             <translation>預設</translation>
+        </message>
+        <message>
+            <source>Default color</source>
+            <translation>預設顏色</translation>
         </message>
         <message>
             <source>Default formatting</source>
@@ -2518,6 +2526,10 @@
         <message>
             <source>Extended features settings</source>
             <translation>擴充功能設定</translation>
+        </message>
+        <message>
+            <source>Fade duration in seconds</source>
+            <translation>淡出時長（秒）</translation>
         </message>
         <message>
             <source>Fast</source>
@@ -3540,8 +3552,16 @@
             <translation>快速標註</translation>
         </message>
         <message>
+            <source>Quick annotation appearance</source>
+            <translation>快速標註外觀</translation>
+        </message>
+        <message>
             <source>Quick annotation for selected text</source>
             <translation>選取文字快速標註</translation>
+        </message>
+        <message>
+            <source>Quick annotation shortcuts and actions</source>
+            <translation>快速標註快捷鍵與操作</translation>
         </message>
         <message>
             <source>Quick annotation toolbar</source>

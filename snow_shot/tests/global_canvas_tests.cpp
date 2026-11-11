@@ -1548,6 +1548,20 @@ int main(int argc, char** argv) {
                     savedOptions.value(QStringLiteral("width")).toInt() == 7 &&
                     savedOptions.value(QStringLiteral("hold_ms")).toInt() == 3000,
                 "quick annotation settings persist independently");
+        auto externalOptions = savedOptions;
+        externalOptions.insert(QStringLiteral("fade_ms"), 1200);
+        externalOptions.insert(QStringLiteral("hold_ms"), 2500);
+        require(storage.configuration().setValue(QStringLiteral("quick_annotation/options"),
+                                                 externalOptions) &&
+                    hold->value() == 2.5,
+                "toolbar updates when settings change elsewhere");
+        hold->setValue(3.0);
+        require(storage.configuration()
+                        .value(QStringLiteral("quick_annotation/options"))
+                        .toObject()
+                        .value(QStringLiteral("fade_ms"))
+                        .toInt() == 1200,
+                "toolbar edits preserve separately configured fade duration");
         toolbar->hide();
         controller.arm(presentation::QuickAnnotationTool::Ellipse);
         require(canvas->canvasTool() == SnowCanvasTool::Shape &&
@@ -1579,7 +1593,7 @@ int main(int argc, char** argv) {
         require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
                     window->isVisible(),
                 "custom hold time keeps a mark beyond the default duration");
-        now = 6700;
+        now = 7400;
         require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
                     !window->isVisible(),
                 "custom hold time eventually expires");

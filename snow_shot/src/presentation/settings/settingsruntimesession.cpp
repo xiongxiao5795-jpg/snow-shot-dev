@@ -1007,6 +1007,7 @@ QVariant SettingsRuntimeSession::readValue(const SettingsFieldDescriptor& descri
                 switch (payload.renderer) {
                 case SettingsCustomRenderer::CloudUploadConfigurations:
                     return QVariant::fromValue(m_backend.cloudUploadSettings());
+                case SettingsCustomRenderer::QuickAnnotationOptions:
                 case SettingsCustomRenderer::McpStatus:
                 case SettingsCustomRenderer::PermissionScreenRecording:
                 case SettingsCustomRenderer::PermissionAccessibility:
@@ -1098,6 +1099,7 @@ bool SettingsRuntimeSession::writeValue(const SettingsFieldDescriptor& descripto
                     payload.action, value.value<SettingsGlobalMouseCombination>());
             } else if constexpr (std::is_same_v<Payload, SettingsCustomDefinition>) {
                 switch (payload.renderer) {
+                case SettingsCustomRenderer::QuickAnnotationOptions:
                 case SettingsCustomRenderer::McpStatus:
                 case SettingsCustomRenderer::PermissionScreenRecording:
                 case SettingsCustomRenderer::PermissionAccessibility:

@@ -43,4 +43,8 @@ int main() {
                 QuickAnnotationState::opacity(3300, 3000) == 0.5 &&
                 QuickAnnotationState::opacity(3600, 3000) == 0.0,
             "custom hold duration changes only the selected mark");
+    require(QuickAnnotationState::opacity(3000, 3000, 1200) == 1.0 &&
+                QuickAnnotationState::opacity(3600, 3000, 1200) == 0.5 &&
+                QuickAnnotationState::opacity(4200, 3000, 1200) == 0.0,
+            "custom fade duration applies independently");
 }

@@ -1,4 +1,5 @@
 #include "snow_shot/storage/configurationschema.h"
+#include "snow_shot/storage/configurationstore.h"
 #include "snow_shot/app/edition.h"
 #include "snow_shot/shortcuts/shortcutbinding.h"
 
@@ -8,6 +9,7 @@
 #include <QJsonDocument>
 #include <QSet>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 
 #include <cstdlib>
 #include <iostream>
@@ -76,6 +78,7 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
         QStringLiteral("global_shortcuts/quick_annotation_toolbar"),
         QStringLiteral("quick_annotation/last_tool"),
         QStringLiteral("quick_annotation/options"),
+        QStringLiteral("quick_annotation/tray_menu_migrated"),
     };
     QJsonArray originalActual;
     QSet<QString> seenAdded;
@@ -244,6 +247,35 @@ void nativeDefaultsRemainIntact(const QString& movies, const QString& pictures) 
     }
 #endif
 }
+void quickAnnotationTrayMigration() {
+    QTemporaryDir dir;
+    require(dir.isValid(), "create configuration fixture");
+    const QString path = dir.filePath(QStringLiteral("config.json"));
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "write old tray settings");
+    const QJsonArray original{QStringLiteral("quick.screenshot"), QStringLiteral("tray.exit")};
+    file.write(QJsonDocument(QJsonObject{{QStringLiteral("tray"),
+                                          QJsonObject{{QStringLiteral("menu_options"), original}}}})
+                   .toJson());
+    file.close();
+    const QString key = QStringLiteral("tray/menu_options");
+    const QString entry = QStringLiteral("quick.quick-annotation-toolbar");
+    {
+        snow_shot::storage::ConfigurationStore config(path, true, true);
+        const auto options = config.value(key).toArray();
+        require(options.size() == 3 && options.at(0) == original.at(0) &&
+                    options.at(1) == original.at(1) && options.at(2) == entry,
+                "existing tray order is preserved and quick annotation added once");
+        require(config.flushNow().success, "persist migration marker and menu");
+        require(config.setValue(key, original), "allow removing quick annotation from tray");
+        require(config.flushNow().success, "persist user removal");
+    }
+    {
+        snow_shot::storage::ConfigurationStore config(path, true, true);
+        require(config.value(key).toArray() == original,
+                "removed menu entry stays removed after restart");
+    }
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -254,6 +286,7 @@ int main(int argc, char** argv) {
     const auto before = metadata();
     publicMetadataMatchesOriginal(before);
     nativeDefaultsRemainIntact(movies, pictures);
+    quickAnnotationTrayMigration();
     entryReferencesAndCopiesRemainIndependent();
     require(metadata() == before, "copy mutation must not change any public schema field");
     return 0;

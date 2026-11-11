@@ -1960,6 +1960,10 @@
             <translation>Configure proxy use for network requests</translation>
         </message>
         <message>
+            <source>Configure quick annotation appearance and timing</source>
+            <translation>Configure quick annotation appearance and timing</translation>
+        </message>
+        <message>
             <source>Configure text recognition models and processing</source>
             <translation>Configure text recognition models and processing</translation>
         </message>
@@ -2202,6 +2206,10 @@
         <message>
             <source>Default</source>
             <translation>Default</translation>
+        </message>
+        <message>
+            <source>Default color</source>
+            <translation>Default color</translation>
         </message>
         <message>
             <source>Default formatting</source>
@@ -2518,6 +2526,10 @@
         <message>
             <source>Extended features settings</source>
             <translation>Extended features settings</translation>
+        </message>
+        <message>
+            <source>Fade duration in seconds</source>
+            <translation>Fade duration in seconds</translation>
         </message>
         <message>
             <source>Fast</source>
@@ -3540,8 +3552,16 @@
             <translation>Quick annotation</translation>
         </message>
         <message>
+            <source>Quick annotation appearance</source>
+            <translation>Quick annotation appearance</translation>
+        </message>
+        <message>
             <source>Quick annotation for selected text</source>
             <translation>Quick annotation for selected text</translation>
+        </message>
+        <message>
+            <source>Quick annotation shortcuts and actions</source>
+            <translation>Quick annotation shortcuts and actions</translation>
         </message>
         <message>
             <source>Quick annotation toolbar</source>

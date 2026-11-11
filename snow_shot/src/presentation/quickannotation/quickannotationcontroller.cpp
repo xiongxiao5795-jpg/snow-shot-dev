@@ -27,6 +27,7 @@
 #include <QPainter>
 #include <QPointer>
 #include <QScreen>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
@@ -98,6 +99,14 @@ class ToolPanel final : public QWidget {
         platform::configureGlobalCanvasToolbarWindow(this);
 #endif
         retranslate();
+    }
+
+    void setOptions(const QuickAnnotationOptions& options) {
+        m_options = options;
+        const QSignalBlocker colorBlocker(m_color), widthBlocker(m_width), holdBlocker(m_hold);
+        m_color->setCurrentIndex(std::max(0, m_color->findData(options.color.name())));
+        m_width->setValue(options.width);
+        m_hold->setValue(options.holdMs / 1000.0);
     }
 
   protected:
@@ -222,7 +231,8 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         connect(&m_timer, &QTimer::timeout, this, [this] {
             const auto now = m_now();
             std::erase_if(m_marks, [now](const Mark& mark) {
-                return QuickAnnotationState::opacity(now - mark.created, mark.holdMs) == 0.0;
+                return QuickAnnotationState::opacity(now - mark.created, mark.holdMs,
+                                                     mark.fadeMs) == 0.0;
             });
             ++m_revision;
             m_canvas.update();
@@ -255,6 +265,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
             return false;
         m_canvas.clearDocument();
         m_holdMs = options.holdMs;
+        m_fadeMs = options.fadeMs;
         auto defaults = screenshotCanvasToolStyleDefaults();
         for (auto* style : {&defaults.rectangle, &defaults.arrow, &defaults.freeDraw}) {
             style->stroke = options.color;
@@ -315,7 +326,8 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         if (context.purpose == SnowCanvasRenderContext::Purpose::Widget) {
             const auto now = m_now();
             for (const Mark& mark : m_marks) {
-                painter.setOpacity(QuickAnnotationState::opacity(now - mark.created, mark.holdMs));
+                painter.setOpacity(
+                    QuickAnnotationState::opacity(now - mark.created, mark.holdMs, mark.fadeMs));
                 painter.drawImage(mark.rect, mark.image);
             }
         }
@@ -359,6 +371,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         QRectF rect;
         qint64 created;
         int holdMs;
+        int fadeMs;
     };
 
     void updateGeometryForScreen() {
@@ -400,7 +413,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
                     m_marks.push_back(
                         {image.copy(bounds),
                          QRectF(left / dpr, top / dpr, bounds.width() / dpr, bounds.height() / dpr),
-                         m_now(), m_holdMs});
+                         m_now(), m_holdMs, m_fadeMs});
                     m_timer.start();
                 }
             }
@@ -444,6 +457,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     GestureCanvas m_canvas;
     QuickAnnotationState m_state;
     int m_holdMs = 1500;
+    int m_fadeMs = 600;
     std::function<void()> m_onError;
     std::function<qint64()> m_now;
     std::function<bool(QWidget*, bool)> m_setInputTransparent;
@@ -470,6 +484,14 @@ class QuickAnnotationController::Impl {
                 storage.configuration()
                     .value(QStringLiteral("quick_annotation/options"))
                     .toObject());
+            QObject::connect(&storage.configuration(), &storage::ConfigurationStore::valueChanged,
+                             &q, [this](const QString& key, const QJsonValue& value) {
+                                 if (key != QStringLiteral("quick_annotation/options"))
+                                     return;
+                                 options = QuickAnnotationOptions::fromJson(value.toObject());
+                                 if (toolbar)
+                                     toolbar->setOptions(options);
+                             });
             const QString saved = storage.configuration()
                                       .value(QStringLiteral("quick_annotation/last_tool"))
                                       .toString();

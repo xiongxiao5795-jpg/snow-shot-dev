@@ -29,6 +29,9 @@
 #include "snow_shot/presentation/components/shortcutkeyrow.h"
 
 #include <QApplication>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
 #include <QDir>
 #include <QEvent>
 #include <QFontDatabase>
@@ -1931,6 +1934,37 @@ int main(int argc, char** argv) {
     settings::BuiltInSettingsBackend backend(shortcuts);
     const auto registry = settings::buildBuiltInSettingsRegistry();
     settings::SettingsRuntimeSession session(registry, backend);
+    if (application.arguments().contains(QStringLiteral("--quick-annotation-settings-only"))) {
+        SettingsPageWidget page(registry, QStringLiteral("quick-annotation"), session);
+        page.resize(880, 600);
+        page.show();
+        materializeAllSections(page, registry);
+        auto* color = page.findChild<QComboBox*>(QStringLiteral("quickAnnotationSettingsColor"));
+        auto* width = page.findChild<QSpinBox*>(QStringLiteral("quickAnnotationSettingsWidth"));
+        auto* hold = page.findChild<QDoubleSpinBox*>(QStringLiteral("quickAnnotationSettingsHold"));
+        auto* fade = page.findChild<QDoubleSpinBox*>(QStringLiteral("quickAnnotationSettingsFade"));
+        require(color && width && hold && fade && hold->value() == 1.5 && fade->value() == 0.6,
+                "quick annotation settings page exposes defaults");
+        color->setCurrentIndex(3);
+        width->setValue(7);
+        hold->setValue(3.0);
+        fade->setValue(1.2);
+        const auto key = QStringLiteral("quick_annotation/options");
+        auto& configuration = storage.configuration();
+        const auto saved = configuration.value(key).toObject();
+        require(saved.value(QStringLiteral("color")) == QStringLiteral("#1890ff") &&
+                    saved.value(QStringLiteral("width")).toInt() == 7 &&
+                    saved.value(QStringLiteral("hold_ms")).toInt() == 3000 &&
+                    saved.value(QStringLiteral("fade_ms")).toInt() == 1200,
+                "page settings persist independently");
+        auto changed = saved;
+        changed.insert(QStringLiteral("width"), 4);
+        changed.insert(QStringLiteral("fade_ms"), 800);
+        require(configuration.setValue(key, changed) && width->value() == 4 && fade->value() == 0.8,
+                "page controls follow changes from other entry points");
+        storage.shutdown();
+        return 0;
+    }
     if (application.arguments().contains(QStringLiteral("--pinned-shake-only"))) {
         using Binding = settings::SettingsSwitchBinding;
         using Reset = settings::SettingsSectionReset;
