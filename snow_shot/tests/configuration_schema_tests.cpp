@@ -391,7 +391,11 @@ void quickAnnotationCustomDurationsRemain() {
     require(file.open(QIODevice::WriteOnly), "write custom quick annotation durations");
     const QJsonObject options{{QStringLiteral("hold_ms"), 1500}, {QStringLiteral("fade_ms"), 1200}};
     const QJsonObject quickAnnotation{{QStringLiteral("options"), options}};
-    const QJsonObject root{{QStringLiteral("quick_annotation"), quickAnnotation}};
+    const QJsonObject root{
+        {QStringLiteral("storage"),
+         QJsonObject{{QStringLiteral("schema_version"),
+                      snow_shot::storage::ConfigurationStore::currentSchemaVersion()}}},
+        {QStringLiteral("quick_annotation"), quickAnnotation}};
     file.write(QJsonDocument(root).toJson());
     file.close();
     snow_shot::storage::ConfigurationStore config(path, true, true);
