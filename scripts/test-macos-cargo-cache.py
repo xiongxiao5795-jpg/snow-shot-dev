@@ -42,6 +42,23 @@ class CargoCacheLauncherTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Cargo cache'):
                 launcher.prepare_ocr(environment)
 
+    def test_packaging_can_find_cargo_without_build_step_environment(self):
+        with patch.object(launcher.sys, 'argv', ['launcher', 'metadata', '--no-deps']), \
+                patch.dict(launcher.os.environ, {}, clear=True), \
+                patch.object(launcher.shutil, 'which', return_value='/usr/bin/cargo'), \
+                patch.object(launcher.os, 'execv') as execute, \
+                patch.object(launcher, 'prepare_ocr') as prepare:
+            launcher.main()
+            prepare.assert_not_called()
+            execute.assert_called_once_with(Path('/usr/bin/cargo'),
+                                            ['/usr/bin/cargo', 'metadata', '--no-deps'])
+
+    def test_missing_cargo_is_reported(self):
+        with patch.dict(launcher.os.environ, {}, clear=True), \
+                patch.object(launcher.shutil, 'which', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'Cargo executable was not found'):
+                launcher.main()
+
     def test_checkout_is_verified_before_ocr_input_restoration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

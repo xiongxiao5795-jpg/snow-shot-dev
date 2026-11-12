@@ -4,6 +4,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import sys
 
 
@@ -33,7 +34,10 @@ def prepare_ocr(environment):
 
 
 def main():
-    real_cargo = Path(os.environ['SNOW_REAL_CARGO'])
+    cargo = os.environ.get('SNOW_REAL_CARGO') or shutil.which('cargo')
+    if not cargo:
+        raise ValueError('Cargo executable was not found')
+    real_cargo = Path(cargo)
     if not real_cargo.is_absolute() or real_cargo.resolve() == Path(__file__).resolve():
         raise ValueError('A distinct absolute Cargo executable is required')
     if is_ocr_build(sys.argv[1:]):
