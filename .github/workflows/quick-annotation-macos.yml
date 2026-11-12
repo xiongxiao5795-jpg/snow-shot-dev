@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: quick-annotation-macos-${{ github.ref }}
+  group: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[skip debug]') && format('quick-annotation-macos-skipped-{0}', github.run_id) || format('quick-annotation-macos-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
