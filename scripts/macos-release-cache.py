@@ -73,7 +73,7 @@ def refresh_rust_inputs(root, cargo_dirs, paths):
     if receipt_path.is_file() and not receipt_path.is_symlink():
         try:
             receipt = json.loads(receipt_path.read_text())
-            if receipt.get('schema') == 1 and isinstance(receipt.get('files'), dict):
+            if receipt.get('schema') in (1, 2) and isinstance(receipt.get('files'), dict):
                 previous = receipt['files']
         except (OSError, ValueError, AttributeError):
             pass  # Missing or invalid receipts safely force a rebuild.
@@ -98,6 +98,96 @@ def refresh_rust_inputs(root, cargo_dirs, paths):
     return changed, unchanged
 
 
+def derived_inputs(root):
+    """Fingerprint OCR build inputs recreated by a fresh CI checkout/configure."""
+    root = root.resolve()
+    metal = root / 'snow-crates/crates/simd-paddle-ocr-rs/src/runtime/gpu/metal'
+    rsp = root / 'build/snow-shot-macos-arm64-release/snow_shot/generated/snow-ocr-crash-Release.rsp'
+    if not metal.is_dir() or metal.is_symlink() or not rsp.is_file() or rsp.is_symlink():
+        return {}
+    paths = [rsp]
+    for line in rsp.read_text().splitlines():
+        candidate = Path(line.strip())
+        if candidate.is_absolute():
+            paths.append(candidate)
+    entries = {}
+    for path in paths:
+        resolved = path.resolve()
+        if not path.is_relative_to(root) or not resolved.is_relative_to(root) or not resolved.is_file():
+            return {}
+        entries[str(path.relative_to(root))] = {'sha256': digest(resolved),
+                                               'mtime_ns': resolved.stat().st_mtime_ns}
+    # Cargo scans directories named by rerun-if-changed recursively. Save a
+    # fingerprint of every file and directory, including otherwise untracked files.
+    tree = {}
+    for directory, dirs, files in os.walk(metal, followlinks=False):
+        current = Path(directory)
+        if current.is_symlink() or any((current / name).is_symlink() for name in dirs + files):
+            return {}
+        relative = str(current.relative_to(root))
+        tree[relative] = {'mtime_ns': current.stat().st_mtime_ns,
+                          'children': sorted(dirs + files)}
+        for name in files:
+            path = current / name
+            if not path.is_file():
+                return {}
+            tree[str(path.relative_to(root))] = {'mtime_ns': path.stat().st_mtime_ns,
+                                                'sha256': digest(path)}
+    return {'files': entries, 'metal': tree}
+
+
+def restore_derived_inputs(root, cargo_dir):
+    receipt = cargo_dir / RECEIPT_NAME
+    if not receipt.is_file() or receipt.is_symlink():
+        return 0
+    try:
+        old = json.loads(receipt.read_text()).get('derived', {})
+        current = derived_inputs(root)
+        if not old or not current:
+            return 0
+        previous_tree = old.get('metal', {})
+        current_tree = current['metal']
+        same_tree = current_tree.keys() == previous_tree.keys() and all(
+            {k: v for k, v in value.items() if k != 'mtime_ns'} ==
+            {k: v for k, v in previous_tree[key].items() if k != 'mtime_ns'}
+            for key, value in current_tree.items())
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return 0  # An incomplete receipt is a safe cache miss, before any mutation.
+    count = 0
+    changed = False
+    timestamp = time.time_ns() + 1_000_000_000
+    # Never backdate changed inputs. A failure after mutation propagates and
+    # stops the build rather than risking reuse of an incomplete fingerprint.
+    for relative, entry in current['files'].items():
+        previous = old.get('files', {}).get(relative, {})
+        stamp = previous.get('mtime_ns')
+        if (entry.get('sha256') == previous.get('sha256') and isinstance(stamp, int)
+                and 0 < stamp <= time.time_ns()):
+            os.utime(root / relative, ns=(stamp, stamp))
+            count += 1
+        else:
+            os.utime(root / relative, ns=(timestamp, timestamp))
+            changed = True
+    if same_tree:
+        for relative, entry in previous_tree.items():
+            stamp = entry.get('mtime_ns')
+            if isinstance(stamp, int) and 0 < stamp <= time.time_ns():
+                os.utime(root / relative, ns=(stamp, stamp))
+                count += 1
+            else:
+                os.utime(root / relative, ns=(timestamp, timestamp))
+                changed = True
+    else:
+        metal = root / 'snow-crates/crates/simd-paddle-ocr-rs/src/runtime/gpu/metal'
+        os.utime(metal, ns=(timestamp, timestamp))
+        changed = True
+    if changed:
+        delay = (timestamp - time.time_ns()) / 1_000_000_000
+        if delay > 0:
+            time.sleep(delay + 0.1)
+    return count
+
+
 def record_rust_inputs(root, cargo_dir, paths, commit):
     root = root.resolve()
     files = {relative: {'sha256': digest(path), 'mtime_ns': path.stat().st_mtime_ns}
@@ -107,14 +197,15 @@ def record_rust_inputs(root, cargo_dir, paths, commit):
     cargo_dir.mkdir(parents=True, exist_ok=True)
     receipt = cargo_dir / RECEIPT_NAME
     temporary = cargo_dir / (RECEIPT_NAME + '.tmp')
-    temporary.write_text(json.dumps({'schema': 1, 'commit': commit, 'files': files},
+    temporary.write_text(json.dumps({'schema': 2, 'commit': commit, 'files': files,
+                                     'derived': derived_inputs(root)},
                                     sort_keys=True) + '\n')
     temporary.replace(receipt)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('prepare', 'record', 'verify'))
+    parser.add_argument('action', choices=('prepare', 'prepare-derived', 'record', 'verify'))
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument('--expected', required=True)
     parser.add_argument('--cargo-dir', type=Path, action='append')
@@ -122,12 +213,15 @@ def main():
     try:
         root = args.root.resolve()
         verify_checkout(root, args.expected)
-        if args.action in ('prepare', 'record'):
+        if args.action in ('prepare', 'prepare-derived', 'record'):
             if args.cargo_dir is None:
                 raise ValueError('--cargo-dir is required for prepare and record')
             tracked = git(root, 'ls-files', '-z', '--recurse-submodules', '--', *RUST_INPUTS)
             paths = [os.fsdecode(item) for item in tracked.split(b'\0') if item]
-            if args.action == 'prepare':
+            if args.action == 'prepare-derived':
+                restored = restore_derived_inputs(root, args.cargo_dir[0])
+                print(f'Restored {restored} unchanged OCR derived inputs')
+            elif args.action == 'prepare':
                 changed, unchanged = refresh_rust_inputs(root, args.cargo_dir, paths)
                 print(f'Checked {args.expected}; Rust inputs: {changed} changed, '
                       f'{unchanged} unchanged')

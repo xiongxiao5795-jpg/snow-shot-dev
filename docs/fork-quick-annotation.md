@@ -12,7 +12,7 @@ The main integration points are `applicationcontroller.cpp`, `globalshortcuttype
 window policy, the application CMake source list, and the translation catalogs.
 
 The Settings > Quick annotation page uses the same settings-row controls as Screenshot settings.
-It configures the default tool, five independent color presets, width, hold time, and fade duration. The separate quick annotation toolbar editor maintains its own layout and includes a persistent-mark toggle. The default tool is a rounded rectangle. On macOS, Control+4
+It configures the default tool (shape, arrow, or brush), five independent color presets, width, hold time, and fade duration. Shape variants, corner radii, arrow types and brush appearance are stored independently from screenshot styles and survive restarting the application. The separate quick annotation toolbar editor maintains its own layout and includes a persistent-mark toggle. The default tool is a rounded rectangle. On macOS, Control+4
 starts quick annotation; the other quick annotation shortcuts are unset by default. Old fork
 shortcuts are migrated only when they still match the earlier defaults; customized bindings stay.
 The toolbar opens at the lower right of the primary screen on first activation; a dragged position is retained for subsequent activations. It hides after one gesture unless persistence or the hold shortcut is active. Starting a screenshot hides the toolbar and releases annotation input while retaining the existing marks. With the normal Control+4 action,

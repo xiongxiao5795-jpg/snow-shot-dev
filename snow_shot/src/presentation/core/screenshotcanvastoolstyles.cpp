@@ -542,6 +542,38 @@ void readSpotlightValue(const QJsonObject& object, SnowCanvasSpotlightConfig* co
 
 } // namespace
 
+QJsonObject quickAnnotationToolStylesToJson(const SnowCanvasStyleDefaults& defaults) {
+    return {{QStringLiteral("shape"), shapeValue(defaults.rectangle)},
+            {QStringLiteral("arrow"), shapeValue(defaults.arrow)},
+            {QStringLiteral("brush"), brushValue(defaults.freeDraw)}};
+}
+
+SnowCanvasStyleDefaults quickAnnotationToolStylesFromJson(const QJsonObject& object,
+                                                           SnowCanvasStyleDefaults defaults) {
+    const auto shape = object.value(QStringLiteral("shape")).toObject();
+    const auto arrow = object.value(QStringLiteral("arrow")).toObject();
+    const auto brush = object.value(QStringLiteral("brush")).toObject();
+    if (!shape.isEmpty())
+        readShapeValue(shape, &defaults.rectangle);
+    if (!arrow.isEmpty())
+        readShapeValue(arrow, &defaults.arrow);
+    if (!brush.isEmpty()) {
+        readShapeValue(brush, &defaults.freeDraw);
+        defaults.freeDraw.brushMode =
+            brush.value(QStringLiteral("brush_mode")) == QStringLiteral("pressure-sensitive")
+                ? SnowCanvasBrushMode::PressureSensitive : SnowCanvasBrushMode::Regular;
+    }
+    for (auto* style : {&defaults.rectangle, &defaults.arrow, &defaults.freeDraw}) {
+        style->strokeWidth = bounded(style->strokeWidth, 0.0, 72.0);
+        style->opacity = bounded(style->opacity, 0.0, 1.0);
+        style->cornerRadii.topLeft = bounded(style->cornerRadii.topLeft, 0.0, 83.0);
+        style->cornerRadii.topRight = bounded(style->cornerRadii.topRight, 0.0, 83.0);
+        style->cornerRadii.bottomRight = bounded(style->cornerRadii.bottomRight, 0.0, 83.0);
+        style->cornerRadii.bottomLeft = bounded(style->cornerRadii.bottomLeft, 0.0, 83.0);
+    }
+    return defaults;
+}
+
 SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults() {
     SnowCanvasStyleDefaults defaults = screenshotCanvasStyleDefaults();
     auto& storage = storage::ApplicationStorage::instance();

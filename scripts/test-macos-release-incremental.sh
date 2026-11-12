@@ -30,6 +30,53 @@ ccache clang++ -c "$work/value.cpp" -o "$work/value.o"
 clang++ "$work/value.o" -o "$work/cpp-fixture"
 [[ "$("$work/cpp-fixture")" == new ]]
 
+# The CI prefix must preserve forced includes, respect PCH opt-outs, and cache
+# ordinary compilation without ccache's unsafe PCH sloppiness settings.
+mkdir -p "$work/prefix-project"
+cat > "$work/prefix-project/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.22)
+project(prefix_fixture LANGUAGES CXX)
+add_executable(snow_shot main.cpp skip.cpp shared.cpp)
+add_library(other STATIC shared.cpp)
+target_precompile_headers(snow_shot PRIVATE <vector>)
+set_source_files_properties(skip.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+CMAKE
+cat > "$work/prefix-project/main.cpp" <<'CPP'
+#include "expected.h"
+int value();
+int main() { std::vector<int> values{value()}; return values[0] == EXPECTED ? 0 : 1; }
+CPP
+printf '#define EXPECTED 7\n' > "$work/prefix-project/expected.h"
+printf 'int value() { return 7; }\n' > "$work/prefix-project/skip.cpp"
+printf 'int shared() { return 3; }\n' > "$work/prefix-project/shared.cpp"
+cmake -S "$work/prefix-project" -B "$work/prefix-build" -G Ninja \
+    -DCMAKE_PROJECT_INCLUDE="$GITHUB_WORKSPACE/cmake/fork/QuickAnnotationCachedPrefix.cmake" \
+    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+python3 - "$work/prefix-build/compile_commands.json" <<'PYTEST'
+import json, sys
+commands = json.load(open(sys.argv[1]))
+main = next(item['command'] for item in commands if item['file'].endswith('main.cpp'))
+skip = next(item['command'] for item in commands if item['file'].endswith('skip.cpp'))
+assert 'snow-fork-cached-prefix.hxx' in main
+assert 'snow-fork-cached-prefix.hxx' not in skip
+shared = [item['command'] for item in commands if item['file'].endswith('shared.cpp')]
+assert len(shared) == 2
+assert sum('snow-fork-cached-prefix.hxx' in item for item in shared) == 1
+PYTEST
+sleep 2
+ccache --zero-stats
+cmake --build "$work/prefix-build"
+"$work/prefix-build/snow_shot"
+cmake --build "$work/prefix-build" --clean-first
+"$work/prefix-build/snow_shot"
+ccache --print-stats | awk '$1 == "direct_cache_hit" || $1 == "preprocessed_cache_hit" { hits += $2 } END { exit hits > 0 ? 0 : 1 }'
+printf '#define EXPECTED 9\n' > "$work/prefix-project/expected.h"
+cmake --build "$work/prefix-build"
+if "$work/prefix-build/snow_shot"; then
+    echo 'A changed header incorrectly reused the previous object.' >&2
+    exit 1
+fi
+
 # Apple's ThinLTO cache must reuse prior work without hiding a changed object.
 mkdir -p "$work/thinlto-cache"
 cat > "$work/lto-main.cpp" <<'CPP'

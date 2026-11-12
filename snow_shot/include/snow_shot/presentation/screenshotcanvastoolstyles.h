@@ -2,12 +2,16 @@
 #define SNOW_SHOT_PRESENTATION_SCREENSHOTCANVASTOOLSTYLES_H
 
 #include "snow_draw_engine_qt/snow_canvas_style_edit.h"
+#include <QJsonObject>
 
 class SnowCanvasWidget;
 
 namespace snow_shot::presentation {
 
 [[nodiscard]] SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults();
+[[nodiscard]] QJsonObject quickAnnotationToolStylesToJson(const SnowCanvasStyleDefaults& defaults);
+[[nodiscard]] SnowCanvasStyleDefaults quickAnnotationToolStylesFromJson(
+    const QJsonObject& object, SnowCanvasStyleDefaults defaults);
 [[nodiscard]] bool persistScreenshotCanvasToolStyles(const SnowCanvasStyleDefaults& defaults);
 [[nodiscard]] bool persistScreenshotCanvasStyleEdit(const SnowCanvasStyleEdit& edit);
 void applyScreenshotCanvasToolStyles(SnowCanvasWidget& canvas,

@@ -2436,10 +2436,6 @@
             <translation>Edit with Snow Shot Mini</translation>
         </message>
         <message>
-            <source>Ellipse</source>
-            <translation>Ellipse</translation>
-        </message>
-        <message>
             <source>Enable MCP integration</source>
             <translation>Enable MCP integration</translation>
         </message>
@@ -3862,10 +3858,6 @@
         <message>
             <source>Rotate counterclockwise</source>
             <translation>Rotate counterclockwise</translation>
-        </message>
-        <message>
-            <source>Rounded rectangle</source>
-            <translation>Rounded rectangle</translation>
         </message>
         <message>
             <source>Run after %1 seconds</source>

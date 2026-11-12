@@ -1061,6 +1061,7 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
     {u"quick_annotation/last_tool", stringDefault(u"rounded_rectangle"),
      ConfigurationValueKind::String},
     {u"quick_annotation/options", emptyObjectDefault(), ConfigurationValueKind::Structured},
+    {u"quick_annotation/tool_styles", emptyObjectDefault(), ConfigurationValueKind::Structured},
     {u"quick_annotation/hold_bindings", emptyObjectDefault(), ConfigurationValueKind::Structured},
     {u"quick_annotation/toolbar_layout",
      factoryDefault(SchemaDefaultFactory::QuickAnnotationToolbar),

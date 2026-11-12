@@ -128,14 +128,11 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         const QSignalBlocker blocker(m_tool);
         const auto selected = m_tool->currentValue();
         m_tool->setOptions(
-            {{QStringLiteral("rounded_rectangle"),
-              QCoreApplication::translate("SettingsCatalog", "Rounded rectangle")},
-             {QStringLiteral("rectangle"),
-              QCoreApplication::translate("SettingsCatalog", "Rectangle")},
-             {QStringLiteral("ellipse"), QCoreApplication::translate("SettingsCatalog", "Ellipse")},
+            {{QStringLiteral("shape"), QCoreApplication::translate("SettingsCatalog", "Rectangle")},
              {QStringLiteral("arrow"), QCoreApplication::translate("SettingsCatalog", "Arrow")},
              {QStringLiteral("brush"), QCoreApplication::translate("SettingsCatalog", "Brush")}});
-        m_tool->setCurrentValue(selected);
+        m_tool->setCurrentValue(selected == QStringLiteral("arrow") || selected == QStringLiteral("brush")
+                                    ? selected : QStringLiteral("shape"));
         updateValueLabels();
     }
 
@@ -182,7 +179,9 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                                            .toObject())
                                  : QuickAnnotationOptions{};
         const QSignalBlocker a(m_tool), b(m_color), c(m_width), e(m_hold), f(m_fade);
-        m_tool->setCurrentValue(options.defaultTool);
+        m_tool->setCurrentValue(options.defaultTool == QStringLiteral("arrow") ||
+                                        options.defaultTool == QStringLiteral("brush")
+                                    ? options.defaultTool : QStringLiteral("shape"));
         QVector<adqt::widgets::AdColorValue> presetValues;
         for (qsizetype i = 0; i < m_presets.size(); ++i) {
             const QSignalBlocker presetBlocker(m_presets[i]);

@@ -88,6 +88,45 @@ class ReleaseCacheSafety(unittest.TestCase):
             self.assertEqual(cache.refresh_rust_inputs(
                 self.root, [self.cargo], [str(self.source.relative_to(self.root))]), (1, 0))
 
+    def test_ocr_derived_inputs_restore_only_identical_contents(self):
+        metal = self.root / 'snow-crates/crates/simd-paddle-ocr-rs/src/runtime/gpu/metal'
+        metal.mkdir(parents=True)
+        shader = metal / 'shader.metal'
+        shader.write_text('old shader')
+        native = self.root / 'build/native.a'
+        native.parent.mkdir(parents=True)
+        native.write_text('old library')
+        rsp = self.root / 'build/snow-shot-macos-arm64-release/snow_shot/generated/snow-ocr-crash-Release.rsp'
+        rsp.parent.mkdir(parents=True)
+        rsp.write_text(str(native) + '\n-lc++\n')
+        old_time = time.time_ns() - 10_000_000_000
+        for path in (metal, shader, native, rsp):
+            os.utime(path, ns=(old_time, old_time))
+        relative = str(self.source.relative_to(self.root))
+        cache.record_rust_inputs(self.root, self.cargo, [relative], self.head)
+        for path in (metal, shader, native, rsp):
+            os.utime(path, None)
+        self.assertEqual(cache.restore_derived_inputs(self.root, self.cargo), 4)
+        for path in (metal, shader, native, rsp):
+            self.assertEqual(path.stat().st_mtime_ns, old_time)
+        native.write_text('new library')
+        shader.write_text('new shader')
+        os.utime(native, ns=(old_time, old_time))
+        os.utime(shader, ns=(old_time, old_time))
+        with patch.object(cache.time, 'sleep'):
+            cache.restore_derived_inputs(self.root, self.cargo)
+        self.assertGreater(native.stat().st_mtime_ns, old_time)
+        self.assertGreater(metal.stat().st_mtime_ns, old_time)
+
+    def test_missing_or_external_ocr_input_never_restores(self):
+        metal = self.root / 'snow-crates/crates/simd-paddle-ocr-rs/src/runtime/gpu/metal'
+        metal.mkdir(parents=True)
+        rsp = self.root / 'build/snow-shot-macos-arm64-release/snow_shot/generated/snow-ocr-crash-Release.rsp'
+        rsp.parent.mkdir(parents=True)
+        rsp.write_text('/dev/null\n')
+        self.assertEqual(cache.derived_inputs(self.root), {})
+        self.assertEqual(cache.restore_derived_inputs(self.root, self.cargo), 0)
+
     def test_rejects_inputs_outside_the_checkout(self):
         link = self.root / 'external-link'
         link.symlink_to('/dev/null')

@@ -49,7 +49,7 @@ namespace {
 
 SnowCanvasStyleDefaults annotationStyleDefaults(const QuickAnnotationOptions& options,
                                                 QuickAnnotationTool tool) {
-    auto defaults = screenshotCanvasToolStyleDefaults();
+    auto defaults = screenshotCanvasStyleDefaults();
     for (auto* style : {&defaults.rectangle, &defaults.arrow, &defaults.freeDraw}) {
         style->stroke = options.color;
         style->strokeWidth = options.width;
@@ -123,11 +123,7 @@ class ToolPanel final : public ScreenshotFloatingToolPaletteWindow {
                 return false;
             palette()->rememberStyleEdit(edit);
             m_styleEdited(edit);
-            if (const auto color = snowCanvasCreationColorEdit(edit); color && color->isValid())
-                m_options.color = *color;
             if (const auto* shape = std::get_if<SnowCanvasShapeEdit>(&edit)) {
-                if (shape->properties & SnowCanvasShapeStylePropertyStrokeWidth)
-                    m_options.width = std::clamp(qRound(shape->style.strokeWidth), 1, 20);
                 if (shape->kind == SnowCanvasShapeKind::Rectangle &&
                     (shape->properties & SnowCanvasShapeStylePropertyShape)) {
                     m_selectShape(shape->style.shape == SnowCanvasRectangleShape::Ellipse
@@ -135,7 +131,6 @@ class ToolPanel final : public ScreenshotFloatingToolPaletteWindow {
                                       : QuickAnnotationTool::RoundedRectangle);
                 }
             }
-            m_changeOptions(m_options, false);
             return true;
         });
         setOptions(options);
@@ -145,8 +140,10 @@ class ToolPanel final : public ScreenshotFloatingToolPaletteWindow {
     }
     void setOptions(const QuickAnnotationOptions& options) {
         m_options = options;
-        const QSignalBlocker blocker(palette());
+        QSignalBlocker blocker(palette());
         palette()->setQuickAnnotationPersistent(options.persistent);
+        blocker.unblock();
+        emit palette()->visibleContentChanged();
     }
     void setKeepFading(bool enabled) {
         const QSignalBlocker blocker(palette());
@@ -599,12 +596,19 @@ class QuickAnnotationController::Impl {
                     }
                     if (key != QStringLiteral("quick_annotation/options"))
                         return;
-                    const bool persistent = options.persistent;
+                    const auto previous = options;
                     options = QuickAnnotationOptions::fromJson(value.toObject());
-                    options.persistent = persistent;
-                    for (auto* style : {&styles.rectangle, &styles.arrow, &styles.freeDraw}) {
-                        style->stroke = options.color;
-                        style->strokeWidth = options.width;
+                    options.persistent = previous.persistent;
+                    if (previous.color != options.color || previous.width != options.width) {
+                        for (auto* style : {&styles.rectangle, &styles.arrow, &styles.freeDraw}) {
+                            if (previous.color != options.color)
+                                style->stroke = options.color;
+                            if (previous.width != options.width)
+                                style->strokeWidth = options.width;
+                        }
+                        storage::ApplicationStorage::instance().configuration().setValue(
+                            QStringLiteral("quick_annotation/tool_styles"),
+                            quickAnnotationToolStylesToJson(styles));
                     }
                     if (toolbar)
                         toolbar->setOptions(options);
@@ -623,6 +627,14 @@ class QuickAnnotationController::Impl {
         }
         options.persistent = false;
         styles = annotationStyleDefaults(options, QuickAnnotationTool::RoundedRectangle);
+        if (options.defaultTool == QStringLiteral("ellipse"))
+            styles.rectangle.shape = SnowCanvasRectangleShape::Ellipse;
+        else if (options.defaultTool == QStringLiteral("rectangle"))
+            styles.rectangle.cornerRadii = {};
+        if (storage.isInitialized())
+            styles = quickAnnotationToolStylesFromJson(
+                storage.configuration().value(QStringLiteral("quick_annotation/tool_styles")).toObject(),
+                styles);
         QObject::connect(qApp, &QGuiApplication::screenRemoved, &q, [this](QScreen* screen) {
             for (const auto& window : windows) {
                 if (window->screen() != screen)
@@ -695,17 +707,20 @@ class QuickAnnotationController::Impl {
     void suspendForScreenshot() {
         holdActive = false;
         holdKeyDown = false;
-        if (toolbar)
+        keepMode = false;
+        options.persistent = false;
+        if (toolbar) {
+            toolbar->setOptions(options);
+            toolbar->setKeepFading(false);
             toolbar->hide();
+        }
         for (const auto& window : windows)
             window->cancel();
+        fadeMarks();
     }
     QuickAnnotationTool defaultTool() const {
         return options.defaultTool == QStringLiteral("brush")       ? QuickAnnotationTool::Brush
                : options.defaultTool == QStringLiteral("arrow")     ? QuickAnnotationTool::Arrow
-               : options.defaultTool == QStringLiteral("rectangle") ? QuickAnnotationTool::Rectangle
-               : options.defaultTool == QStringLiteral("ellipse")
-                   ? QuickAnnotationTool::Ellipse
                    : QuickAnnotationTool::RoundedRectangle;
     }
     void selectToolShape(QuickAnnotationTool tool) {
@@ -770,7 +785,11 @@ class QuickAnnotationController::Impl {
                 }));
             it = std::prev(windows.end());
         }
-        if ((*it)->arm(tool, options, styles, target == screen)) {
+        if (!(*it)->arm(tool, options, styles, target == screen)) {
+            exitSession();
+            return;
+        }
+        {
             lastTool = tool;
             if (toolbar && target == screen)
                 toolbar->setCanvas((*it)->canvas(), tool, styles);
@@ -888,6 +907,10 @@ void QuickAnnotationController::showToolbar(bool armDefault) {
                 snowCanvasMergeStyleEdit(m_impl->styles, edit);
                 for (const auto& window : m_impl->windows)
                     window->canvas()->commitStyleEdit(edit);
+                auto& storage = storage::ApplicationStorage::instance();
+                if (storage.isInitialized())
+                    storage.configuration().setValue(QStringLiteral("quick_annotation/tool_styles"),
+                        quickAnnotationToolStylesToJson(m_impl->styles));
             },
             [this](bool enabled) {
                 const bool wasPersistent = m_impl->options.persistent;
@@ -910,7 +933,6 @@ void QuickAnnotationController::showToolbar(bool armDefault) {
     m_impl->toolbar->show();
     if (armDefault) {
         const auto tool = m_impl->defaultTool();
-        m_impl->selectToolShape(tool);
         m_impl->arm(tool);
     }
     m_impl->toolbar->place(QGuiApplication::primaryScreen());

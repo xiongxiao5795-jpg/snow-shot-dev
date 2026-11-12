@@ -47,11 +47,12 @@ int main(int argc, char** argv) {
             widget.findChild<QLabel*>(QStringLiteral("quickAnnotationSettingsHoldValue"));
         require(tool && color && preset && width && hold && fade && holdValue &&
                     holdValue->text() == QStringLiteral("0.3 s") &&
-                    tool->currentValue().toString() == QStringLiteral("rounded_rectangle") &&
+                    tool->currentValue().toString() == QStringLiteral("shape") &&
+                    tool->options().size() == 3 &&
                     hold->value() == 0.3 && fade->value() == 0.5 && color->presets().size() == 1 &&
                     color->presets().front().colors.size() == 5,
                 "quick annotation settings expose requested defaults");
-        tool->setCurrentValue(QStringLiteral("ellipse"));
+        tool->setCurrentValue(QStringLiteral("arrow"));
         color->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#1890ff"))));
         preset->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#abcdef"))));
         width->setValue(7);
@@ -62,7 +63,7 @@ int main(int argc, char** argv) {
         const auto key = QStringLiteral("quick_annotation/options");
         auto& configuration = storage.configuration();
         const auto saved = configuration.value(key).toObject();
-        require(saved.value(QStringLiteral("default_tool")) == QStringLiteral("ellipse") &&
+        require(saved.value(QStringLiteral("default_tool")) == QStringLiteral("arrow") &&
                     saved.value(QStringLiteral("color")) == QStringLiteral("#1890ff") &&
                     saved.value(QStringLiteral("color_presets")).toArray().at(1).toString() ==
                         QStringLiteral("#abcdef") &&

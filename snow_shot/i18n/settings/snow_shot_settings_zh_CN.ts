@@ -2436,10 +2436,6 @@
             <translation>使用 Snow Shot Mini 编辑</translation>
         </message>
         <message>
-            <source>Ellipse</source>
-            <translation>椭圆</translation>
-        </message>
-        <message>
             <source>Enable MCP integration</source>
             <translation>启用 MCP 集成</translation>
         </message>
@@ -3862,10 +3858,6 @@
         <message>
             <source>Rotate counterclockwise</source>
             <translation>逆时针旋转</translation>
-        </message>
-        <message>
-            <source>Rounded rectangle</source>
-            <translation>圆角矩形</translation>
         </message>
         <message>
             <source>Run after %1 seconds</source>

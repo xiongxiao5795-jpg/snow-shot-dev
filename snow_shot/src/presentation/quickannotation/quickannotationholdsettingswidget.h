@@ -131,6 +131,15 @@ class QuickAnnotationHoldSettingsWidget final : public SettingsCustomWidget {
         const QSignalBlocker blocker(m_select);
         const QSignalBlocker keyBlocker(m_key);
         m_select->setCurrentValue(hasCustom ? QStringLiteral("custom") : options.holdShortcut);
+        QString display = QStringLiteral("fn");
+        if (hasCustom)
+            display = QCoreApplication::translate("SettingsCatalog", "Custom");
+        else if (options.holdShortcut == QStringLiteral("disabled"))
+            display = QCoreApplication::translate("SettingsCatalog", "Disabled");
+        else if (options.holdShortcut != QStringLiteral("function"))
+            display = QStringLiteral("⌘ + ⌥");
+        m_select->setFixedWidth(std::clamp(m_select->fontMetrics().horizontalAdvance(display) + 48,
+                                          76, 160));
         m_key->setKeySequence(QKeySequence::fromString(custom, QKeySequence::PortableText));
         m_key->setVisible(hasCustom);
     }

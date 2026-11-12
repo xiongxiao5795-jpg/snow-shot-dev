@@ -6,6 +6,7 @@
 #include "snow_shot/presentation/quickannotationcontroller.h"
 #include "snow_shot/presentation/crosshaircursor.h"
 #include "snow_shot/presentation/screenshotcanvastoolstyles.h"
+#include "snow_shot/presentation/screenshotdefaultstyles.h"
 #include "eraser_toolbar_test_support.h"
 #include "../src/presentation/globalcanvas/globalcanvasplatform.h"
 #include "../src/presentation/quickannotation/quickannotationoptions.h"
@@ -1726,7 +1727,8 @@ int main(int argc, char** argv) {
         auto* shapeSelector = toolbar->findChild<QWidget*>(QStringLiteral("screenshotShapeButtonGroup"));
         auto* shapeGroup = shapeSelector ? shapeSelector->findChild<adqt::widgets::AdRadioButtonGroup*>() : nullptr;
         require(shapeGroup, "shape selector available");
-        shapeGroup->setCheckedId(2);
+        require(shapeGroup->button(2), "diamond option available");
+        shapeGroup->button(2)->click();
         require(canvas->canvasStyleToolbarState().shapeStyle.shape == SnowCanvasRectangleShape::Diamond,
                 "diamond selection updates the canvas");
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
@@ -1734,17 +1736,68 @@ int main(int argc, char** argv) {
         mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
         require(canvas->canvasStyleToolbarState().shapeStyle.shape == SnowCanvasRectangleShape::Diamond,
                 "diamond selection survives a completed gesture");
+        shapeSelector = toolbar->findChild<QWidget*>(QStringLiteral("screenshotShapeButtonGroup"));
+        shapeGroup = shapeSelector ? shapeSelector->findChild<adqt::widgets::AdRadioButtonGroup*>() : nullptr;
+        require(shapeGroup && shapeGroup->button(0), "rectangle option available");
+        shapeGroup->button(0)->click();
+        auto* radius = toolbar->findChild<QWidget*>(QStringLiteral("screenshotSelectionCornerRadiusButton"));
+        require(radius, "corner radius control available");
+        const auto previousRadius = canvas->canvasStyleToolbarState().shapeStyle.cornerRadii.topLeft;
+        const QPointF radiusPoint(radius->rect().center());
+        QWheelEvent radiusWheel(radiusPoint, radius->mapToGlobal(radiusPoint.toPoint()), {},
+                                QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                                Qt::NoScrollPhase, false);
+        QApplication::sendEvent(radius, &radiusWheel);
+        const auto selectedRadius = canvas->canvasStyleToolbarState().shapeStyle.cornerRadii.topLeft;
+        require(selectedRadius != previousRadius, "scroll changes the corner radius");
+        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        require(canvas->canvasStyleToolbarState().shapeStyle.cornerRadii.topLeft == selectedRadius,
+                "corner radius survives a completed gesture");
         floating->palette()->arrowRequested();
         auto* arrowSelector = toolbar->findChild<QWidget*>(QStringLiteral("screenshotArrowTypeButtonGroup"));
         auto* arrowGroup = arrowSelector ? arrowSelector->findChild<adqt::widgets::AdRadioButtonGroup*>() : nullptr;
         require(arrowGroup, "arrow selector available");
-        arrowGroup->setCheckedId(2);
+        require(arrowGroup->button(2), "elbow arrow option available");
+        arrowGroup->button(2)->click();
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
         require(canvas->canvasStyleToolbarState().shapeStyle.arrowType == SnowCanvasArrowType::Elbow,
                 "arrow type survives a completed gesture");
+        auto styleFixture = presentation::screenshotCanvasStyleDefaults();
+        styleFixture.freeDraw.brushMode = SnowCanvasBrushMode::PressureSensitive;
+        styleFixture.freeDraw.stroke = QColor(QStringLiteral("#12ab34"));
+        const auto decodedFixture = presentation::quickAnnotationToolStylesFromJson(
+            presentation::quickAnnotationToolStylesToJson(styleFixture),
+            presentation::screenshotCanvasStyleDefaults());
+        require(decodedFixture.freeDraw.brushMode == SnowCanvasBrushMode::PressureSensitive &&
+                    decodedFixture.freeDraw.stroke == QColor(QStringLiteral("#12ab34")),
+                "brush settings survive a stored style round trip");
+        const auto storedStyles = presentation::quickAnnotationToolStylesFromJson(
+            storage.configuration().value(QStringLiteral("quick_annotation/tool_styles")).toObject(),
+            presentation::screenshotCanvasStyleDefaults());
+        require(storedStyles.rectangle.cornerRadii.topLeft == selectedRadius &&
+                    storedStyles.arrow.arrowType == SnowCanvasArrowType::Elbow,
+                "shape and arrow settings persist independently in quick annotation storage");
         controller.endHold();
+        {
+            QSet<QWidget*> existing;
+            for (QWidget* candidate : QApplication::topLevelWidgets())
+                existing.insert(candidate);
+            presentation::QuickAnnotationController reopened(nullptr, [&now] { return now; });
+            reopened.armLastTool();
+            SnowCanvasWidget* restored = nullptr;
+            for (QWidget* candidate : QApplication::topLevelWidgets())
+                if (!existing.contains(candidate) &&
+                    candidate->objectName() == QStringLiteral("quickAnnotationWindow"))
+                    restored = candidate->findChild<SnowCanvasWidget*>(QStringLiteral("quickAnnotationCanvas"));
+            require(restored && restored->canvasStyleToolbarState().shapeStyle.cornerRadii.topLeft ==
+                                    selectedRadius,
+                    "reopened controller restores the last shape settings");
+            reopened.exitMode();
+        }
         auto* secondary = new CanvasTestScreen;
         QWindowSystemInterface::handleScreenAdded(secondary);
         {

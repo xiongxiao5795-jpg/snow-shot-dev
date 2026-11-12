@@ -41,7 +41,8 @@ struct QuickAnnotationOptions {
         result.holdMs = std::clamp(object.value(QStringLiteral("hold_ms")).toInt(300), 0, 3000);
         result.fadeMs = std::clamp(object.value(QStringLiteral("fade_ms")).toInt(500), 0, 3000);
         const QString tool = object.value(QStringLiteral("default_tool")).toString();
-        if (tool == QStringLiteral("brush") || tool == QStringLiteral("arrow") ||
+        if (tool == QStringLiteral("shape") || tool == QStringLiteral("brush") ||
+            tool == QStringLiteral("arrow") ||
             tool == QStringLiteral("rectangle") || tool == QStringLiteral("rounded_rectangle") ||
             tool == QStringLiteral("ellipse"))
             result.defaultTool = tool;

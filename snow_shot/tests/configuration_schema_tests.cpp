@@ -78,6 +78,7 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
         QStringLiteral("global_shortcuts/quick_annotation_toolbar"),
         QStringLiteral("quick_annotation/last_tool"),
         QStringLiteral("quick_annotation/options"),
+        QStringLiteral("quick_annotation/tool_styles"),
         QStringLiteral("quick_annotation/hold_bindings"),
         QStringLiteral("quick_annotation/toolbar_layout"),
         QStringLiteral("quick_annotation/tray_menu_v2_migrated"),
@@ -85,6 +86,7 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
         QStringLiteral("quick_annotation/duration_defaults_migrated"),
         QStringLiteral("quick_annotation/tray_menu_migrated"),
         QStringLiteral("quick_annotation/shortcut_defaults_migrated"),
+        QStringLiteral("quick_annotation/rectangle_conflict_migrated"),
     };
     QJsonArray originalActual;
     QSet<QString> seenAdded;
@@ -271,6 +273,28 @@ void nativeDefaultsRemainIntact(const QString& movies, const QString& pictures) 
 #endif
 }
 #ifdef Q_OS_MACOS
+void quickAnnotationRectangleConflictMigration() {
+    using namespace snow_shot::shortcuts;
+    QTemporaryDir dir;
+    require(dir.isValid(), "create rectangle shortcut migration fixture");
+    const QString path = dir.filePath(QStringLiteral("config.json"));
+    ShortcutBinding duplicate{QStringLiteral("Meta+4")};
+    duplicate.physicalKeys.insert(ShortcutPlatform::MacOS, 21);
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "write duplicated shortcut settings");
+    file.write(QJsonDocument(QJsonObject{
+        {QStringLiteral("storage"), QJsonObject{{QStringLiteral("schema_version"),
+            snow_shot::storage::ConfigurationStore::currentSchemaVersion()}}},
+        {QStringLiteral("global_shortcuts"), QJsonObject{
+            {QStringLiteral("quick_annotation"), shortcutBindingsToJson({duplicate})},
+            {QStringLiteral("quick_annotation_rectangle"), shortcutBindingsToJson({duplicate})}}}}).toJson());
+    file.close();
+    snow_shot::storage::ConfigurationStore config(path, true, true);
+    require(shortcutBindingsFromJson(config.value(QStringLiteral("global_shortcuts/quick_annotation_rectangle")), true).isEmpty() &&
+                !shortcutBindingsFromJson(config.value(QStringLiteral("global_shortcuts/quick_annotation")), true).isEmpty(),
+            "remove only the duplicate rectangle shortcut and preserve the quick shortcut");
+}
+
 void quickAnnotationShortcutMigration() {
     QTemporaryDir dir;
     require(dir.isValid(), "create shortcut migration fixture");
@@ -419,6 +443,7 @@ int main(int argc, char** argv) {
     quickAnnotationCustomDurationsRemain();
 #ifdef Q_OS_MACOS
     quickAnnotationShortcutMigration();
+    quickAnnotationRectangleConflictMigration();
 #endif
     entryReferencesAndCopiesRemainIndependent();
     require(metadata() == before, "copy mutation must not change any public schema field");

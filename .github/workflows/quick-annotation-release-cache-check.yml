@@ -23,7 +23,7 @@ jobs:
         with:
           toolchain: 1.97.1
       - name: Install validation tools on GitHub runner
-        run: brew install ccache actionlint
+        run: brew install cmake ninja ccache actionlint
       - name: Validate release workflow
         run: |
           printf 'self-hosted-runner:\n  labels:\n    - xcode-27\n' > "$RUNNER_TEMP/actionlint.yaml"
