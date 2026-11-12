@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QPainter>
 #include <QSignalBlocker>
+#include <QToolTip>
 #include <QHBoxLayout>
 
 namespace snow_shot::presentation {
@@ -56,8 +57,16 @@ class QuickAnnotationHoldSettingsWidget final : public SettingsCustomWidget {
             auto bindings = config.value(QStringLiteral("quick_annotation/hold_bindings")).toObject();
             const QString text = m_key->keySequence().toString(QKeySequence::PortableText);
             const auto binding = shortcuts::bindingFromPortableText(text);
-            if (!text.isEmpty() && (binding.portableText.isEmpty() ||
-                !m_session.validateShortcut(GlobalShortcutAction::QuickAnnotation, binding).supported)) {
+            bool valid = text.isEmpty() || (!binding.portableText.isEmpty() &&
+                m_session.validateShortcut(GlobalShortcutAction::QuickAnnotation, binding).supported);
+            const auto defaults = shortcuts::shortcutBindingsFromJson(
+                config.value(QStringLiteral("global_shortcuts/quick_annotation")), true);
+            for (const auto& existing : defaults)
+                if (!text.isEmpty() && shortcuts::bindingsConflict(binding, existing))
+                    valid = false;
+            if (!valid) {
+                QToolTip::showText(m_key->mapToGlobal(QPoint(0, m_key->height())),
+                    QCoreApplication::translate("SettingsCatalog", "Shortcut is invalid or already in use"), m_key);
                 refresh();
                 return;
             }
