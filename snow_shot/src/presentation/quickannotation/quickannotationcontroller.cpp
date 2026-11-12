@@ -906,7 +906,7 @@ void QuickAnnotationController::showToolbar(bool armDefault) {
             [this](const SnowCanvasStyleEdit& edit) {
                 snowCanvasMergeStyleEdit(m_impl->styles, edit);
                 for (const auto& window : m_impl->windows)
-                    window->canvas()->commitStyleEdit(edit);
+                    window->canvas()->applyStyleEdit(edit);
                 auto& storage = storage::ApplicationStorage::instance();
                 if (storage.isInitialized())
                     storage.configuration().setValue(QStringLiteral("quick_annotation/tool_styles"),
