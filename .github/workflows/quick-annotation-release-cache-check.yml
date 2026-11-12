@@ -3,6 +3,20 @@ name: macOS release cache verification
 on:
   push:
     branches: [codex/quick-annotation-package]
+    paths:
+      - '.github/workflows/quick-annotation-macos*.yml'
+      - '.github/workflows/quick-annotation-release-cache-check.yml'
+      - '.github/workflows/quick-annotation-republish-dmg.yml'
+      - 'scripts/macos-*.py'
+      - 'scripts/test-macos-*.py'
+      - 'scripts/test-macos-release-incremental.sh'
+      - 'scripts/build.sh'
+      - 'scripts/package-snow-shot.sh'
+      - 'cmake/fork/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'snow_shot/CMakeLists.txt'
+      - 'vcpkg*.json'
   workflow_dispatch:
 
 permissions:
