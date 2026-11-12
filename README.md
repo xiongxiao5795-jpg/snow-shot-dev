@@ -6,7 +6,8 @@ This repository is a fork of [Snow Shot](https://github.com/mg-chao/snow-shot) w
 
 ## Why this fork exists
 
-I discussed Quick Annotation with the original maintainer. In my experience, the discussion repeatedly returned to implementation details without patiently understanding the intended use; you can read [the original discussion](https://github.com/mg-chao/snow-shot/issues/2494) and form your own view. I therefore maintain this macOS version for my own use. Thanks to the original project and its contributors for the foundation.
+I discussed Quick Annotation with the original maintainer. In my experience, they lacked the patience to understand the intended use cases and the already concise description of the requirements, and dismissed both my AI-assisted research and summaries and my own responses, making the discussion unproductive. You can read [the full discussion](https://github.com/mg-chao/snow-shot/issues/2494).
+I therefore maintain this macOS version for my own use. Thanks to the original project and its contributors for the foundation.
 
 This repository **only maintains macOS functionality related to Quick Annotation**. I do not have devices to validate or support Windows, other platforms, or unrelated feature requests. Others with the same need are welcome to use this fork.
 
