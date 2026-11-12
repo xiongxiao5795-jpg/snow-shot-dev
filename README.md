@@ -10,6 +10,22 @@ I discussed Quick Annotation with the original maintainer. In my experience, the
 
 This repository **only maintains macOS functionality related to Quick Annotation**. I do not have devices to validate or support Windows, other platforms, or unrelated feature requests. Others with the same need are welcome to use this fork.
 
+## Demos
+
+These recordings are shown in chronological order: the screenshot annotation issue, basic Quick Annotation, and persistent Quick Annotation.
+
+### Screenshot annotation issue
+
+![Screenshot annotation issue](docs/quick-annotation-demos/screenshot-annotation-issue.gif)
+
+### Quick Annotation basics
+
+![Quick Annotation basics](docs/quick-annotation-demos/quick-annotation-basics.gif)
+
+### Persistent Quick Annotation
+
+![Persistent Quick Annotation](docs/quick-annotation-demos/quick-annotation-persistent.gif)
+
 ## Download and use
 
 Download the full macOS Apple Silicon DMG from this fork's [Releases](https://github.com/xiongxiao5795-jpg/snow-shot-dev/releases). For the original application and other platforms, see [upstream releases](https://github.com/mg-chao/snow-shot/releases); upstream does not include this fork's Quick Annotation.

@@ -10,6 +10,22 @@
 
 本仓库**只维护 macOS 上与快速标注相关的功能**。我没有其他平台的设备，无法验证或满足 Windows、其他平台及其他功能需求，敬请见谅。有同样需求的朋友欢迎自取。
 
+## 功能演示
+
+以下演示按录制时间排列，依次展示截图标注使用问题、快速标注的基础操作和常驻模式。
+
+### 截图标注使用问题
+
+![截图标注使用问题演示](docs/quick-annotation-demos/screenshot-annotation-issue.gif)
+
+### 快速标注基础演示
+
+![快速标注基础演示](docs/quick-annotation-demos/quick-annotation-basics.gif)
+
+### 快速标注常驻演示
+
+![快速标注常驻演示](docs/quick-annotation-demos/quick-annotation-persistent.gif)
+
 ## 下载和使用
 
 在本仓库的 [Releases](https://github.com/xiongxiao5795-jpg/snow-shot-dev/releases) 下载 macOS Apple Silicon 完整版 DMG。原版及其他平台的发行包请前往 [Snow Shot 上游 Releases](https://github.com/mg-chao/snow-shot/releases)；原版不包含本 fork 的快速标注功能。
