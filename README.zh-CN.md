@@ -1,6 +1,6 @@
 # Snow Shot · macOS 快速标注版
 
-[English](README.md) · 简体中文
+[English](README.en.md) · 简体中文
 
 本仓库 fork 自 [Snow Shot](https://github.com/mg-chao/snow-shot)，在原有截图、录屏等功能上增加 **快速标注**：无需截图，直接在当前屏幕上画矩形、箭头或自由笔迹，用于会议、教学和演示。
 

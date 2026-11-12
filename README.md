@@ -1,45 +1,45 @@
-# Snow Shot · macOS Quick Annotation Fork
+# Snow Shot · macOS 快速标注版
 
-English · [简体中文](README.zh-CN.md)
+[English](README.en.md) · 简体中文
 
-This repository is a fork of [Snow Shot](https://github.com/mg-chao/snow-shot) with **Quick Annotation** for macOS. Draw a shape, arrow, or freehand mark directly over the current screen without taking a screenshot, for meetings, teaching, and presentations.
+本仓库 fork 自 [Snow Shot](https://github.com/mg-chao/snow-shot)，在原有截图、录屏等功能上增加 **快速标注**：无需截图，直接在当前屏幕上画矩形、箭头或自由笔迹，用于会议、教学和演示。
 
-## Why this fork exists
+## 为什么维护这个版本
 
-I discussed Quick Annotation with the original maintainer. In my experience, they lacked the patience to understand the intended use cases and the already concise description of the requirements, and dismissed both my AI-assisted research and summaries and my own responses, making the discussion unproductive. You can read [the full discussion](https://github.com/mg-chao/snow-shot/issues/2494).
-I therefore maintain this macOS version for my own use. Thanks to the original project and its contributors for the foundation.
+我曾就快速标注与原作者讨论。在我的感受中，对方缺少耐心理解使用场景和已经高度凝练的需求描述，对我用AI调研、总结、包括我个人回答的内容嗤之以鼻，沟通效果不佳；完整沟通过程见 [原讨论 #2494](https://github.com/mg-chao/snow-shot/issues/2494)。
+因此我选择自己维护一个 macOS 自用版本。感谢原项目及其贡献者提供的基础工作。
 
-This repository **only maintains macOS functionality related to Quick Annotation**. I do not have devices to validate or support Windows, other platforms, or unrelated feature requests. Others with the same need are welcome to use this fork.
+本仓库**只维护 macOS 上与快速标注相关的功能**。我没有其他平台的设备，无法验证或满足 Windows、其他平台及其他功能需求，敬请见谅。有同样需求的朋友欢迎自取。
 
-## Demos
+## 功能演示
 
-These recordings are shown in chronological order: the screenshot annotation issue, basic Quick Annotation, and persistent Quick Annotation.
+以下演示按录制时间排列，依次展示截图标注使用问题、快速标注的基础操作和常驻模式。
 
-### Screenshot annotation issue
+### 截图标注使用问题
 
-![Screenshot annotation issue](docs/quick-annotation-demos/screenshot-annotation-issue.gif)
+![截图标注使用问题演示](docs/quick-annotation-demos/screenshot-annotation-issue.gif)
 
-### Quick Annotation basics
+### 快速标注基础演示
 
-![Quick Annotation basics](docs/quick-annotation-demos/quick-annotation-basics.gif)
+![快速标注基础演示](docs/quick-annotation-demos/quick-annotation-basics.gif)
 
-### Persistent Quick Annotation
+### 快速标注常驻演示
 
-![Persistent Quick Annotation](docs/quick-annotation-demos/quick-annotation-persistent.gif)
+![快速标注常驻演示](docs/quick-annotation-demos/quick-annotation-persistent.gif)
 
-## Download and use
+## 下载和使用
 
-Download the full macOS Apple Silicon DMG from this fork's [Releases](https://github.com/xiongxiao5795-jpg/snow-shot-dev/releases). For the original application and other platforms, see [upstream releases](https://github.com/mg-chao/snow-shot/releases); upstream does not include this fork's Quick Annotation.
+在本仓库的 [Releases](https://github.com/xiongxiao5795-jpg/snow-shot-dev/releases) 下载 macOS Apple Silicon 完整版 DMG。原版及其他平台的发行包请前往 [Snow Shot 上游 Releases](https://github.com/mg-chao/snow-shot/releases)；原版不包含本 fork 的快速标注功能。
 
-- Press `Control+4` to start Quick Annotation, or hold `Fn` for temporary annotation. Change the bindings in **Settings → Global shortcuts → Quick annotation**.
-- The default tool is a rounded rectangle. The toolbar also provides shapes, arrows, and freehand drawing with editable styles.
-- Marks fade after a short delay by default. Toolbar options support continuous drawing with fading marks, or persistent marks with undo and redo.
-- Configure colors, stroke width, hold and fade durations, and toolbar layout in **Settings → Quick annotation**.
+- 按 `Control+4` 进入快速标注，或按住 `Fn` 临时标注；可在「设置 → 全局快捷键 → 快速标注」修改。
+- 默认工具为圆角矩形，也可在工具栏选择矩形、箭头或画笔并调整样式。
+- 默认标注短暂停留后淡出；工具栏可选择持续绘制并自动淡出，或保留标注并使用撤销、重做。
+- 颜色、粗细、停留和淡出时间以及工具栏布局可在「设置 → 快速标注」调整。
 
-Whether `Fn` conflicts with input switching or other system actions depends on macOS and keyboard settings. Grant the requested permissions when prompted. See the [fork maintenance notes](docs/fork-quick-annotation.md) for installation and signing details.
+按住 `Fn` 是否与输入法或系统功能冲突，取决于 macOS 设置和键盘。首次使用时请按系统提示授予所需权限。安装与签名注意事项见 [fork 维护说明](docs/fork-quick-annotation.md)。
 
-## Maintenance and licensing
+## 维护和许可
 
-Quick Annotation is disabled in ordinary builds and explicitly enabled in this fork's macOS Full DMG workflow. See the [maintenance notes](docs/fork-quick-annotation.md) for build and upstream-sync details, and the [upstream repository](https://github.com/mg-chao/snow-shot) for the original application's documentation.
+快速标注默认不参与普通构建，本仓库的 macOS Full DMG 构建显式启用它。构建要求及同步上游的方式见 [维护说明](docs/fork-quick-annotation.md)；原项目使用说明见 [Snow Shot 上游](https://github.com/mg-chao/snow-shot)。
 
-This fork retains the licenses and copyright notices of the upstream components. The Snow Shot application is licensed under [GPL-3.0-or-later](snow_shot/COPYRIGHT).
+本仓库保留上游各组件的许可证与版权说明；Snow Shot 应用遵循 [GPL-3.0-or-later](snow_shot/COPYRIGHT)。
