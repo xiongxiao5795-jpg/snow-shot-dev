@@ -9,9 +9,11 @@ class SnowCanvasWidget;
 namespace snow_shot::presentation {
 
 [[nodiscard]] SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults();
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 [[nodiscard]] QJsonObject quickAnnotationToolStylesToJson(const SnowCanvasStyleDefaults& defaults);
 [[nodiscard]] SnowCanvasStyleDefaults quickAnnotationToolStylesFromJson(
     const QJsonObject& object, SnowCanvasStyleDefaults defaults);
+#endif
 [[nodiscard]] bool persistScreenshotCanvasToolStyles(const SnowCanvasStyleDefaults& defaults);
 [[nodiscard]] bool persistScreenshotCanvasStyleEdit(const SnowCanvasStyleEdit& edit);
 void applyScreenshotCanvasToolStyles(SnowCanvasWidget& canvas,

@@ -101,6 +101,14 @@ option(SNOW_SHOT_BUILD_IMAGE_CODEC_SMOKE_TEST
     "Build the Snow Shot image-codec smoke test without the full QtTest suite." OFF)
 option(SNOW_SHOT_BUILD_BENCHMARKS "Build opt-in native Snow Shot benchmarks." OFF)
 option(SNOW_SHOT_ENABLE_MCP "Build and package the local Snow Shot MCP bridge." ON)
+option(SNOW_SHOT_ENABLE_QUICK_ANNOTATION "Build the experimental macOS quick annotation module." OFF)
+if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION AND NOT APPLE)
+    message(FATAL_ERROR "Quick annotation is currently supported only on macOS")
+endif()
+if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION AND SNOW_APPS_BUILD_SNOW_SHOT_MINI)
+    message(FATAL_ERROR "Quick annotation is currently supported only in the Full edition")
+endif()
+add_compile_definitions(SNOW_SHOT_ENABLE_QUICK_ANNOTATION=$<BOOL:${SNOW_SHOT_ENABLE_QUICK_ANNOTATION}>)
 option(SNOW_SHOT_SCROLLING_PERF_DETAIL "Compile detailed scrolling C++ and Rust timings." OFF)
 option(SNOW_SHOT_RELEASE_STATIC "Prefer static Snow Shot release linkage." OFF)
 option(SNOW_SHOT_QT_STATIC "Link Snow Shot against a static Qt build." OFF)
@@ -985,8 +993,6 @@ set(SNOW_SHOT_SETTINGS_SOURCES
     src/presentation/components/texttranslationsettingswidget.cpp
     src/presentation/components/customaimodelssettingswidget.cpp
     src/presentation/components/settingscustomwidget.cpp
-    src/presentation/quickannotation/quickannotationsettingswidget.h
-    src/presentation/quickannotation/quickannotationholdsettingswidget.h
     src/presentation/components/settingspagewidget.cpp
     include/snow_shot/presentation/components/screenrecordingsettingsdialog.h
     include/snow_shot/presentation/components/screenrecordingmodal.h
@@ -1032,6 +1038,11 @@ elseif(APPLE)
         src/platform/macos/focusedfullscreenwindow.mm)
 endif()
 list(APPEND SNOW_SHOT_SETTINGS_SOURCES ${SNOW_SHOT_GLOBAL_SHORTCUT_SOURCES})
+if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION)
+    list(APPEND SNOW_SHOT_SETTINGS_SOURCES
+        src/presentation/quickannotation/quickannotationsettingswidget.h
+        src/presentation/quickannotation/quickannotationholdsettingswidget.h)
+endif()
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/presentation/components/screenshothistorypagewidget.cpp"
      _snow_shot_history_source)
 string(FIND "${_snow_shot_history_source}" "QThreadPool::globalInstance()"
@@ -2071,9 +2082,6 @@ set(PROJECT_CXX_SOURCES
     include/snow_shot/presentation/globalcanvascontroller.h
     src/presentation/globalcanvas/globalcanvascontroller.cpp
     src/presentation/globalcanvas/globalcanvasplatform.cpp
-    include/snow_shot/presentation/quickannotationcontroller.h
-    src/presentation/quickannotation/quickannotationoptions.h
-    src/presentation/quickannotation/quickannotationcontroller.cpp
     src/presentation/pinned/screenshotpinnedresizegeometry.cpp
     src/presentation/pinned/screenshotpinnedrestoregeometry.cpp
     src/presentation/pinned/screenshotpinnedhidetotopcontroller.cpp
@@ -2186,6 +2194,14 @@ qt_add_executable(snow_shot
     MANUAL_FINALIZATION
     ${PROJECT_SOURCES}
 )
+if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION)
+    target_sources(snow_shot PRIVATE
+        include/snow_shot/presentation/quickannotationcontroller.h
+        src/presentation/quickannotation/quickannotationoptions.h
+        src/presentation/quickannotation/quickannotationcontroller.cpp
+        src/presentation/quickannotation/quickannotationholdmonitor.h
+        src/presentation/quickannotation/quickannotationholdmonitor.mm)
+endif()
 snow_shot_link_macos_window_platform(snow_shot)
 if(WIN32 AND SNOW_SHOT_DISTRIBUTION_CHANNEL STREQUAL "store")
     add_dependencies(snow_shot snow_shot_explorer_command)
@@ -2254,9 +2270,7 @@ target_link_libraries(snow_shot PRIVATE snow_shot_system_notification_controller
 if(APPLE)
     target_link_libraries(snow_shot PRIVATE ${SNOW_SELECTED_FILES_LIBRARIES})
     target_link_libraries(snow_shot PRIVATE snow_shot_system_notifications)
-    target_sources(snow_shot PRIVATE src/platform/macos/camerashuttersound.mm
-        src/presentation/quickannotation/quickannotationholdmonitor.h
-        src/presentation/quickannotation/quickannotationholdmonitor.mm)
+    target_sources(snow_shot PRIVATE src/platform/macos/camerashuttersound.mm)
     target_link_libraries(snow_shot PRIVATE "-framework AVFoundation" "-framework Foundation" objc)
     qt_add_resources(snow_shot "snow_shot_shutter_audio"
         PREFIX "/snow-shot"
@@ -7374,28 +7388,30 @@ if(SNOW_SHOT_BUILD_TESTS)
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
     )
 
-    add_executable(snow-shot-quick-annotation-state-tests tests/quick_annotation_state_tests.cpp)
-    target_include_directories(snow-shot-quick-annotation-state-tests PRIVATE include)
-    add_test(NAME snow-shot-quick-annotation-state-tests COMMAND snow-shot-quick-annotation-state-tests)
-    set_tests_properties(snow-shot-quick-annotation-state-tests PROPERTIES LABELS "unit" TIMEOUT 30)
+    if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION)
+        add_executable(snow-shot-quick-annotation-state-tests tests/quick_annotation_state_tests.cpp)
+        target_include_directories(snow-shot-quick-annotation-state-tests PRIVATE include)
+        add_test(NAME snow-shot-quick-annotation-state-tests COMMAND snow-shot-quick-annotation-state-tests)
+        set_tests_properties(snow-shot-quick-annotation-state-tests PROPERTIES LABELS "unit" TIMEOUT 30)
 
-    add_executable(snow-shot-quick-annotation-options-tests tests/quick_annotation_options_tests.cpp)
-    target_link_libraries(snow-shot-quick-annotation-options-tests PRIVATE Qt6::Gui)
-    add_test(NAME snow-shot-quick-annotation-options-tests
-        COMMAND snow-shot-quick-annotation-options-tests)
-    set_tests_properties(snow-shot-quick-annotation-options-tests PROPERTIES
-        LABELS "unit" TIMEOUT 30
-        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        add_executable(snow-shot-quick-annotation-options-tests tests/quick_annotation_options_tests.cpp)
+        target_link_libraries(snow-shot-quick-annotation-options-tests PRIVATE Qt6::Gui)
+        add_test(NAME snow-shot-quick-annotation-options-tests
+            COMMAND snow-shot-quick-annotation-options-tests)
+        set_tests_properties(snow-shot-quick-annotation-options-tests PROPERTIES
+            LABELS "unit" TIMEOUT 30
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 
-    add_executable(snow-shot-quick-annotation-settings-tests tests/quick_annotation_settings_tests.cpp)
-    target_link_libraries(snow-shot-quick-annotation-settings-tests PRIVATE
-        snow_shot_storage ant_design_qt Qt6::Widgets)
-    snow_shot_import_offscreen_platform(snow-shot-quick-annotation-settings-tests)
-    add_test(NAME snow-shot-quick-annotation-settings-tests
-        COMMAND snow-shot-quick-annotation-settings-tests -platform offscreen)
-    set_tests_properties(snow-shot-quick-annotation-settings-tests PROPERTIES
-        LABELS unit RUN_SERIAL TRUE TIMEOUT 60
-        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        add_executable(snow-shot-quick-annotation-settings-tests tests/quick_annotation_settings_tests.cpp)
+        target_link_libraries(snow-shot-quick-annotation-settings-tests PRIVATE
+            snow_shot_storage ant_design_qt Qt6::Widgets)
+        snow_shot_import_offscreen_platform(snow-shot-quick-annotation-settings-tests)
+        add_test(NAME snow-shot-quick-annotation-settings-tests
+            COMMAND snow-shot-quick-annotation-settings-tests -platform offscreen)
+        set_tests_properties(snow-shot-quick-annotation-settings-tests PROPERTIES
+            LABELS unit RUN_SERIAL TRUE TIMEOUT 60
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
 
     add_executable(snow-shot-global-canvas-tests
         tests/global_canvas_tests.cpp
@@ -7405,9 +7421,6 @@ if(SNOW_SHOT_BUILD_TESTS)
         include/snow_shot/presentation/globalcanvascontroller.h
         src/presentation/globalcanvas/globalcanvascontroller.cpp
         src/presentation/globalcanvas/globalcanvasplatform.cpp
-        include/snow_shot/presentation/quickannotationcontroller.h
-        src/presentation/quickannotation/quickannotationoptions.h
-        src/presentation/quickannotation/quickannotationcontroller.cpp
         src/platform/physicalcursor.cpp
         include/snow_shot/presentation/screenshotfloatingtoolpalettewindow.h
         include/snow_shot/presentation/screenshottoolpalette.h
@@ -7433,6 +7446,12 @@ if(SNOW_SHOT_BUILD_TESTS)
         src/presentation/styles/thememanager.cpp
         src/presentation/styles/themecolorscheme.cpp
     )
+    if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION)
+        target_sources(snow-shot-global-canvas-tests PRIVATE
+            include/snow_shot/presentation/quickannotationcontroller.h
+            src/presentation/quickannotation/quickannotationoptions.h
+            src/presentation/quickannotation/quickannotationcontroller.cpp)
+    endif()
     target_include_directories(snow-shot-global-canvas-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(snow-shot-global-canvas-tests PRIVATE
         snow_shot_window_shortcuts snow_shot_storage snow_draw_engine_qt_canvas
@@ -7442,9 +7461,11 @@ if(SNOW_SHOT_BUILD_TESTS)
         target_sources(snow-shot-global-canvas-tests PRIVATE src/platform/macos/screenshotsessionfocus.mm)
         target_link_libraries(snow-shot-global-canvas-tests PRIVATE "-framework ApplicationServices")
     endif()
-    add_test(NAME snow-shot-quick-annotation-tests
-        COMMAND snow-shot-global-canvas-tests --quick-annotation-only -platform offscreen)
-    set_tests_properties(snow-shot-quick-annotation-tests PROPERTIES LABELS "unit" TIMEOUT 60)
+    if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION)
+        add_test(NAME snow-shot-quick-annotation-tests
+            COMMAND snow-shot-global-canvas-tests --quick-annotation-only -platform offscreen)
+        set_tests_properties(snow-shot-quick-annotation-tests PROPERTIES LABELS "unit" TIMEOUT 60)
+    endif()
     if(WIN32)
         target_sources(snow-shot-global-canvas-tests PRIVATE src/platform/windows/pinnedwindownative.cpp)
         target_link_libraries(snow-shot-global-canvas-tests PRIVATE Qt6::GuiPrivate comctl32)

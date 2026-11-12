@@ -37,8 +37,9 @@ cat > "$work/prefix-project/CMakeLists.txt" <<'CMAKE'
 cmake_minimum_required(VERSION 3.22)
 project(prefix_fixture LANGUAGES CXX)
 add_executable(snow_shot main.cpp skip.cpp shared.cpp)
-add_library(other STATIC shared.cpp)
+add_library(other STATIC shared.cpp other.cpp)
 target_precompile_headers(snow_shot PRIVATE <vector>)
+target_precompile_headers(other PRIVATE <vector>)
 set_source_files_properties(skip.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 CMAKE
 cat > "$work/prefix-project/main.cpp" <<'CPP'
@@ -49,9 +50,11 @@ CPP
 printf '#define EXPECTED 7\n' > "$work/prefix-project/expected.h"
 printf 'int value() { return 7; }\n' > "$work/prefix-project/skip.cpp"
 printf 'int shared() { return 3; }\n' > "$work/prefix-project/shared.cpp"
+printf 'int other() { std::vector<int> values{5}; return values[0]; }\n' > "$work/prefix-project/other.cpp"
 cmake -S "$work/prefix-project" -B "$work/prefix-build" -G Ninja \
     -DCMAKE_PROJECT_INCLUDE="$GITHUB_WORKSPACE/cmake/fork/QuickAnnotationCachedPrefix.cmake" \
-    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    "-DCMAKE_CXX_COMPILER_LAUNCHER=python3;$GITHUB_WORKSPACE/scripts/macos-ccache-prefix.py" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 python3 - "$work/prefix-build/compile_commands.json" <<'PYTEST'
 import json, sys
 commands = json.load(open(sys.argv[1]))
@@ -62,6 +65,8 @@ assert 'snow-fork-cached-prefix.hxx' not in skip
 shared = [item['command'] for item in commands if item['file'].endswith('shared.cpp')]
 assert len(shared) == 2
 assert sum('snow-fork-cached-prefix.hxx' in item for item in shared) == 1
+other = next(item['command'] for item in commands if item['file'].endswith('other.cpp'))
+assert 'cmake_pch.hxx.pch' in other
 PYTEST
 sleep 2
 ccache --zero-stats

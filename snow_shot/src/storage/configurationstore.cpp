@@ -243,7 +243,7 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
                 result.dirty = true;
             }
         }
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) && SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         // Change only bindings that still match the previous fork defaults.
         if (mutateDocument && !currentOverlay.contains(
                                   QStringLiteral("quick_annotation/shortcut_defaults_migrated"))) {
@@ -271,7 +271,7 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
             }
         }
 #endif
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) && SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         if (entry.key == QStringLiteral("global_shortcuts/quick_annotation_rectangle") &&
             mutateDocument && !currentOverlay.contains(
                 QStringLiteral("quick_annotation/rectangle_conflict_migrated"))) {
@@ -299,6 +299,7 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
             }
         }
 #endif
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         if (entry.key == QStringLiteral("quick_annotation/options") && mutateDocument &&
             raw.isObject() &&
             !currentOverlay.contains(
@@ -325,6 +326,7 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
                 result.dirty = true;
             }
         }
+#endif
         if (entry.key == QStringLiteral("cloud_upload/configuration")) {
             bool valid = false;
             const auto canonical =
@@ -384,7 +386,29 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
             !overlay.contains(entry.key) || overlay.value(entry.key) != raw;
         if (mutateDocument &&
             (replaceAll || normalized.changed || migratedDestroyShortcut || migratedLegacyValue)) {
-            insertPath(&result.document, entry.key, normalized.value);
+            QJsonValue documentValue = normalized.value;
+#if !SNOW_SHOT_ENABLE_QUICK_ANNOTATION
+            // Keep a fork user's hidden tray preference on disk when opening
+            // their profile with a build that does not include the module.
+            if (entry.key == QStringLiteral("tray/menu_options") && raw.isArray() &&
+                normalized.value.isArray()) {
+                const QJsonArray original = raw.toArray();
+                const QString quick = QStringLiteral("quick.quick-annotation-toolbar");
+                qsizetype index = -1;
+                for (qsizetype i = 0; i < original.size(); ++i) {
+                    if (original.at(i).toString() == quick) {
+                        index = i;
+                        break;
+                    }
+                }
+                if (index >= 0) {
+                    QJsonArray preserved = normalized.value.toArray();
+                    preserved.insert(std::min(index, preserved.size()), quick);
+                    documentValue = preserved;
+                }
+            }
+#endif
+            insertPath(&result.document, entry.key, documentValue);
             if ((normalized.changed || migratedDestroyShortcut || migratedLegacyValue) &&
                 !replaceAll) {
                 result.dirty = true;

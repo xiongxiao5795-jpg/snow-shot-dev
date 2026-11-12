@@ -36,6 +36,8 @@ jobs:
       - name: Check release cache safety
         run: |
           python3 scripts/test-macos-release-cache.py
+          python3 scripts/test-macos-ccache-prefix.py
+          python3 scripts/test-macos-cargo-cache.py
           python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
           mkdir -p "$RUNNER_TEMP/mock-cargo-cache"
           touch "$RUNNER_TEMP/mock-cargo-cache/cached-artifact"

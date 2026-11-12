@@ -23,7 +23,7 @@ namespace {
 constexpr int MAX_SHORTCUTS_PER_ACTION = 2;
 constexpr int FIRST_REGISTRATION_ID = 0x2200;
 constexpr int LAST_REGISTRATION_ID = 0xBFFF;
-constexpr std::size_t ACTION_COUNT = 37;
+constexpr std::size_t ACTION_COUNT = SNOW_SHOT_ENABLE_QUICK_ANNOTATION ? 37 : 31;
 
 constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::Screenshot,
@@ -57,12 +57,14 @@ constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::HideShowAllWindows,
     GlobalShortcutAction::ToggleGlobalShortcuts,
     GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow,
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     GlobalShortcutAction::QuickAnnotation,
     GlobalShortcutAction::QuickAnnotationBrush,
     GlobalShortcutAction::QuickAnnotationArrow,
     GlobalShortcutAction::QuickAnnotationRectangle,
     GlobalShortcutAction::QuickAnnotationEllipse,
     GlobalShortcutAction::QuickAnnotationToolbar,
+#endif
 };
 
 std::size_t actionIndex(GlobalShortcutAction action) {
@@ -142,6 +144,7 @@ GlobalShortcutStatus aggregateStatus(const QVector<GlobalShortcutBindingResult>&
 shortcuts::ShortcutBindingList persistedShortcuts(const storage::ShortcutSettings& settings,
                                                   GlobalShortcutAction action) {
     switch (action) {
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     case GlobalShortcutAction::QuickAnnotation:
         return settings.quickAnnotationShortcut(
             QStringLiteral("global_shortcuts/quick_annotation"));
@@ -160,6 +163,15 @@ shortcuts::ShortcutBindingList persistedShortcuts(const storage::ShortcutSetting
     case GlobalShortcutAction::QuickAnnotationToolbar:
         return settings.quickAnnotationShortcut(
             QStringLiteral("global_shortcuts/quick_annotation_toolbar"));
+#else
+    case GlobalShortcutAction::QuickAnnotation:
+    case GlobalShortcutAction::QuickAnnotationBrush:
+    case GlobalShortcutAction::QuickAnnotationArrow:
+    case GlobalShortcutAction::QuickAnnotationRectangle:
+    case GlobalShortcutAction::QuickAnnotationEllipse:
+    case GlobalShortcutAction::QuickAnnotationToolbar:
+        return {};
+#endif
     case GlobalShortcutAction::Screenshot:
         return settings.screenshot();
     case GlobalShortcutAction::ScreenshotDelay:
@@ -237,6 +249,7 @@ shortcuts::ShortcutBindingList persistedShortcuts(const storage::ShortcutSetting
 bool persistShortcuts(const storage::ShortcutSettings& settings, GlobalShortcutAction action,
                       const shortcuts::ShortcutBindingList& bindings) {
     switch (action) {
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     case GlobalShortcutAction::QuickAnnotation:
         return settings.setQuickAnnotationShortcut(
             QStringLiteral("global_shortcuts/quick_annotation"), bindings);
@@ -255,6 +268,15 @@ bool persistShortcuts(const storage::ShortcutSettings& settings, GlobalShortcutA
     case GlobalShortcutAction::QuickAnnotationToolbar:
         return settings.setQuickAnnotationShortcut(
             QStringLiteral("global_shortcuts/quick_annotation_toolbar"), bindings);
+#else
+    case GlobalShortcutAction::QuickAnnotation:
+    case GlobalShortcutAction::QuickAnnotationBrush:
+    case GlobalShortcutAction::QuickAnnotationArrow:
+    case GlobalShortcutAction::QuickAnnotationRectangle:
+    case GlobalShortcutAction::QuickAnnotationEllipse:
+    case GlobalShortcutAction::QuickAnnotationToolbar:
+        return false;
+#endif
     case GlobalShortcutAction::Screenshot:
         return settings.setScreenshot(bindings);
     case GlobalShortcutAction::ScreenshotDelay:
@@ -427,6 +449,8 @@ class GlobalShortcutManager::Impl {
     }
 
     bool setShortcuts(GlobalShortcutAction action, const shortcuts::ShortcutBindingList& bindings) {
+        if (std::find(ALL_ACTIONS.cbegin(), ALL_ACTIONS.cend(), action) == ALL_ACTIONS.cend())
+            return false;
         if (!m_initialized) {
             initialize();
         }
@@ -477,6 +501,11 @@ class GlobalShortcutManager::Impl {
     }
 
     GlobalShortcutRegistrationState state(GlobalShortcutAction action) const {
+        if (std::find(ALL_ACTIONS.cbegin(), ALL_ACTIONS.cend(), action) == ALL_ACTIONS.cend()) {
+            GlobalShortcutRegistrationState unavailable;
+            unavailable.action = action;
+            return unavailable;
+        }
         return m_states[actionIndex(action)];
     }
 

@@ -55,7 +55,10 @@ SnowCanvasStyleDefaults annotationStyleDefaults(const QuickAnnotationOptions& op
         style->strokeWidth = options.width;
     }
     defaults.rectangle.fillStyle = SnowCanvasFillStyle::Border;
-    defaults.arrow.arrowType = SnowCanvasArrowType::Curve;
+    defaults.arrow.arrowType = SnowCanvasArrowType::Straight;
+    defaults.arrow.arrowRatio = 0.5;
+    defaults.arrow.startArrowhead = SnowCanvasArrowhead::None;
+    defaults.arrow.endArrowhead = SnowCanvasArrowhead::IndentedTriangle;
     defaults.rectangle.cornerRadii = tool == QuickAnnotationTool::RoundedRectangle
                                          ? SnowCanvasCornerRadii{8, 8, 8, 8}
                                          : SnowCanvasCornerRadii{};
@@ -203,7 +206,10 @@ class GestureCanvas final : public SnowCanvasWidget {
 
   protected:
     void mousePressEvent(QMouseEvent* event) override {
-        if (event->button() != Qt::LeftButton) {
+        m_controlClick = quickAnnotationControlClickIsLeft(
+            ignoreModifiers && ignoreModifiers(), event->button() == Qt::RightButton,
+            event->modifiers().testFlag(Qt::MetaModifier), globalCanvasPhysicalLeftButtonDown());
+        if (event->button() != Qt::LeftButton && !m_controlClick) {
             event->accept();
             return;
         }
@@ -215,11 +221,12 @@ class GestureCanvas final : public SnowCanvasWidget {
         dispatchMouse(event, [this](QMouseEvent* e) { SnowCanvasWidget::mouseMoveEvent(e); });
     }
     void mouseReleaseEvent(QMouseEvent* event) override {
-        if (event->button() != Qt::LeftButton) {
+        if (event->button() != Qt::LeftButton && !m_controlClick) {
             event->accept();
             return;
         }
         dispatchMouse(event, [this](QMouseEvent* e) { SnowCanvasWidget::mouseReleaseEvent(e); });
+        m_controlClick = false;
         if (released)
             released();
     }
@@ -234,15 +241,26 @@ class GestureCanvas final : public SnowCanvasWidget {
 
   private:
     void dispatchMouse(QMouseEvent* event, const std::function<void(QMouseEvent*)>& handler) {
-        if (!ignoreModifiers || !ignoreModifiers()) {
+        if (!m_controlClick && (!ignoreModifiers || !ignoreModifiers())) {
             handler(event);
             return;
         }
+        auto button = event->button();
+        auto buttons = event->buttons();
+        if (m_controlClick) {
+            if (button == Qt::RightButton)
+                button = Qt::LeftButton;
+            if (buttons.testFlag(Qt::RightButton)) {
+                buttons.setFlag(Qt::RightButton, false);
+                buttons.setFlag(Qt::LeftButton, true);
+            }
+        }
         QMouseEvent unmodified(event->type(), event->position(), event->globalPosition(),
-                               event->button(), event->buttons(), Qt::NoModifier);
+                               button, buttons, Qt::NoModifier);
         handler(&unmodified);
         event->setAccepted(unmodified.isAccepted());
     }
+    bool m_controlClick = false;
 };
 
 class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
@@ -635,6 +653,8 @@ class QuickAnnotationController::Impl {
             styles = quickAnnotationToolStylesFromJson(
                 storage.configuration().value(QStringLiteral("quick_annotation/tool_styles")).toObject(),
                 styles);
+        if (styles.arrow.arrowType == SnowCanvasArrowType::Curve)
+            styles.arrow.arrowType = SnowCanvasArrowType::Straight;
         QObject::connect(qApp, &QGuiApplication::screenRemoved, &q, [this](QScreen* screen) {
             for (const auto& window : windows) {
                 if (window->screen() != screen)

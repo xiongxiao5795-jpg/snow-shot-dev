@@ -169,21 +169,21 @@ jobs:
             --cargo-dir "$SNOW_RUST_CARGO_TARGET_DIR"
           mkdir -p "$SNOW_THINLTO_CACHE_DIR"
           ccache --zero-stats
+          export SNOW_REAL_CARGO="$(command -v cargo)"
           cmake_options=(
             -DSNOW_APPS_BUILD_SNOW_SHOT_MINI=OFF
+            -DSNOW_SHOT_ENABLE_QUICK_ANNOTATION=ON
             -DCMAKE_PROJECT_INCLUDE="$GITHUB_WORKSPACE/cmake/fork/QuickAnnotationCachedPrefix.cmake"
             -DSNOW_RUST_CARGO_TARGET_DIR="$SNOW_RUST_CARGO_TARGET_DIR"
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,-cache_path_lto,$SNOW_THINLTO_CACHE_DIR"
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-            -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
+            "-DCMAKE_CXX_COMPILER_LAUNCHER=python3;$GITHUB_WORKSPACE/scripts/macos-ccache-prefix.py"
+            "-DCMAKE_OBJCXX_COMPILER_LAUNCHER=python3;$GITHUB_WORKSPACE/scripts/macos-ccache-prefix.py"
+            "-DCARGO_EXECUTABLE=$GITHUB_WORKSPACE/scripts/macos-cargo-cache.py"
           )
-          # The OCR build script tracks this generated manifest and its linked
-          # archives. Build the native bridge first, then reuse timestamps only
-          # after comparing every recorded input byte-for-byte.
-          scripts/build.sh snow-shot-macos-arm64-release --skip-bootstrap \
-            --target snow_ocr_diagnostics_bridge --parallel 3 -- "${cmake_options[@]}"
-          python3 scripts/macos-release-cache.py prepare-derived --expected "$GITHUB_SHA" \
-            --cargo-dir "$SNOW_RUST_CARGO_TARGET_DIR"
+          # Ninja builds the OCR bridge before invoking Cargo. The fork Cargo
+          # launcher restores verified input timestamps at that exact boundary,
+          # after Ninja's dependency scan, so the bridge is not relinked again.
           scripts/build.sh snow-shot-macos-arm64-release --skip-bootstrap \
             --target snow_shot --parallel 3 -- "${cmake_options[@]}"
           python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
@@ -235,6 +235,7 @@ jobs:
       - name: Package the verified build
         run: |
           python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
+          grep -Fx 'SNOW_SHOT_ENABLE_QUICK_ANNOTATION:BOOL=ON' build/snow-shot-macos-arm64-release/CMakeCache.txt
           scripts/package-snow-shot.sh snow-shot-macos-arm64-release --skip-build --full-only
           python3 scripts/macos-release-cache.py verify --expected "$GITHUB_SHA"
       - name: Check packages and signatures

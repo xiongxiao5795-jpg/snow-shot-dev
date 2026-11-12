@@ -1,0 +1,89 @@
+name: Quick annotation disabled Windows verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/quick-annotation-package]
+    paths:
+      - 'snow_shot/**'
+      - 'snow_draw_engine_qt/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'vcpkg*.json'
+      - 'scripts/bootstrap.ps1'
+      - 'scripts/snow-build-environment.ps1'
+      - '.github/workflows/quick-annotation-windows.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quick-annotation-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-disabled:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 360
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.tools\vcpkg-binary-cache
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.12.0
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Restore vcpkg binary cache
+        id: vcpkg
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: quick-annotation-windows-vcpkg-v1-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**', 'scripts/bootstrap.ps1') }}
+      - name: Provision Windows dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          $env:Qt6_DIR = Join-Path $env:QT_ROOT_DIR 'lib/cmake/Qt6'
+          "Qt6_DIR=$env:Qt6_DIR" >> $env:GITHUB_ENV
+          ./scripts/bootstrap.ps1 -Preset windows-msvc-debug -VcpkgVariants Dynamic
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save vcpkg binary cache
+        if: steps.vcpkg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ steps.vcpkg.outputs.cache-primary-key }}
+      - name: Configure with quick annotation disabled
+        shell: pwsh
+        run: |
+          . ./scripts/snow-build-environment.ps1
+          $null = Set-SnowBuildEnvironment -Preset windows-msvc-debug
+          cmake --preset windows-msvc-debug -DSNOW_SHOT_ENABLE_QUICK_ANNOTATION=OFF -DSNOW_APPS_BUILD_SNOW_SHOT_MINI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Quiet -Path build/windows-msvc-debug/CMakeCache.txt -Pattern '^SNOW_SHOT_ENABLE_QUICK_ANNOTATION:BOOL=OFF$')) { throw 'Quick annotation is not disabled.' }
+      - name: Build Full app and focused tests
+        shell: pwsh
+        run: |
+          . ./scripts/snow-build-environment.ps1
+          $null = Set-SnowBuildEnvironment -Preset windows-msvc-debug
+          cmake --build --preset build-windows-msvc-debug --parallel 3 --target snow_shot snow-shot-settings-catalog-tests snow-shot-configuration-schema-tests snow-shot-global-shortcut-manager-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run focused disabled-feature tests
+        shell: pwsh
+        run: |
+          . ./scripts/snow-build-environment.ps1
+          $null = Set-SnowBuildEnvironment -Preset windows-msvc-debug
+          ctest --test-dir build/windows-msvc-debug -C Debug --output-on-failure -R '^snow-shot-(settings-catalog|configuration-schema|global-shortcut-manager)-tests$'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

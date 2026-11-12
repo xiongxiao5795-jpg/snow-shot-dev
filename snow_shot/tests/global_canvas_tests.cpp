@@ -3,13 +3,17 @@
 #include "canvas_text_editing_preferences_test_support.h"
 #include "../../test-support/canvas_quick_selection_test_support.h"
 #include "snow_shot/presentation/globalcanvascontroller.h"
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 #include "snow_shot/presentation/quickannotationcontroller.h"
+#endif
 #include "snow_shot/presentation/crosshaircursor.h"
 #include "snow_shot/presentation/screenshotcanvastoolstyles.h"
 #include "snow_shot/presentation/screenshotdefaultstyles.h"
 #include "eraser_toolbar_test_support.h"
 #include "../src/presentation/globalcanvas/globalcanvasplatform.h"
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 #include "../src/presentation/quickannotation/quickannotationoptions.h"
+#endif
 #include "snow_shot/presentation/screenshotfloatingtoolpalettewindow.h"
 #include "snow_shot/presentation/screenshottoolpalette.h"
 #include <QAbstractButton>
@@ -1477,6 +1481,7 @@ int main(int argc, char** argv) {
                              directory.filePath(QStringLiteral("data")), 60000})
                 .success,
             "initialize storage");
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     if (app.arguments().contains(QStringLiteral("--quick-annotation-only"))) {
         const auto invalid = presentation::QuickAnnotationOptions::fromJson(
             {{QStringLiteral("color"), QStringLiteral("invalid")},
@@ -1498,6 +1503,12 @@ int main(int argc, char** argv) {
             window->findChild<SnowCanvasWidget*>(QStringLiteral("quickAnnotationCanvas"));
         require(canvas != nullptr && canvas->canvasTool() == SnowCanvasTool::Arrow,
                 "select arrow without opening a toolbar");
+        const auto arrowDefaults = canvas->canvasStyleToolbarState().shapeStyle;
+        require(arrowDefaults.arrowType == SnowCanvasArrowType::Straight &&
+                    arrowDefaults.arrowRatio == 0.5 &&
+                    arrowDefaults.startArrowhead == SnowCanvasArrowhead::None &&
+                    arrowDefaults.endArrowhead == SnowCanvasArrowhead::IndentedTriangle,
+                "quick annotation defaults to a straight indented end arrow at half scale");
         require(!window->testAttribute(Qt::WA_TransparentForMouseEvents),
                 "armed canvas receives the next gesture");
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
@@ -1758,8 +1769,9 @@ int main(int argc, char** argv) {
         floating->palette()->arrowRequested();
         auto* arrowSelector = toolbar->findChild<QWidget*>(QStringLiteral("screenshotArrowTypeButtonGroup"));
         auto* arrowGroup = arrowSelector ? arrowSelector->findChild<adqt::widgets::AdRadioButtonGroup*>() : nullptr;
-        require(arrowGroup, "arrow selector available");
-        require(arrowGroup->button(2), "elbow arrow option available");
+        require(arrowGroup && arrowGroup->button(0) && !arrowGroup->button(1) &&
+                    arrowGroup->button(2),
+                "quick annotation offers straight and elbow arrows but not editable curves");
         arrowGroup->button(2)->click();
         mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
@@ -1767,6 +1779,12 @@ int main(int argc, char** argv) {
         require(canvas->canvasStyleToolbarState().shapeStyle.arrowType == SnowCanvasArrowType::Elbow,
                 "arrow type survives a completed gesture");
         auto styleFixture = presentation::screenshotCanvasStyleDefaults();
+        styleFixture.arrow.arrowRatio = 0.5;
+        const auto partialArrow = presentation::quickAnnotationToolStylesFromJson(
+            {{QStringLiteral("arrow"), QJsonObject{{QStringLiteral("stroke_width"), 4}}}},
+            styleFixture);
+        require(partialArrow.arrow.arrowRatio == 0.5,
+                "an older partial arrow style keeps the quick annotation ratio default");
         styleFixture.freeDraw.brushMode = SnowCanvasBrushMode::PressureSensitive;
         styleFixture.freeDraw.stroke = QColor(QStringLiteral("#12ab34"));
         const auto decodedFixture = presentation::quickAnnotationToolStylesFromJson(
@@ -1852,6 +1870,7 @@ int main(int argc, char** argv) {
         storage.shutdown();
         return 0;
     }
+#endif
 #ifdef Q_OS_MACOS
     if (app.arguments().contains(QStringLiteral("--safe-area-only"))) {
         canvasSafeAreaChangesPreserveDrawing(app);
@@ -1860,6 +1879,7 @@ int main(int argc, char** argv) {
     }
     if (app.arguments().contains(QStringLiteral("--native-only"))) {
         nativeCanvasLifecycle();
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         {
             presentation::QuickAnnotationController controller;
             controller.showToolbar();
@@ -1888,6 +1908,7 @@ int main(int argc, char** argv) {
                          platform::detail::kOverlayLayer}) > annotation.level,
                     "screenshot overlay is above the annotation surface");
         }
+#endif
         storage.shutdown();
         return 0;
     }

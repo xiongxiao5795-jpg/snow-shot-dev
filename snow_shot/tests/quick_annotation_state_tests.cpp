@@ -17,6 +17,12 @@ static void require(bool condition, const char* message) {
 
 int main() {
     using snow_shot::presentation::quickAnnotationFunctionKeyState;
+    using snow_shot::presentation::quickAnnotationControlClickIsLeft;
+    require(quickAnnotationControlClickIsLeft(true, true, true, true) &&
+                !quickAnnotationControlClickIsLeft(false, true, true, true) &&
+                !quickAnnotationControlClickIsLeft(true, true, true, false) &&
+                !quickAnnotationControlClickIsLeft(true, true, false, true),
+            "only a held control-left click is normalized; real right clicks remain untouched");
     require(!quickAnnotationFunctionKeyState(false, 126, true) &&
                 quickAnnotationFunctionKeyState(false, 63, true) &&
                 quickAnnotationFunctionKeyState(true, 126, false) &&
@@ -24,8 +30,12 @@ int main() {
             "Fn tracking distinguishes the physical Fn key from navigation keys");
     QuickAnnotationHoldState hold;
     using HoldChange = QuickAnnotationHoldState::Change;
+    require(!hold.otherKey() && hold.modifiers(true) == HoldChange::Schedule && hold.activate() &&
+                hold.modifiers(false) == HoldChange::End,
+            "ordinary typing does not cancel the next hold gesture");
     require(hold.modifiers(true) == HoldChange::Schedule && !hold.otherKey() && !hold.activate(),
             "another key cancels pending modifier-only activation");
+    require(!hold.otherKey(), "additional typing keeps the held chord cancelled");
     require(hold.modifiers(true) == HoldChange::None && hold.modifiers(false) == HoldChange::None,
             "cancelled modifier chord cannot reactivate until released");
     require(hold.modifiers(true) == HoldChange::Schedule && hold.activate() &&

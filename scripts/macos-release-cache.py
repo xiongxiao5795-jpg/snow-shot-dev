@@ -39,6 +39,38 @@ def digest(path):
     return result.hexdigest()
 
 
+def archive_digest_without_timestamps(path):
+    """Hash every archive byte except the volatile ar member timestamp fields.
+
+    Reject unsupported or malformed archives instead of guessing equivalence.
+    In particular, thin archives reference external files and are not accepted.
+    """
+    result = hashlib.sha256()
+    try:
+        with path.open('rb') as source:
+            magic = source.read(8)
+            if magic != b'!<arch>\n':
+                return None
+            result.update(magic)
+            while header := source.read(60):
+                if (len(header) != 60 or header[58:60] != b'`\n' or
+                        not header[16:28].strip().isdigit() or
+                        not header[48:58].strip().isdigit()):
+                    return None
+                size = int(header[48:58])
+                result.update(header[:16] + b' ' * 12 + header[28:])
+                remaining = size + size % 2
+                while remaining:
+                    block = source.read(min(1024 * 1024, remaining))
+                    if not block:
+                        return None
+                    result.update(block)
+                    remaining -= len(block)
+    except OSError:
+        return None
+    return result.hexdigest()
+
+
 def tracked_files(root, paths):
     for relative in paths:
         path = root / relative
@@ -115,8 +147,14 @@ def derived_inputs(root):
         resolved = path.resolve()
         if not resolved.is_relative_to(root) or not resolved.is_file():
             return {}
-        entries[str(resolved.relative_to(root))] = {'sha256': digest(resolved),
-                                               'mtime_ns': resolved.stat().st_mtime_ns}
+        relative = str(resolved.relative_to(root))
+        entry = {'sha256': digest(resolved), 'mtime_ns': resolved.stat().st_mtime_ns}
+        if relative == ('build/snow-shot-macos-arm64-release/snow_shot/'
+                        'libsnow_ocr_diagnostics_bridge.a'):
+            normalized = archive_digest_without_timestamps(resolved)
+            if normalized:
+                entry['ar_without_timestamps_sha256'] = normalized
+        entries[relative] = entry
     # Cargo scans directories named by rerun-if-changed recursively. Save a
     # fingerprint of every file and directory, including otherwise untracked files.
     tree = {}
@@ -161,7 +199,11 @@ def restore_derived_inputs(root, cargo_dir):
     for relative, entry in current['files'].items():
         previous = old.get('files', {}).get(relative, {})
         stamp = previous.get('mtime_ns')
-        if (entry.get('sha256') == previous.get('sha256') and isinstance(stamp, int)
+        same_bytes = entry.get('sha256') == previous.get('sha256')
+        archive_digest = entry.get('ar_without_timestamps_sha256')
+        same_archive = (archive_digest is not None and
+                        archive_digest == previous.get('ar_without_timestamps_sha256'))
+        if ((same_bytes or same_archive) and isinstance(stamp, int)
                 and 0 < stamp <= time.time_ns()):
             os.utime(root / relative, ns=(stamp, stamp))
             count += 1

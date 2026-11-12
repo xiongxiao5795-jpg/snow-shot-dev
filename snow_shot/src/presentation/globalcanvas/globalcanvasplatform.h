@@ -10,4 +10,5 @@ namespace snow_shot::presentation {
 NSWindowCollectionBehavior globalCanvasCollectionBehavior(NSWindowCollectionBehavior current);
 #endif
 bool setGlobalCanvasInputTransparent(QWidget* window, bool transparent);
+bool globalCanvasPhysicalLeftButtonDown();
 } // namespace snow_shot::presentation

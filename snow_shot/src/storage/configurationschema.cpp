@@ -691,7 +691,9 @@ constexpr SchemaString kSchemaStrings118[] = {u"quick.screenshot",
                                               u"quick.pin-clipboard-content",
                                               u"quick.restore-last-closed-windows",
                                               u"quick.screen-record",
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
                                               u"quick.quick-annotation-toolbar",
+#endif
                                               u"quick.toggle-global-hotkeys",
                                               u"tray.window-grouping",
                                               u"tray.show-main-window",
@@ -718,7 +720,9 @@ constexpr SchemaString kSchemaStrings119[] = {u"quick.screenshot",
                                               u"quick.open-screen-recording-folder",
                                               u"quick.open-capture-history",
                                               u"quick.global-canvas",
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
                                               u"quick.quick-annotation-toolbar",
+#endif
                                               u"quick.stitch-selected-images",
                                               u"quick.split-selected-images",
                                               u"quick.edit-selected-images",
@@ -754,7 +758,9 @@ constexpr SchemaString kSchemaStrings120[] = {u"quick.screenshot",
                                               u"quick.open-screen-recording-folder",
                                               u"quick.open-capture-history",
                                               u"quick.global-canvas",
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
                                               u"quick.quick-annotation-toolbar",
+#endif
                                               u"quick.stitch-selected-images",
                                               u"quick.split-selected-images",
                                               u"quick.edit-selected-images",
@@ -1046,6 +1052,7 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
      ConfigurationValueKind::StringList, nullptr, nullptr, 2},
     {u"global_shortcuts/global_canvas", emptyArrayDefault(), ConfigurationValueKind::StringList,
      nullptr, nullptr, 2},
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     {u"global_shortcuts/quick_annotation", emptyArrayDefault(), ConfigurationValueKind::StringList,
      nullptr, nullptr, 2},
     {u"global_shortcuts/quick_annotation_brush", emptyArrayDefault(),
@@ -1077,6 +1084,7 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
      ConfigurationValueKind::Boolean},
     {u"quick_annotation/shortcut_defaults_migrated", booleanDefault(true),
      ConfigurationValueKind::Boolean},
+#endif
     {u"global_shortcuts/stitch_selected_images", emptyArrayDefault(),
      ConfigurationValueKind::StringList, nullptr, nullptr, 2},
     {u"global_shortcuts/split_selected_images", emptyArrayDefault(),
@@ -1916,8 +1924,10 @@ QVector<ConfigurationSchemaEntry> buildEntries() {
                    macGlobalShortcutDefault(QStringLiteral("Meta+Shift+3"), 20));
     replaceDefault(QStringLiteral("global_shortcuts/pin_clipboard_content"),
                    macGlobalShortcutDefault(QStringLiteral("Meta+3"), 20));
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     replaceDefault(QStringLiteral("global_shortcuts/quick_annotation"),
                    macGlobalShortcutDefault(QStringLiteral("Meta+4"), 21));
+#endif
 #endif
     result.removeIf([](const ConfigurationSchemaEntry& entry) {
         return !app::editionConfigurationKeyAvailable(entry.key);

@@ -6,13 +6,13 @@ The feature implementation and its options live in
 `snow_shot/include/snow_shot/presentation/quickannotation*.h`. The feature uses Snow Shot's canvas
 and the existing global shortcut, settings, application lifecycle, and macOS window APIs. Those
 integration points are deliberately kept in the existing host files, so a merge from upstream may
-still require resolving conflicts there. It is not a separately loadable plugin.
+still require resolving conflicts there. It is not a separately loadable plugin. `SNOW_SHOT_ENABLE_QUICK_ANNOTATION` defaults to OFF; the fork Full macOS DMG workflow explicitly enables it and verifies the setting before packaging. Quick annotation test builds also enable it explicitly. Other platforms and the Mini edition cannot enable this option.
 The main integration points are `applicationcontroller.cpp`, `globalshortcuttypes.h`,
 `globalshortcutmanager.cpp`, the settings catalog/backend and configuration schema, the macOS
 window policy, the application CMake source list, and the translation catalogs.
 
 The Settings > Quick annotation page uses the same settings-row controls as Screenshot settings.
-It configures the default tool (shape, arrow, or brush), five independent color presets, width, hold time, and fade duration. Shape variants, corner radii, arrow types and brush appearance are stored independently from screenshot styles and survive restarting the application. The separate quick annotation toolbar editor maintains its own layout and includes a persistent-mark toggle. The default tool is a rounded rectangle. On macOS, Control+4
+It configures the default tool (shape, arrow, or brush), five independent color presets, width, hold time, and fade duration. Shape variants, corner radii, arrow types and brush appearance are stored independently from screenshot styles and survive restarting the application. The separate quick annotation toolbar editor maintains its own layout and includes a persistent-mark toggle. The default tool is a rounded rectangle. Arrows default to a straight shaft, a 0.5 endpoint ratio, and an indented triangle at the end. Curved arrows are omitted from the quick annotation palette because their control points require a later edit; the screenshot palette is unchanged. On macOS, Control+4
 starts quick annotation; the other quick annotation shortcuts are unset by default. Old fork
 shortcuts are migrated only when they still match the earlier defaults; customized bindings stay.
 The toolbar opens at the lower right of the primary screen on first activation; a dragged position is retained for subsequent activations. It hides after one gesture unless persistence or the hold shortcut is active. Starting a screenshot hides the toolbar and releases annotation input while retaining the existing marks. With the normal Control+4 action,
@@ -59,13 +59,13 @@ targets can also be built and run independently for focused checks.
 Release caches identify the compiler and dependencies independently of application CMake files,
 so ordinary feature edits can reuse previous C++ and Rust work. Each Cargo snapshot is keyed by
 its tracked Rust inputs; unchanged inputs reuse the same snapshot, and the workflow retains the
-newest and one previous successful v2 Rust snapshot for this branch. It checks the new snapshot
+newest and one previous successful v3 Rust snapshot for this branch. It checks the new snapshot
 exists before deleting older ones. C++ compiler results are keyed separately and remain subject to
 ccache's own correctness checks, with the newest and one prior C++ snapshot retained. The Apple
 linker also keeps its ThinLTO incremental cache, without
 changing the Release optimization mode. Only successful nonempty ThinLTO snapshots up to 3 GiB on
 disk are saved; as with Rust, the newest and one prior snapshot are retained per branch. A matching
-older cache can seed the first v2 C++/Rust run. Cache deletion uses this repository's Actions
+older compatible caches can seed a new C++ or Rust cache version. Cache deletion uses this repository's Actions
 permission and is non-fatal if unavailable. The first compatible
 Release run must populate its cache. Rust caches over 9.5 GiB on disk are skipped; GitHub's total
 cache quota and eviction can also affect later reuse. Automated offscreen

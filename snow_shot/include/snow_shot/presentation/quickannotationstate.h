@@ -7,6 +7,11 @@ namespace snow_shot::presentation {
 
 enum class QuickAnnotationTool { Brush, Arrow, Rectangle, RoundedRectangle, Ellipse };
 
+[[nodiscard]] inline bool quickAnnotationControlClickIsLeft(bool holding, bool rightButton,
+                                                            bool controlDown, bool physicalLeft) {
+    return holding && rightButton && controlDown && physicalLeft;
+}
+
 // macOS sets the function modifier on navigation keys too; only key code 63 is Fn.
 [[nodiscard]] inline bool quickAnnotationFunctionKeyState(bool previous, unsigned keyCode,
                                                           bool functionFlag) {
@@ -40,9 +45,10 @@ class QuickAnnotationHoldState final {
     }
     bool otherKey() {
         const bool wasActive = m_active;
+        const bool hadChord = m_active || m_pending;
         m_pending = false;
         m_active = false;
-        m_cancelled = true;
+        m_cancelled = m_cancelled || hadChord;
         return wasActive;
     }
 

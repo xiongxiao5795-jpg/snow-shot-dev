@@ -12,8 +12,10 @@
 #include "snow_shot/presentation/apppermissionservice.h"
 #ifdef Q_OS_MACOS
 #include "snow_shot/platform/macos/applicationactivation.h"
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 #include "../presentation/quickannotation/quickannotationholdmonitor.h"
 #include "../presentation/quickannotation/quickannotationoptions.h"
+#endif
 #include "snow_shot/presentation/permissionguidecontroller.h"
 #endif
 #include "snow_shot/platform/windows/administratorlaunch.h"
@@ -34,7 +36,9 @@
 
 #include "snow_shot/presentation/globalshortcutmanager.h"
 #include "snow_shot/presentation/globalcanvascontroller.h"
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 #include "snow_shot/presentation/quickannotationcontroller.h"
+#endif
 #include "snow_shot/presentation/globalmousemanager.h"
 #include "snow_shot/presentation/mainwindow.h"
 #include "snow_shot/presentation/pinnedwindowgroupmanager.h"
@@ -271,8 +275,10 @@ class ApplicationController::Impl {
         QObject::connect(&globalShortcutManager,
                          &presentation::GlobalShortcutManager::globalShortcutsEnabledChanged, &q,
                          [this](bool enabled) {
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
                              if (!enabled && quickAnnotationController)
                                  quickAnnotationController->exitMode();
+#endif
                              systemTray.setQuickActionChecked(
                                  presentation::GlobalShortcutAction::ToggleGlobalShortcuts,
                                  !enabled);
@@ -1190,7 +1196,7 @@ class ApplicationController::Impl {
 #endif
         systemTray.show();
         globalShortcutManager.initialize();
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) && SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         quickAnnotationHoldMonitor = std::make_unique<presentation::QuickAnnotationHoldMonitor>(
             [this](bool pressed, const QString& tool) {
                 if (!pressed) {
@@ -1299,6 +1305,7 @@ class ApplicationController::Impl {
             QObject::connect(screenshotController.get(),
                              &ScreenshotController::captureActivityChanged, &floatingToolbar,
                              &presentation::FloatingToolbarController::setCaptureActive);
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
             QObject::connect(screenshotController.get(),
                              &ScreenshotController::captureActivityChanged, &q,
                              [this](const QString& source, bool active) {
@@ -1306,6 +1313,7 @@ class ApplicationController::Impl {
                                      quickAnnotationController)
                                      quickAnnotationController->suspendForScreenshot();
                              });
+#endif
 #ifdef Q_OS_MACOS
             screenshotController->setRecordingPermissionCheck([this](bool microphone, bool input,
                                                                      bool notify) {
@@ -1626,6 +1634,7 @@ class ApplicationController::Impl {
             }));
     }
 
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     presentation::QuickAnnotationController& ensureQuickAnnotationController() {
         if (!quickAnnotationController) {
             quickAnnotationController = std::make_unique<presentation::QuickAnnotationController>();
@@ -1636,6 +1645,7 @@ class ApplicationController::Impl {
         }
         return *quickAnnotationController;
     }
+#endif
 
     void dispatchQuickAction(presentation::GlobalShortcutAction action,
                              QuickActionOrigin origin = QuickActionOrigin::Other) {
@@ -1732,6 +1742,7 @@ class ApplicationController::Impl {
         case presentation::GlobalShortcutAction::OpenCaptureHistory:
             ensureMainWindow().showScreenshotHistory();
             break;
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         case presentation::GlobalShortcutAction::QuickAnnotation:
         case presentation::GlobalShortcutAction::QuickAnnotationBrush:
         case presentation::GlobalShortcutAction::QuickAnnotationArrow:
@@ -1755,6 +1766,15 @@ class ApplicationController::Impl {
                 quickAnnotationController->arm(Tool::Ellipse);
             break;
         }
+#else
+        case presentation::GlobalShortcutAction::QuickAnnotation:
+        case presentation::GlobalShortcutAction::QuickAnnotationBrush:
+        case presentation::GlobalShortcutAction::QuickAnnotationArrow:
+        case presentation::GlobalShortcutAction::QuickAnnotationRectangle:
+        case presentation::GlobalShortcutAction::QuickAnnotationEllipse:
+        case presentation::GlobalShortcutAction::QuickAnnotationToolbar:
+            break;
+#endif
         case presentation::GlobalShortcutAction::GlobalCanvas:
             if (!globalCanvasController) {
                 globalCanvasController = std::make_unique<presentation::GlobalCanvasController>();
@@ -1943,12 +1963,14 @@ class ApplicationController::Impl {
                              &presentation::DirectCaptureController::captureActivityChanged,
                              &floatingToolbar,
                              &presentation::FloatingToolbarController::setCaptureActive);
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
             QObject::connect(directCaptureController.get(),
                              &presentation::DirectCaptureController::captureActivityChanged, &q,
                              [this](const QString&, bool active) {
                                  if (active && quickAnnotationController)
                                      quickAnnotationController->suspendForScreenshot();
                              });
+#endif
             QObject::connect(directCaptureController.get(),
                              &presentation::DirectCaptureController::operationFailed, &q,
                              [this](const QString& message, bool warning) {
@@ -2048,10 +2070,12 @@ class ApplicationController::Impl {
     std::unique_ptr<ScreenshotOcrRecognitionService> ocrRecognition;
     std::unique_ptr<ScreenshotController> screenshotController;
     std::unique_ptr<presentation::GlobalCanvasController> globalCanvasController;
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     std::unique_ptr<presentation::QuickAnnotationController> quickAnnotationController;
 #ifdef Q_OS_MACOS
     std::unique_ptr<presentation::QuickAnnotationHoldMonitor> quickAnnotationHoldMonitor;
     bool quickAnnotationHoldTriggered = false;
+#endif
 #endif
     // Graph cancellation borrows direct capture even when construction unwinds before Impl's
     // destructor can run its explicit shutdown sequence. Destroy both MCP owners first.

@@ -314,6 +314,7 @@ SettingsItemDefinition globalCanvasItem() {
         []() { return custom_outlined_icons::FullScreenCanvas(); });
 }
 
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 SettingsItemDefinition quickAnnotationItem() {
     return quickActionItem(
         QStringLiteral("quick.quick-annotation"),
@@ -391,6 +392,7 @@ SettingsItemDefinition quickAnnotationOptionsItem() {
             QStringLiteral("quick_annotation/options"),
             SettingsCustomDefinition{SettingsCustomRenderer::QuickAnnotationOptions}};
 }
+#endif
 
 SettingsItemDefinition stitchSelectedImagesItem() {
     return quickActionItem(
@@ -790,6 +792,7 @@ SettingsItemDefinition showEditSelectionToolbarItem() {
             SettingsSwitchDefinition{SettingsSwitchBinding::ShowEditSelectionToolbar}};
 }
 
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 SettingsItemDefinition quickAnnotationToolbarEditorItem() {
     return {
         QStringLiteral("quick-annotation.toolbar-editor"),
@@ -801,6 +804,7 @@ SettingsItemDefinition quickAnnotationToolbarEditorItem() {
         QStringLiteral("quick_annotation/toolbar_layout"),
         SettingsCustomDefinition{SettingsCustomRenderer::QuickAnnotationToolbarEditor}};
 }
+#endif
 
 SettingsItemDefinition drawingToolbarEditorItem() {
     return {
@@ -4067,6 +4071,7 @@ constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionScreenRecordingItems
     {openScreenRecordingFolderItem},
 };
 
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionQuickAnnotationItems[] = {
 #ifdef Q_OS_MACOS
     {quickAnnotationHoldShortcutsItem},
@@ -4078,6 +4083,7 @@ constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionQuickAnnotationItems
     {quickAnnotationEllipseItem},
     {quickAnnotationToolbarItem},
 };
+#endif
 
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionOtherItems[] = {
     {openCaptureHistoryItem},
@@ -4134,6 +4140,7 @@ constexpr CatalogSectionRecord catalogPageGlobalHotkeysSections[] = {
         .layout = SettingsSectionItemLayout::VerticalList,
         .collapsed = false,
     },
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     {
         .id = u"quick-annotation",
         .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation")),
@@ -4145,6 +4152,7 @@ constexpr CatalogSectionRecord catalogPageGlobalHotkeysSections[] = {
         .layout = SettingsSectionItemLayout::VerticalList,
         .collapsed = false,
     },
+#endif
     {
         .id = u"other",
         .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Other")),
@@ -5198,6 +5206,7 @@ constexpr CatalogSectionRecord catalogPageAppPermissionsSections[] = {
 };
 
 #endif
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 constexpr CatalogItemFactory catalogPageQuickAnnotationItems[] = {{quickAnnotationOptionsItem}};
 constexpr CatalogItemFactory catalogPageQuickAnnotationToolbarItems[] = {
     {quickAnnotationToolbarEditorItem}};
@@ -5225,6 +5234,7 @@ constexpr CatalogRelatedLinkRecord catalogPageQuickAnnotationLinks[] = {
     {settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation shortcuts")), u"global-hotkeys",
      u"quick-annotation", u"quick.quick-annotation"},
 };
+#endif
 
 constexpr CatalogPageRecord catalogPages[] = {
     {
@@ -5237,6 +5247,7 @@ constexpr CatalogPageRecord catalogPages[] = {
         .links = {},
         .aliases = {},
     },
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     {
         .id = u"quick-annotation",
         .route = u"/settings/quick-annotation",
@@ -5248,6 +5259,7 @@ constexpr CatalogPageRecord catalogPages[] = {
         .links = catalogPageQuickAnnotationLinks,
         .aliases = {},
     },
+#endif
     {
         .id = u"screenshot-history",
         .route = u"/history",
@@ -5573,8 +5585,10 @@ QVector<SettingsNavigationNode> builtInNavigation() {
          []() { return outlined_icons::Control(); }},
         {QStringLiteral("nav.screenshots"), QStringLiteral("screenshots"),
          []() { return outlined_icons::Function(); }},
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         {QStringLiteral("nav.quick-annotation"), QStringLiteral("quick-annotation"),
          []() { return custom_outlined_icons::FullScreenCanvas(); }},
+#endif
         {QStringLiteral("nav.pinned-windows"), QStringLiteral("pinned-windows"),
          []() { return custom_outlined_icons::PinToScreen(); }},
         {QStringLiteral("nav.screen-recording"), QStringLiteral("screen-recording"),
@@ -5940,6 +5954,7 @@ QVector<SettingsTrayMenuGroupDefinition> SettingsCatalog::trayMenuGroups() const
                      shortcut->trayLabel.isValid() ? shortcut->trayLabel : itemDefinition.title,
                      SettingsTrayMenuOptionKind::QuickAction, shortcut->shortcutAction,
                      shortcut->iconFactory, shortcut->trayCheckable});
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
                 if (itemDefinition.id == QStringLiteral("quick.global-canvas")) {
                     const auto* quick =
                         itemForShortcut(GlobalShortcutAction::QuickAnnotationToolbar);
@@ -5954,6 +5969,7 @@ QVector<SettingsTrayMenuGroupDefinition> SettingsCatalog::trayMenuGroups() const
                                  payload->iconFactory, payload->trayCheckable});
                     }
                 }
+#endif
             }
             if (!group.options.isEmpty()) {
                 groups.push_back(std::move(group));
@@ -6116,10 +6132,12 @@ TrayCommandManifest buildBuiltInTrayCommandManifest() {
                                   "Full-screen canvas (enable/disable click-through)"),
                 GlobalShortcutAction::GlobalCanvas,
                 []() { return custom_outlined_icons::FullScreenCanvas(); }),
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
           quick(QStringLiteral("quick.quick-annotation-toolbar"),
                 QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation"),
                 GlobalShortcutAction::QuickAnnotationToolbar,
                 []() { return custom_outlined_icons::FullScreenCanvas(); }),
+#endif
           quick(QStringLiteral("quick.stitch-selected-images"),
                 QT_TRANSLATE_NOOP("SettingsCatalog", "Stitch selected images"),
                 GlobalShortcutAction::StitchSelectedImages,

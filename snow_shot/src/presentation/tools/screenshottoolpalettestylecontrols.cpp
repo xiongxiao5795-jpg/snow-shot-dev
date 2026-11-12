@@ -2004,9 +2004,14 @@ QWidget* ScreenshotToolPaletteStyleControls::buildArrowFamily(
     arrowTypeConfig.objectName = QStringLiteral("screenshotArrowTypeButtonGroup");
     arrowTypeConfig.options = {
         {0, QStringLiteral("Straight arrow"), arrowTypeIcon(SnowCanvasArrowType::Straight)},
-        {1, QStringLiteral("Curved arrow"), arrowTypeIcon(SnowCanvasArrowType::Curve)},
-        {2, QStringLiteral("Elbow arrow"), arrowTypeIcon(SnowCanvasArrowType::Elbow)},
     };
+    // Curves need a later control-point edit, which a one-gesture annotation
+    // session cannot provide. Keep them available in the screenshot toolbar.
+    if (!m_callbacks.quickAnnotation)
+        arrowTypeConfig.options.push_back(
+            {1, QStringLiteral("Curved arrow"), arrowTypeIcon(SnowCanvasArrowType::Curve)});
+    arrowTypeConfig.options.push_back(
+        {2, QStringLiteral("Elbow arrow"), arrowTypeIcon(SnowCanvasArrowType::Elbow)});
     arrowTypeConfig.initialId = 0;
     QWidget* arrowTypeControlsContainer =
         takeReusableWidget(kRoleArrowType, kSignatureArrowType, layout, controls);

@@ -52,12 +52,14 @@ constexpr std::array ALL_ACTIONS{
     GlobalShortcutAction::OpenCaptureHistory,
     GlobalShortcutAction::OpenPinToScreenManagement,
     GlobalShortcutAction::GlobalCanvas,
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     GlobalShortcutAction::QuickAnnotation,
     GlobalShortcutAction::QuickAnnotationBrush,
     GlobalShortcutAction::QuickAnnotationArrow,
     GlobalShortcutAction::QuickAnnotationRectangle,
     GlobalShortcutAction::QuickAnnotationEllipse,
     GlobalShortcutAction::QuickAnnotationToolbar,
+#endif
     GlobalShortcutAction::StitchSelectedImages,
     GlobalShortcutAction::SplitSelectedImages,
     GlobalShortcutAction::EditSelectedImages,
@@ -281,6 +283,7 @@ void clearAll(GlobalShortcutManager& manager) {
     }
 }
 
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 void quickAnnotationShortcutsRespectGates() {
     auto backend = std::make_unique<FakeBackend>();
     auto* input = backend.get();
@@ -330,6 +333,7 @@ void quickAnnotationShortcutsRespectGates() {
             "restore fullscreen suppression");
     clearAll(manager);
 }
+#endif
 
 void screenshotQuickActionShortcutsRegisterActivateAndPersist() {
     const std::array actions{GlobalShortcutAction::ScreenshotScrolling,
@@ -2065,7 +2069,20 @@ int main(int argc, char** argv) {
         storage.shutdown();
         return 0;
     }
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     quickAnnotationShortcutsRespectGates();
+#else
+    {
+        GlobalShortcutManager manager(std::make_unique<FakeBackend>());
+        manager.initialize();
+        const auto state = manager.state(GlobalShortcutAction::QuickAnnotation);
+        require(state.action == GlobalShortcutAction::QuickAnnotation &&
+                    state.status == GlobalShortcutStatus::Unset &&
+                    !manager.setShortcuts(GlobalShortcutAction::QuickAnnotation,
+                                          {QStringLiteral("Ctrl+Alt+F1")}),
+                "disabled quick annotation cannot alias or register another shortcut");
+    }
+#endif
     screenshotQuickActionShortcutsRegisterActivateAndPersist();
     switchGroupShortcutPersistsAndReportsBinding();
 #ifdef Q_OS_WIN

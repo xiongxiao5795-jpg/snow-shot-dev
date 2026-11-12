@@ -1,5 +1,7 @@
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 #include "../quickannotation/quickannotationsettingswidget.h"
 #include "../quickannotation/quickannotationholdsettingswidget.h"
+#endif
 #include "snow_shot/app/distribution.h"
 #include "snow_shot/app/mcp/mcpstartuperror.h"
 #include "snow_shot/presentation/components/clouduploadsettingswidget.h"
@@ -1560,10 +1562,18 @@ SettingsCustomWidget* createSettingsCustomWidget(
     using snow_shot::presentation::settings::SettingsCustomRenderer;
     switch (renderer) {
     case SettingsCustomRenderer::QuickAnnotationHoldShortcuts:
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         return new snow_shot::presentation::QuickAnnotationHoldSettingsWidget(runtimeSession,
                                                                               parent);
+#else
+        return nullptr;
+#endif
     case SettingsCustomRenderer::QuickAnnotationOptions:
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         return new snow_shot::presentation::QuickAnnotationSettingsWidget(parent);
+#else
+        return nullptr;
+#endif
     case SettingsCustomRenderer::CloudUploadConfigurations:
         return new CloudUploadSettingsWidget(runtimeSession, parent);
     case SettingsCustomRenderer::McpStatus:

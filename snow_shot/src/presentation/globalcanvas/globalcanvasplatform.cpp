@@ -4,8 +4,20 @@
 #ifdef Q_OS_WIN
 #include "../../platform/windows/pinnedwindownative.h"
 #endif
+#if defined(Q_OS_MACOS) && SNOW_SHOT_ENABLE_QUICK_ANNOTATION
+#import <ApplicationServices/ApplicationServices.h>
+#endif
 
 namespace snow_shot::presentation {
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
+bool globalCanvasPhysicalLeftButtonDown() {
+#ifdef Q_OS_MACOS
+    return CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonLeft);
+#else
+    return false;
+#endif
+}
+#endif
 #ifdef Q_OS_MACOS
 NSWindowCollectionBehavior globalCanvasCollectionBehavior(NSWindowCollectionBehavior current) {
     // Qt tool windows can move to the active Space. AppKit rejects combining that

@@ -127,6 +127,37 @@ class ReleaseCacheSafety(unittest.TestCase):
         self.assertEqual(cache.derived_inputs(self.root), {})
         self.assertEqual(cache.restore_derived_inputs(self.root, self.cargo), 0)
 
+    def test_ocr_archive_timestamp_is_ignored_but_member_changes_are_not(self):
+        def archive(payload, timestamp):
+            header = (b'bridge.o/       ' + str(timestamp).encode().ljust(12) +
+                      b'0     ' + b'0     ' + b'100644  ' +
+                      str(len(payload)).encode().ljust(10) + b'`\n')
+            return b'!<arch>\n' + header + payload + (b'\n' if len(payload) % 2 else b'')
+
+        metal = self.root / 'snow-crates/crates/simd-paddle-ocr-rs/src/runtime/gpu/metal'
+        metal.mkdir(parents=True)
+        native = self.root / 'build/snow-shot-macos-arm64-release/snow_shot/libsnow_ocr_diagnostics_bridge.a'
+        native.parent.mkdir(parents=True)
+        native.write_bytes(archive(b'old object', 100))
+        rsp = native.parent / 'generated/snow-ocr-crash-Release.rsp'
+        rsp.parent.mkdir()
+        rsp.write_text(str(native) + '\n')
+        old_time = time.time_ns() - 10_000_000_000
+        os.utime(native, ns=(old_time, old_time))
+        cache.record_rust_inputs(self.root, self.cargo, [str(self.source.relative_to(self.root))], self.head)
+        native.write_bytes(archive(b'old object', 200))
+        cache.restore_derived_inputs(self.root, self.cargo)
+        self.assertEqual(native.stat().st_mtime_ns, old_time)
+        native.write_bytes(archive(b'new object', 200))
+        os.utime(native, ns=(old_time, old_time))
+        with patch.object(cache.time, 'sleep'):
+            cache.restore_derived_inputs(self.root, self.cargo)
+        self.assertGreater(native.stat().st_mtime_ns, old_time)
+        native.write_bytes(b'!<thin>\nunsupported')
+        self.assertIsNone(cache.archive_digest_without_timestamps(native))
+        native.write_bytes(archive(b'old object', 200)[:-1])
+        self.assertIsNone(cache.archive_digest_without_timestamps(native))
+
     def test_rejects_inputs_outside_the_checkout(self):
         link = self.root / 'external-link'
         link.symlink_to('/dev/null')

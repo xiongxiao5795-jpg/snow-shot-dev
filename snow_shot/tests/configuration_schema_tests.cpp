@@ -70,6 +70,7 @@ QJsonArray metadata() {
 void publicMetadataMatchesOriginal(const QJsonArray& actual) {
 #ifdef Q_OS_WIN
     const QSet<QString> addedKeys{
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         QStringLiteral("global_shortcuts/quick_annotation"),
         QStringLiteral("global_shortcuts/quick_annotation_brush"),
         QStringLiteral("global_shortcuts/quick_annotation_arrow"),
@@ -87,6 +88,7 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
         QStringLiteral("quick_annotation/tray_menu_migrated"),
         QStringLiteral("quick_annotation/shortcut_defaults_migrated"),
         QStringLiteral("quick_annotation/rectangle_conflict_migrated"),
+#endif
     };
     QJsonArray originalActual;
     QSet<QString> seenAdded;
@@ -154,6 +156,7 @@ void publicMetadataMatchesOriginal(const QJsonArray& actual) {
 }
 
 void entryReferencesAndCopiesRemainIndependent() {
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     require(ConfigurationSchema::defaultValue(QStringLiteral("quick_annotation/last_tool")) ==
                 QJsonValue(QStringLiteral("rounded_rectangle")),
             "quick annotation defaults to the rounded rectangle");
@@ -186,6 +189,11 @@ void entryReferencesAndCopiesRemainIndependent() {
                     .toArray()
                     .isEmpty(),
                 "individual quick annotation tool shortcuts start unset");
+#endif
+#else
+    require(ConfigurationSchema::entry(QStringLiteral("quick_annotation/options")) == nullptr &&
+                ConfigurationSchema::entry(QStringLiteral("global_shortcuts/quick_annotation")) == nullptr,
+            "disabled quick annotation does not register configuration keys");
 #endif
     const auto& entries = ConfigurationSchema::entries();
     require(!entries.isEmpty(), "the schema must contain entries");
@@ -272,7 +280,7 @@ void nativeDefaultsRemainIntact(const QString& movies, const QString& pictures) 
     }
 #endif
 }
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) && SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 void quickAnnotationRectangleConflictMigration() {
     using namespace snow_shot::shortcuts;
     QTemporaryDir dir;
@@ -352,6 +360,7 @@ void quickAnnotationShortcutMigration() {
             "only previous default shortcuts migrate; custom bindings remain intact");
 }
 #endif
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 void quickAnnotationTrayMigration() {
     QTemporaryDir dir;
     require(dir.isValid(), "create configuration fixture");
@@ -428,6 +437,37 @@ void quickAnnotationCustomDurationsRemain() {
                 actual.value(QStringLiteral("fade_ms")) == 1200,
             "custom duration values survive default migration");
 }
+#else
+void disabledQuickAnnotationPreservesStoredPreferences() {
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("config.json"));
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "write disabled quick annotation fixture");
+    const QJsonObject options{{QStringLiteral("hold_ms"), 1400}};
+    const QJsonArray tray{QStringLiteral("quick.screenshot"),
+                          QStringLiteral("quick.quick-annotation-toolbar"),
+                          QStringLiteral("tray.exit")};
+    file.write(QJsonDocument(QJsonObject{
+        {QStringLiteral("storage"), QJsonObject{{QStringLiteral("schema_version"),
+             snow_shot::storage::ConfigurationStore::currentSchemaVersion()}}},
+        {QStringLiteral("quick_annotation"), QJsonObject{{QStringLiteral("options"), options}}},
+        {QStringLiteral("tray"), QJsonObject{{QStringLiteral("menu_options"), tray}}}}).toJson());
+    file.close();
+    snow_shot::storage::ConfigurationStore config(path, true, true);
+    require(!config.value(QStringLiteral("tray/menu_options")).toArray().contains(
+                QStringLiteral("quick.quick-annotation-toolbar")),
+            "disabled quick annotation is not exposed in the tray");
+    require(config.flushNow().success, "persist the disabled-feature fixture");
+    require(file.open(QIODevice::ReadOnly), "read preserved preferences");
+    const auto document = QJsonDocument::fromJson(file.readAll()).object();
+    require(document.value(QStringLiteral("quick_annotation")).toObject()
+                    .value(QStringLiteral("options")).toObject() == options &&
+                document.value(QStringLiteral("tray")).toObject()
+                    .value(QStringLiteral("menu_options")).toArray().contains(
+                        QStringLiteral("quick.quick-annotation-toolbar")),
+            "disabled builds retain quick annotation preferences on disk");
+}
+#endif
 } // namespace
 
 int main(int argc, char** argv) {
@@ -438,10 +478,14 @@ int main(int argc, char** argv) {
     const auto before = metadata();
     publicMetadataMatchesOriginal(before);
     nativeDefaultsRemainIntact(movies, pictures);
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     quickAnnotationTrayMigration();
     quickAnnotationToolbarIsIndependent();
     quickAnnotationCustomDurationsRemain();
-#ifdef Q_OS_MACOS
+#else
+    disabledQuickAnnotationPreservesStoredPreferences();
+#endif
+#if defined(Q_OS_MACOS) && SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     quickAnnotationShortcutMigration();
     quickAnnotationRectangleConflictMigration();
 #endif

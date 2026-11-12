@@ -542,6 +542,7 @@ void readSpotlightValue(const QJsonObject& object, SnowCanvasSpotlightConfig* co
 
 } // namespace
 
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 QJsonObject quickAnnotationToolStylesToJson(const SnowCanvasStyleDefaults& defaults) {
     return {{QStringLiteral("shape"), shapeValue(defaults.rectangle)},
             {QStringLiteral("arrow"), shapeValue(defaults.arrow)},
@@ -555,8 +556,12 @@ SnowCanvasStyleDefaults quickAnnotationToolStylesFromJson(const QJsonObject& obj
     const auto brush = object.value(QStringLiteral("brush")).toObject();
     if (!shape.isEmpty())
         readShapeValue(shape, &defaults.rectangle);
-    if (!arrow.isEmpty())
+    if (!arrow.isEmpty()) {
+        const double defaultRatio = defaults.arrow.arrowRatio;
         readShapeValue(arrow, &defaults.arrow);
+        if (!arrow.contains(QStringLiteral("arrow_ratio")))
+            defaults.arrow.arrowRatio = defaultRatio;
+    }
     if (!brush.isEmpty()) {
         readShapeValue(brush, &defaults.freeDraw);
         defaults.freeDraw.brushMode =
@@ -573,6 +578,7 @@ SnowCanvasStyleDefaults quickAnnotationToolStylesFromJson(const QJsonObject& obj
     }
     return defaults;
 }
+#endif
 
 SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults() {
     SnowCanvasStyleDefaults defaults = screenshotCanvasStyleDefaults();
