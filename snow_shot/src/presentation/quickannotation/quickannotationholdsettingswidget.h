@@ -95,6 +95,10 @@ class QuickAnnotationHoldSettingsWidget final : public SettingsCustomWidget {
         QPalette p = m_title->palette();
         p.setColor(QPalette::WindowText, scheme.map.colorText);
         m_title->setPalette(p);
+        QFont font = m_title->font();
+        font.setPixelSize(scheme.metricAlias.fontSizeLG);
+        font.setWeight(QFont::Medium);
+        m_title->setFont(font);
     }
     void retranslateUi() override {
         m_title->setText(QCoreApplication::translate("SettingsCatalog", "Hold-to-annotate shortcut"));
