@@ -113,9 +113,9 @@ def derived_inputs(root):
     entries = {}
     for path in paths:
         resolved = path.resolve()
-        if not path.is_relative_to(root) or not resolved.is_relative_to(root) or not resolved.is_file():
+        if not resolved.is_relative_to(root) or not resolved.is_file():
             return {}
-        entries[str(path.relative_to(root))] = {'sha256': digest(resolved),
+        entries[str(resolved.relative_to(root))] = {'sha256': digest(resolved),
                                                'mtime_ns': resolved.stat().st_mtime_ns}
     # Cargo scans directories named by rerun-if-changed recursively. Save a
     # fingerprint of every file and directory, including otherwise untracked files.
