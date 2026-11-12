@@ -2112,6 +2112,10 @@
             <translation>游標輔助線顏色</translation>
         </message>
         <message>
+            <source>Custom</source>
+            <translation>自訂</translation>
+        </message>
+        <message>
             <source>Custom AI models</source>
             <translation>自訂 AI 模型</translation>
         </message>
@@ -3586,6 +3590,10 @@
         <message>
             <source>Quick annotation for selected text</source>
             <translation>選取文字快速標註</translation>
+        </message>
+        <message>
+            <source>Quick annotation shortcuts</source>
+            <translation>快速標註快捷鍵</translation>
         </message>
         <message>
             <source>Quick annotation shortcuts and actions</source>

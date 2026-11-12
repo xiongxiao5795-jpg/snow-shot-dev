@@ -1072,6 +1072,8 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
      ConfigurationValueKind::Boolean},
     {u"quick_annotation/duration_defaults_migrated", booleanDefault(true),
      ConfigurationValueKind::Boolean},
+    {u"quick_annotation/rectangle_conflict_migrated", booleanDefault(true),
+     ConfigurationValueKind::Boolean},
     {u"quick_annotation/shortcut_defaults_migrated", booleanDefault(true),
      ConfigurationValueKind::Boolean},
     {u"global_shortcuts/stitch_selected_images", emptyArrayDefault(),

@@ -272,6 +272,20 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
         }
 #endif
 #ifdef Q_OS_MACOS
+        if (entry.key == QStringLiteral("global_shortcuts/quick_annotation_rectangle") &&
+            mutateDocument && !currentOverlay.contains(
+                QStringLiteral("quick_annotation/rectangle_conflict_migrated"))) {
+            const auto rectangle = shortcuts::shortcutBindingsFromJson(raw, true);
+            const auto quick = shortcuts::shortcutBindingsFromJson(
+                currentOverlay.value(QStringLiteral("global_shortcuts/quick_annotation")), true);
+            if (rectangle.size() == 1 && quick.size() == 1 &&
+                rectangle.first().portableText == shortcuts::canonicalPortableText(QStringLiteral("Meta+4")) &&
+                shortcuts::bindingsConflict(rectangle.first(), quick.first())) {
+                raw = QJsonArray{};
+                insertPath(&result.document, entry.key, raw);
+                result.dirty = true;
+            }
+        }
         if (entry.key == QStringLiteral("quick_annotation/options") && mutateDocument &&
             raw.isObject() &&
             !currentOverlay.contains(QStringLiteral("quick_annotation/fn_default_migrated"))) {

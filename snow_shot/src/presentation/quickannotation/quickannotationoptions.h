@@ -46,7 +46,8 @@ struct QuickAnnotationOptions {
             tool == QStringLiteral("ellipse"))
             result.defaultTool = tool;
         const QString hold = object.value(QStringLiteral("hold_shortcut")).toString();
-        if (hold == QStringLiteral("disabled") || hold == QStringLiteral("function") ||
+        if (hold == QStringLiteral("disabled") || hold == QStringLiteral("custom") ||
+            hold == QStringLiteral("function") ||
             hold == QStringLiteral("command_option") || hold == QStringLiteral("command_shift") ||
             hold == QStringLiteral("control_option") || hold == QStringLiteral("control_shift"))
             result.holdShortcut = hold;

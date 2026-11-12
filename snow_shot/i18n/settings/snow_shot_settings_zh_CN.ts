@@ -2112,6 +2112,10 @@
             <translation>光标辅助线颜色</translation>
         </message>
         <message>
+            <source>Custom</source>
+            <translation>自定义</translation>
+        </message>
+        <message>
             <source>Custom AI models</source>
             <translation>自定义 AI 模型</translation>
         </message>
@@ -3586,6 +3590,10 @@
         <message>
             <source>Quick annotation for selected text</source>
             <translation>选中文字快速标注</translation>
+        </message>
+        <message>
+            <source>Quick annotation shortcuts</source>
+            <translation>快速标注快捷键</translation>
         </message>
         <message>
             <source>Quick annotation shortcuts and actions</source>

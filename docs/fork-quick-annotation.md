@@ -16,10 +16,11 @@ It configures the default tool, five independent color presets, width, hold time
 starts quick annotation; the other quick annotation shortcuts are unset by default. Old fork
 shortcuts are migrated only when they still match the earlier defaults; customized bindings stay.
 The toolbar opens at the lower right of the primary screen on first activation; a dragged position is retained for subsequent activations. It hides after one gesture unless persistence or the hold shortcut is active. Starting a screenshot hides the toolbar and releases annotation input while retaining the existing marks. With the normal Control+4 action,
-mouse input returns immediately after the gesture. Persistent mode keeps the toolbar and drawing mode active and exposes undo and redo for marks across screens. A persistent mark remains until persistence is
+mouse input returns immediately after the gesture. The fading keep-mode keeps the toolbar and drawing mode active while marks fade automatically.
+Persistent-mark mode keeps the toolbar and drawing mode active and exposes undo and redo for marks across screens. A persistent mark remains until persistence is
 disabled or the toolbar is explicitly closed; those marks then fade out. Undo and redo are hidden for temporary marks.
 
-Configurable macOS hold shortcuts are located in Global shortcuts and may select a specific tool. The modifier-only hold shortcut defaults to Fn. macOS may also reserve Fn for input switching, emoji, or dictation depending on system settings and keyboard hardware; verify on the target Mac. A short
+The macOS hold shortcut is the first item in the Quick annotation global-shortcuts group. It defaults to Fn and can be changed to a modifier chord or a custom ordinary key or combination. Older per-tool hold bindings are no longer active. macOS may also reserve Fn for input switching, emoji, or dictation depending on system settings and keyboard hardware; verify on the target Mac. A short
 hold starts annotation, and an ordinary additional key cancels activation to reduce conflicts
 with normal keyboard shortcuts. This passive global listener requires Accessibility permission.
 While the shortcut remains held, the toolbar stays open and additional gestures can be drawn. On

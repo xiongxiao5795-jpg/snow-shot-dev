@@ -4068,15 +4068,15 @@ constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionScreenRecordingItems
 };
 
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionQuickAnnotationItems[] = {
+#ifdef Q_OS_MACOS
+    {quickAnnotationHoldShortcutsItem},
+#endif
     {quickAnnotationItem},
     {quickAnnotationBrushItem},
     {quickAnnotationArrowItem},
     {quickAnnotationRectangleItem},
     {quickAnnotationEllipseItem},
     {quickAnnotationToolbarItem},
-#ifdef Q_OS_MACOS
-    {quickAnnotationHoldShortcutsItem},
-#endif
 };
 
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionOtherItems[] = {
@@ -5222,7 +5222,7 @@ constexpr CatalogSectionRecord catalogPageQuickAnnotationSections[] = {
      .collapsed = false},
 };
 constexpr CatalogRelatedLinkRecord catalogPageQuickAnnotationLinks[] = {
-    {settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation")), u"global-hotkeys",
+    {settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation shortcuts")), u"global-hotkeys",
      u"quick-annotation", u"quick.quick-annotation"},
 };
 

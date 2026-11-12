@@ -22,6 +22,7 @@
 #include "widgets/color_picker.h"
 #include "widgets/popover.h"
 #include "widgets/select.h"
+#include "widgets/radio_button_group.h"
 #include "widgets/slider.h"
 #include "theme/theme_manager.h"
 #include <QApplication>
@@ -1612,10 +1613,11 @@ int main(int argc, char** argv) {
         controller.showToolbar();
         auto* keep =
             toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationPersistent"));
+        auto* keepFading = toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationKeepFading"));
         auto* close = toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationClose"));
         auto* undo = toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationUndo"));
         auto* redo = toolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationRedo"));
-        require(keep && close && undo && redo && undo->isHidden() && redo->isHidden(),
+        require(keep && keepFading && close && undo && redo && undo->isHidden() && redo->isHidden(),
                 "temporary mode hides persistent history actions");
         keep->setChecked(true);
         require(!undo->isHidden() && !redo->isHidden() && !undo->isEnabled() && !redo->isEnabled(),
@@ -1643,6 +1645,23 @@ int main(int argc, char** argv) {
         require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
                     !window->isVisible(),
                 "explicit exit fades persistent marks");
+        controller.beginHold();
+        require(!keep->isChecked() && !keepFading->isChecked(),
+                "exiting resets the persistent mode for the next session");
+        keepFading->setChecked(true);
+        controller.endHold();
+        require(toolbar->isVisible() && !window->testAttribute(Qt::WA_TransparentForMouseEvents) &&
+                    undo->isHidden() && redo->isHidden(),
+                "keep drawing with fading survives releasing the hold and hides history");
+        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        now += 6000;
+        require(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection) &&
+                    toolbar->isVisible() && !timer->isActive(),
+                "fading marks expire while the drawing mode stays open");
+        close->click();
+        require(!keepFading->isChecked(), "exit clears the fading keep-mode switch");
         controller.beginHold();
         keep->setChecked(false);
         const auto heldModifiers = Qt::ShiftModifier | Qt::AltModifier;
@@ -1703,6 +1722,29 @@ int main(int argc, char** argv) {
         mouse(failedCanvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
         require(!failedWindow->isVisible() && errors == 1,
                 "failed click-through exits held mode, hides the blocker and reports an error");
+        controller.beginHold();
+        auto* shapeSelector = toolbar->findChild<QWidget*>(QStringLiteral("screenshotShapeButtonGroup"));
+        auto* shapeGroup = shapeSelector ? shapeSelector->findChild<adqt::widgets::AdRadioButtonGroup*>() : nullptr;
+        require(shapeGroup, "shape selector available");
+        shapeGroup->setCheckedId(2);
+        require(canvas->canvasStyleToolbarState().shapeStyle.shape == SnowCanvasRectangleShape::Diamond,
+                "diamond selection updates the canvas");
+        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        require(canvas->canvasStyleToolbarState().shapeStyle.shape == SnowCanvasRectangleShape::Diamond,
+                "diamond selection survives a completed gesture");
+        floating->palette()->arrowRequested();
+        auto* arrowSelector = toolbar->findChild<QWidget*>(QStringLiteral("screenshotArrowTypeButtonGroup"));
+        auto* arrowGroup = arrowSelector ? arrowSelector->findChild<adqt::widgets::AdRadioButtonGroup*>() : nullptr;
+        require(arrowGroup, "arrow selector available");
+        arrowGroup->setCheckedId(2);
+        mouse(canvas, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+        mouse(canvas, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+        require(canvas->canvasStyleToolbarState().shapeStyle.arrowType == SnowCanvasArrowType::Elbow,
+                "arrow type survives a completed gesture");
+        controller.endHold();
         auto* secondary = new CanvasTestScreen;
         QWindowSystemInterface::handleScreenAdded(secondary);
         {
@@ -1715,12 +1757,17 @@ int main(int argc, char** argv) {
             otherScreen.showToolbar();
             QApplication::processEvents();
             QWidget* secondaryOverlay = nullptr;
+            QWidget* primaryOverlay = nullptr;
             QWidget* primaryToolbar = nullptr;
             for (QWidget* candidate : QApplication::topLevelWidgets()) {
                 if (existing.contains(candidate))
                     continue;
-                if (candidate->objectName() == QStringLiteral("quickAnnotationWindow"))
-                    secondaryOverlay = candidate;
+                if (candidate->objectName() == QStringLiteral("quickAnnotationWindow")) {
+                    if (candidate->geometry() == secondary->screen()->geometry())
+                        secondaryOverlay = candidate;
+                    else if (candidate->geometry() == QGuiApplication::primaryScreen()->geometry())
+                        primaryOverlay = candidate;
+                }
                 if (candidate->objectName() == QStringLiteral("quickAnnotationToolbar"))
                     primaryToolbar = candidate;
             }
@@ -1730,6 +1777,22 @@ int main(int argc, char** argv) {
                         primaryToolbar->windowHandle() &&
                         primaryToolbar->windowHandle()->transientParent() == nullptr,
                     "secondary-screen annotation keeps the primary toolbar independently visible");
+            require(primaryOverlay && !primaryOverlay->testAttribute(Qt::WA_TransparentForMouseEvents) &&
+                        !secondaryOverlay->testAttribute(Qt::WA_TransparentForMouseEvents),
+                    "both screens accept input during the same annotation session");
+            auto* secondaryCanvas = secondaryOverlay->findChild<SnowCanvasWidget*>(QStringLiteral("quickAnnotationCanvas"));
+            auto* primaryCanvas = primaryOverlay->findChild<SnowCanvasWidget*>(QStringLiteral("quickAnnotationCanvas"));
+            auto* pin = primaryToolbar->findChild<QAbstractButton*>(QStringLiteral("quickAnnotationPersistent"));
+            require(secondaryCanvas && primaryCanvas && pin, "cross-screen controls available");
+            pin->setChecked(true);
+            for (auto* target : {primaryCanvas, secondaryCanvas, primaryCanvas}) {
+                mouse(target, QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+                mouse(target, QEvent::MouseMove, {120, 100}, Qt::NoButton, Qt::LeftButton);
+                mouse(target, QEvent::MouseButtonRelease, {120, 100}, Qt::LeftButton, Qt::NoButton);
+                require(!primaryOverlay->testAttribute(Qt::WA_TransparentForMouseEvents) &&
+                            !secondaryOverlay->testAttribute(Qt::WA_TransparentForMouseEvents),
+                        "cross-screen session stays armed after each gesture");
+            }
         }
         QWindowSystemInterface::handleScreenRemoved(secondary);
         QApplication::processEvents();

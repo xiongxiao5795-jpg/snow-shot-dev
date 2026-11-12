@@ -4784,6 +4784,11 @@ void ScreenshotToolPalette::setQuickAnnotationPersistent(bool enabled) {
         m_quickAnnotationPersistentButton->setChecked(enabled);
 }
 
+void ScreenshotToolPalette::setQuickAnnotationKeepFading(bool enabled) {
+    if (m_quickAnnotationKeepFadingButton != nullptr)
+        m_quickAnnotationKeepFadingButton->setChecked(enabled);
+}
+
 void ScreenshotToolPalette::setGlobalCanvasClickThrough(bool enabled) {
     if (m_globalCanvasClickThroughButton != nullptr) {
         m_globalCanvasClickThroughButton->setChecked(enabled);
@@ -6350,6 +6355,7 @@ void ScreenshotToolPalette::applyMainToolbarLayout(bool notify) {
         m_quickAnnotationPersistentButton && m_quickAnnotationPersistentButton->isChecked()
             ? m_quickAnnotationRedoButton
             : nullptr,
+        m_quickAnnotationKeepFadingButton,
         m_quickAnnotationPersistentButton,
         m_quickAnnotationExitButton,
     };
@@ -7083,6 +7089,18 @@ void ScreenshotToolPalette::addMainActionButtons(const Options& options, QBoxLay
     }
 
     if (options.showQuickAnnotationActions) {
+        m_quickAnnotationKeepFadingButton =
+            addToolButton(QT_TRANSLATE_NOOP("ScreenshotToolPalette", "Keep drawing, fade marks"),
+                          outlined_icons::History());
+        m_quickAnnotationKeepFadingButton->setObjectName(QStringLiteral("quickAnnotationKeepFading"));
+        m_quickAnnotationKeepFadingButton->setCheckable(true);
+        m_quickAnnotationKeepFadingButton->setCheckedUsesActiveStyle(false);
+        connect(m_quickAnnotationKeepFadingButton, &adqt::widgets::AdButton::toggled, this,
+                [this](bool enabled) {
+                    setScreenshotToolPaletteButtonActive(m_quickAnnotationKeepFadingButton, enabled);
+                    emit quickAnnotationKeepFadingChanged(enabled);
+                });
+        addButton(m_quickAnnotationKeepFadingButton);
         m_quickAnnotationPersistentButton =
             addToolButton(QT_TRANSLATE_NOOP("ScreenshotToolPalette", "Keep marks"),
                           custom_outlined_icons::PinToScreen());

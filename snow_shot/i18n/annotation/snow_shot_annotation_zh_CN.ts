@@ -791,6 +791,10 @@
             <translation>跳转到翻译页面</translation>
         </message>
         <message>
+            <source>Keep drawing, fade marks</source>
+            <translation>持续标注并自动淡出</translation>
+        </message>
+        <message>
             <source>Keep marks</source>
             <translation>标注常驻</translation>
         </message>

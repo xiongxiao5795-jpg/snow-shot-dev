@@ -91,9 +91,7 @@ class QuickAnnotationHoldMonitor::Impl final {
         delay.stop();
         finish();
         bindings.clear();
-        const QStringList tools{QStringLiteral("default"), QStringLiteral("brush"),
-                                QStringLiteral("arrow"), QStringLiteral("rectangle"),
-                                QStringLiteral("ellipse")};
+        const QStringList tools{QStringLiteral("default")};
         for (const auto& tool : tools) {
             const auto binding = shortcuts::bindingFromPortableText(object.value(tool).toString());
             const auto native = shortcuts::macVirtualKeyForBinding(binding);
@@ -150,6 +148,8 @@ class QuickAnnotationHoldMonitor::Impl final {
         if (state.otherKey())
             finish();
         if (!AXIsProcessTrusted() || active || activeKey >= 0 || functionKeyDown)
+            return;
+        if (currentChord != QStringLiteral("custom"))
             return;
         for (const auto& binding : bindings) {
             if (binding.key == static_cast<int>(event.keyCode) &&

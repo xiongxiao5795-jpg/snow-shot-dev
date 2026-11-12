@@ -791,6 +791,10 @@
             <translation>Jump to translation page</translation>
         </message>
         <message>
+            <source>Keep drawing, fade marks</source>
+            <translation>Keep drawing, fade marks</translation>
+        </message>
+        <message>
             <source>Keep marks</source>
             <translation>Keep marks</translation>
         </message>

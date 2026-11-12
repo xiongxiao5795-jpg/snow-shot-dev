@@ -341,6 +341,7 @@ class ScreenshotToolPalette final : public QWidget,
     bool recordingExportSettingsVisible() const;
     void setActiveTool(Tool tool);
     void setQuickAnnotationPersistent(bool enabled);
+    void setQuickAnnotationKeepFading(bool enabled);
     void refreshConfirmShortcutHint();
     void refreshShortcutTooltips();
     void setGlobalCanvasClickThrough(bool enabled);
@@ -513,6 +514,7 @@ class ScreenshotToolPalette final : public QWidget,
     void globalCanvasLaserPointerRequested();
     void globalCanvasExitRequested();
     void quickAnnotationPersistentChanged(bool enabled);
+    void quickAnnotationKeepFadingChanged(bool enabled);
     void quickAnnotationExitRequested();
     void undoRequested();
     void redoRequested();
@@ -1133,6 +1135,7 @@ class ScreenshotToolPalette final : public QWidget,
     adqt::widgets::AdButton* m_globalCanvasLaserPointerButton = nullptr;
     adqt::widgets::AdButton* m_globalCanvasExitButton = nullptr;
     adqt::widgets::AdButton* m_quickAnnotationPersistentButton = nullptr;
+    adqt::widgets::AdButton* m_quickAnnotationKeepFadingButton = nullptr;
     adqt::widgets::AdButton* m_quickAnnotationExitButton = nullptr;
     adqt::widgets::AdButton* m_quickAnnotationUndoButton = nullptr;
     adqt::widgets::AdButton* m_quickAnnotationRedoButton = nullptr;

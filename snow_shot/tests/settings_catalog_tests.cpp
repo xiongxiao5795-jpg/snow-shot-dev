@@ -3006,12 +3006,17 @@ void globalShortcutActionsHaveStableContracts() {
 #else
                     6 &&
 #endif
+#ifdef Q_OS_MACOS
+                quickSection->items.first().id == QStringLiteral("quick-annotation.hold-shortcuts") &&
+                quickSection->items.at(6).id == QStringLiteral("quick.quick-annotation-toolbar") &&
+#else
                 quickSection->items.first().id == QStringLiteral("quick.quick-annotation") &&
                 quickSection->items.at(5).id == QStringLiteral("quick.quick-annotation-toolbar") &&
+#endif
                 catalog.page(QStringLiteral("quick-annotation")) != nullptr,
             "quick annotation has a dedicated page and shortcut group");
 #ifdef Q_OS_MACOS
-    require(quickSection->items.last().id == QStringLiteral("quick-annotation.hold-shortcuts"),
+    require(quickSection->items.first().id == QStringLiteral("quick-annotation.hold-shortcuts"),
             "macOS quick annotation includes editable hold shortcuts");
 #endif
     require(catalog.section(QStringLiteral("quick-annotation"), QStringLiteral("toolbar")) !=

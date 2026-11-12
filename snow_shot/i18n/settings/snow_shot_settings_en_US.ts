@@ -2112,6 +2112,10 @@
             <translation>Cursor guide line color</translation>
         </message>
         <message>
+            <source>Custom</source>
+            <translation>Custom</translation>
+        </message>
+        <message>
             <source>Custom AI models</source>
             <translation>Custom AI models</translation>
         </message>
@@ -3586,6 +3590,10 @@
         <message>
             <source>Quick annotation for selected text</source>
             <translation>Quick annotation for selected text</translation>
+        </message>
+        <message>
+            <source>Quick annotation shortcuts</source>
+            <translation>Quick annotation shortcuts</translation>
         </message>
         <message>
             <source>Quick annotation shortcuts and actions</source>
