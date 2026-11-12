@@ -45,6 +45,9 @@ jobs:
           target: desktop
           arch: win64_msvc2022_64
           cache: true
+          # Qt 6.11+ uses a new Windows repository layout; aqtinstall 3.3.0
+          # does not support it. Pin an upstream revision containing the fix.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
       - name: Restore vcpkg binary cache
         id: vcpkg
         uses: actions/cache/restore@v4
