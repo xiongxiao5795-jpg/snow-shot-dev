@@ -121,7 +121,13 @@ class ToolPanel final : public ScreenshotFloatingToolPaletteWindow {
         connect(controls, &ScreenshotToolPalette::redoRequested, this, std::move(redo));
         connect(this, &ScreenshotFloatingToolPaletteWindow::dragFinished, this, [this] {
             m_moved = true;
-            m_placementScreen = QGuiApplication::screenAt(contentPosition());
+            const QSize size = contentSizeHint();
+            m_placementScreen = QGuiApplication::screenAt(
+                contentPosition() + QPoint(size.width() / 2, size.height() / 2));
+            if (!m_placementScreen && windowHandle())
+                m_placementScreen = windowHandle()->screen();
+            if (!m_placementScreen)
+                m_placementScreen = QGuiApplication::primaryScreen();
         });
         controls->setStyleEditHandler([this](const SnowCanvasStyleEdit& edit) {
             if (!m_canvas || !m_canvas->commitStyleEdit(edit))

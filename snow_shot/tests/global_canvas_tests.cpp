@@ -1552,6 +1552,13 @@ int main(int argc, char** argv) {
         controller.showToolbar();
         require(floating->contentPosition() == dragged,
                 "reopening preserves the user's dragged toolbar position");
+        floating->moveContentTo(
+            QPoint(screenBounds.left() - size.width() / 2, screenBounds.top() + 40));
+        const QPoint partlyOutside = floating->contentPosition();
+        floating->dragFinished();
+        controller.showToolbar();
+        require(floating->contentPosition() == partlyOutside,
+                "drag placement survives when the toolbar origin is outside the screen");
         floating->palette()->shapeRequested();
         require(toolbar->isVisible() && canvas->canvasTool() == SnowCanvasTool::Shape &&
                     !window->testAttribute(Qt::WA_TransparentForMouseEvents),
