@@ -1600,6 +1600,7 @@ int main(int argc, char** argv) {
         auto externalOptions =
             storage.configuration().value(QStringLiteral("quick_annotation/options")).toObject();
         externalOptions.insert(QStringLiteral("color"), QStringLiteral("#1890ff"));
+        externalOptions.insert(QStringLiteral("color_mode"), QStringLiteral("solid"));
         externalOptions.insert(QStringLiteral("width"), 7);
         externalOptions.insert(QStringLiteral("hold_ms"), 3000);
         externalOptions.insert(QStringLiteral("fade_ms"), 1200);
