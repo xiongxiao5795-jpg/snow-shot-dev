@@ -84,11 +84,7 @@ stop_running_build_instances
 build_args=("$snow_preset" --target "$target")
 if [[ "$clean" == true ]]; then build_args+=(--clean); fi
 if [[ "$codesign_identity_set" == false ]]; then
-    if [[ "$snow_preset" == *-release ]]; then
-        codesign_identity=PROJECT
-    else
-        codesign_identity="$("$(dirname "$0")/ensure-macos-codesign-identity.sh")"
-    fi
+    codesign_identity="$("$(dirname "$0")/ensure-macos-codesign-identity.sh")"
 fi
 build_args+=(-- "-DSNOW_MACOS_CODESIGN_IDENTITY=$codesign_identity")
 "$(dirname "$0")/build.sh" "${build_args[@]}"
