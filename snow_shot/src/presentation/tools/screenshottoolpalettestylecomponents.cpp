@@ -22,11 +22,15 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLayout>
+#include <QLinearGradient>
 #include <QObject>
+#include <QPainter>
+#include <QPainterPath>
 #include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QStandardItem>
 #include <QStandardItemModel>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -35,6 +39,58 @@
 
 namespace snow_shot::presentation {
 namespace {
+QuickAnnotationColorMode quickColorMode() {
+    auto& storage = storage::ApplicationStorage::instance();
+    return storage.isInitialized() ? QuickAnnotationOptions::fromJson(
+                                         storage.configuration()
+                                             .value(QStringLiteral("quick_annotation/options"))
+                                             .toObject())
+                                         .colorMode
+                                   : QuickAnnotationColorMode::Rainbow;
+}
+
+void setQuickColorMode(QuickAnnotationColorMode mode) {
+    auto& storage = storage::ApplicationStorage::instance();
+    if (!storage.isInitialized())
+        return;
+    auto& config = storage.configuration();
+    auto options = QuickAnnotationOptions::fromJson(
+        config.value(QStringLiteral("quick_annotation/options")).toObject());
+    if (options.colorMode == mode)
+        return;
+    options.colorMode = mode;
+    config.setValue(QStringLiteral("quick_annotation/options"), options.toJson());
+}
+
+QIcon quickColorModeIcon(bool random) {
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QLinearGradient rainbow(2, 2, 22, 22);
+    for (int i = 0; i <= 6; ++i)
+        rainbow.setColorAt(i / 6.0, QColor::fromHsv((i * 60) % 360, 230, 255));
+    if (random) {
+        painter.setPen(QPen(QBrush(rainbow), 2));
+        painter.setBrush(Qt::white);
+        painter.drawRoundedRect(QRectF(4, 4, 16, 16), 3, 3);
+        painter.setPen(Qt::NoPen);
+        for (const QPointF point :
+             {QPointF(8, 8), QPointF(16, 8), QPointF(12, 12), QPointF(8, 16), QPointF(16, 16)}) {
+            painter.setBrush(rainbow);
+            painter.drawEllipse(point, 1.4, 1.4);
+        }
+    } else {
+        painter.setPen(QPen(QBrush(rainbow), 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        QPainterPath path;
+        path.moveTo(3, 17);
+        path.cubicTo(7, 17, 7, 6, 12, 7);
+        path.cubicTo(17, 8, 16, 18, 21, 7);
+        painter.drawPath(path);
+    }
+    return QIcon(pixmap);
+}
+
 QVector<QColor> colorPresetsForSource(ScreenshotToolPaletteColorPresetSource source,
                                       const QVector<QColor>& fixedColors = {}) {
     switch (source) {
@@ -491,17 +547,43 @@ void ScreenshotToolPaletteColorPresets::build(QBoxLayout* layout, QWidget* paren
                                               const ScreenshotToolPaletteButtonMetrics& metrics,
                                               ScreenshotToolPaletteColorPresetSource source) {
     m_receiver = receiver;
+    m_source = source;
     m_colors = colorPresetsForSource(source, colors);
     for (const QColor& color : m_colors) {
         auto* button =
             createScreenshotToolPaletteColorButton(parent, nullptr, color, false, true, metrics);
         m_buttons.push_back(button);
         layout->addWidget(button);
-        QObject::connect(button, &adqt::widgets::AdButton::clicked, receiver, [commit, button]() {
-            if (commit) {
-                commit(button->swatchColor());
-            }
-        });
+        QObject::connect(
+            button, &adqt::widgets::AdButton::clicked, receiver, [this, commit, button]() {
+                if (m_source == ScreenshotToolPaletteColorPresetSource::QuickAnnotation)
+                    setQuickColorMode(QuickAnnotationColorMode::Solid);
+                if (commit) {
+                    commit(button->swatchColor());
+                }
+            });
+    }
+    if (source == ScreenshotToolPaletteColorPresetSource::QuickAnnotation) {
+        for (int i = 0; i < 2; ++i) {
+            auto* button = new QToolButton(parent);
+            button->setObjectName(i == 0 ? QStringLiteral("quickAnnotationRainbowColor")
+                                         : QStringLiteral("quickAnnotationRandomColor"));
+            button->setCheckable(true);
+            button->setFocusPolicy(Qt::NoFocus);
+            button->setFixedSize(metrics.buttonSize, metrics.buttonSize);
+            button->setIconSize(QSize(metrics.iconSize, metrics.iconSize));
+            button->setIcon(quickColorModeIcon(i == 1));
+            layout->addWidget(button);
+            if (i == 0)
+                m_rainbowButton = button;
+            else
+                m_randomButton = button;
+            QObject::connect(button, &QToolButton::clicked, receiver, [this, i] {
+                setQuickColorMode(i == 0 ? QuickAnnotationColorMode::Rainbow
+                                         : QuickAnnotationColorMode::RandomStroke);
+                update(m_currentColor, m_mixed);
+            });
+        }
     }
     retranslate(tooltip);
     update(initialColor, false);
@@ -513,6 +595,13 @@ void ScreenshotToolPaletteColorPresets::rebind(const QVector<QColor>& colors,
                                                ScreenshotToolPaletteColorPresetSource source) {
     QObject::disconnect(m_settingsConnection);
     m_settingsConnection = {};
+    m_source = source;
+    if (m_rainbowButton)
+        m_rainbowButton->setVisible(source ==
+                                    ScreenshotToolPaletteColorPresetSource::QuickAnnotation);
+    if (m_randomButton)
+        m_randomButton->setVisible(source ==
+                                   ScreenshotToolPaletteColorPresetSource::QuickAnnotation);
     retranslate(tooltip);
     if (source == ScreenshotToolPaletteColorPresetSource::Fixed) {
         replaceColors(colors);
@@ -549,13 +638,30 @@ void ScreenshotToolPaletteColorPresets::update(const QColor& color, bool mixed) 
     m_currentColor = color;
     m_mixed = mixed;
     for (int index = 0; index < m_buttons.size(); ++index) {
-        setScreenshotToolPaletteStyleButtonActive(m_buttons.at(index),
-                                                  !mixed && m_colors.at(index) == color);
+        setScreenshotToolPaletteStyleButtonActive(
+            m_buttons.at(index),
+            !mixed && m_colors.at(index) == color &&
+                (m_source != ScreenshotToolPaletteColorPresetSource::QuickAnnotation ||
+                 quickColorMode() == QuickAnnotationColorMode::Solid));
     }
+    if (m_rainbowButton)
+        m_rainbowButton->setChecked(quickColorMode() == QuickAnnotationColorMode::Rainbow);
+    if (m_randomButton)
+        m_randomButton->setChecked(quickColorMode() == QuickAnnotationColorMode::RandomStroke);
 }
 
 void ScreenshotToolPaletteColorPresets::retranslate(const Tooltip& tooltip) {
     m_tooltip = tooltip;
+    if (m_rainbowButton) {
+        const auto text = QCoreApplication::translate("SettingsCatalog", "Rainbow stroke");
+        m_rainbowButton->setToolTip(text);
+        m_rainbowButton->setAccessibleName(text);
+    }
+    if (m_randomButton) {
+        const auto text = QCoreApplication::translate("SettingsCatalog", "Random stroke color");
+        m_randomButton->setToolTip(text);
+        m_randomButton->setAccessibleName(text);
+    }
     for (int index = 0; index < m_buttons.size(); ++index) {
         const QColor& color = m_colors.at(index);
         configureScreenshotToolPaletteTooltip(
@@ -571,12 +677,20 @@ void ScreenshotToolPaletteColorPresets::refreshMetrics(
             configureScreenshotToolPaletteStyleButton(button, nullptr, metrics);
         }
     }
+    for (auto button : {m_rainbowButton, m_randomButton}) {
+        if (button) {
+            button->setFixedSize(metrics.buttonSize, metrics.buttonSize);
+            button->setIconSize(QSize(metrics.iconSize, metrics.iconSize));
+        }
+    }
 }
 
 void ScreenshotToolPaletteColorPresets::clear() {
     QObject::disconnect(m_settingsConnection);
     m_settingsConnection = {};
     m_receiver.clear();
+    m_rainbowButton.clear();
+    m_randomButton.clear();
     m_tooltip = {};
     m_buttons.clear();
     m_colors.clear();
@@ -870,12 +984,14 @@ void ScreenshotToolPaletteStrokeEditor::build(
     configureColorPickerMetrics(m_picker, metrics);
     layout->addWidget(m_picker);
 
-    connectColorPickerChanges(m_picker, receiver, m_handlingChange,
-                              [callback = m_setColor](const QColor& color) {
-                                  if (callback != nullptr && *callback) {
-                                      (*callback)(color);
-                                  }
-                              });
+    connectColorPickerChanges(
+        m_picker, receiver, m_handlingChange, [this, callback = m_setColor](const QColor& color) {
+            if (m_config.presetSource == ScreenshotToolPaletteColorPresetSource::QuickAnnotation)
+                setQuickColorMode(QuickAnnotationColorMode::Solid);
+            if (callback != nullptr && *callback) {
+                (*callback)(color);
+            }
+        });
 
     m_colorPresets.build(
         layout, parent, receiver, config.colorValues, config.colorTooltip, initialColor,

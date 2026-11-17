@@ -50,12 +50,17 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                     });
         }
         m_width = slider("quickAnnotationSettingsWidth", 1, 20, 1);
+        m_glow = slider("quickAnnotationSettingsGlow", 0, 5, 1);
         m_hold = slider("quickAnnotationSettingsHold", 0, 3, 0.1);
         m_fade = slider("quickAnnotationSettingsFade", 0, 3, 0.1);
         const styles::ThemeAliasMetricToken metric;
         QVector<QWidget*> controls{m_tool};
-        controls += {m_color, presetsHost, sliderControl(m_width, &m_widthLabel),
-                     sliderControl(m_hold, &m_holdLabel), sliderControl(m_fade, &m_fadeLabel)};
+        controls += {m_color,
+                     presetsHost,
+                     sliderControl(m_width, &m_widthLabel),
+                     sliderControl(m_hold, &m_holdLabel),
+                     sliderControl(m_fade, &m_fadeLabel),
+                     sliderControl(m_glow, &m_glowLabel)};
         for (qsizetype index = 0; index < controls.size(); ++index) {
             QWidget* control = controls.at(index);
             if ((index == 2 || index == 3) != toolbar) {
@@ -67,6 +72,8 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
             QLabel* description = nullptr;
             auto* row = components::createSettingItemRow(this, metric, &title, &description,
                                                          control, QString());
+            if (index == 1)
+                m_colorRow = row;
             m_titles.push_back(title);
             m_descriptions.push_back(description);
             layout->addWidget(row);
@@ -82,6 +89,9 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                 });
         connect(m_width, &adqt::widgets::AdSlider::valueChanged, this, [this](double value) {
             save([&](auto& options) { options.width = qRound(value); });
+        });
+        connect(m_glow, &adqt::widgets::AdSlider::valueChanged, this, [this](double value) {
+            save([&](auto& options) { options.glowWidth = qRound(value); });
         });
         connect(m_hold, &adqt::widgets::AdSlider::valueChanged, this, [this](double value) {
             save([&](auto& options) { options.holdMs = qRound(value * 1000); });
@@ -111,7 +121,8 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Stroke color presets"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Stroke width"),
                                 QT_TRANSLATE_NOOP("SettingsCatalog", "Hold time"),
-                                QT_TRANSLATE_NOOP("SettingsCatalog", "Fade duration")};
+                                QT_TRANSLATE_NOOP("SettingsCatalog", "Fade duration"),
+                                QT_TRANSLATE_NOOP("SettingsCatalog", "Stroke glow width")};
         const char* descriptions[] = {
             QT_TRANSLATE_NOOP("SettingsCatalog", "Tool selected when quick annotation starts"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "Color used for new marks"),
@@ -119,7 +130,8 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                               "Customize the quick-set buttons for annotation stroke colors"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "Width of new marks"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "How long temporary marks remain visible"),
-            QT_TRANSLATE_NOOP("SettingsCatalog", "How long marks take to fade out")};
+            QT_TRANSLATE_NOOP("SettingsCatalog", "How long marks take to fade out"),
+            QT_TRANSLATE_NOOP("SettingsCatalog", "Soft colored glow around new marks")};
         for (qsizetype i = 0; i < m_titles.size(); ++i) {
             m_titles.at(i)->setText(
                 QCoreApplication::translate("SettingsCatalog", titles[m_rowIndices[i]]));
@@ -172,6 +184,8 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
     void updateValueLabels() {
         if (m_widthLabel)
             m_widthLabel->setText(QString::number(m_width->value(), 'f', 0));
+        if (m_glowLabel)
+            m_glowLabel->setText(QString::number(m_glow->value(), 'f', 0));
         if (m_holdLabel)
             m_holdLabel->setText(QCoreApplication::translate("SettingsCatalog", "%1 s")
                                      .arg(QString::number(m_hold->value(), 'f', 1)));
@@ -187,7 +201,7 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
                                            .value(QStringLiteral("quick_annotation/options"))
                                            .toObject())
                                  : QuickAnnotationOptions{};
-        const QSignalBlocker a(m_tool), b(m_color), c(m_width), e(m_hold), f(m_fade);
+        const QSignalBlocker a(m_tool), b(m_color), c(m_width), d(m_glow), e(m_hold), f(m_fade);
         m_tool->setCurrentValue(options.defaultTool == QStringLiteral("arrow") ||
                                         options.defaultTool == QStringLiteral("brush")
                                     ? options.defaultTool
@@ -201,6 +215,9 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         m_color->setPresets({{QString(), presetValues, true, QStringLiteral("quick-annotation")}});
         m_color->setValue(adqt::widgets::AdColorValue::solid(options.color));
         m_width->setValue(options.width);
+        m_glow->setValue(options.glowWidth);
+        if (m_colorRow)
+            m_colorRow->setVisible(options.colorMode == QuickAnnotationColorMode::Solid);
         m_hold->setValue(options.holdMs / 1000.0);
         m_fade->setValue(options.fadeMs / 1000.0);
         updateValueLabels();
@@ -220,12 +237,15 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
     adqt::widgets::AdColorPicker* m_color = nullptr;
     QVector<adqt::widgets::AdColorPicker*> m_presets;
     adqt::widgets::AdSlider* m_width = nullptr;
+    adqt::widgets::AdSlider* m_glow = nullptr;
     adqt::widgets::AdSlider* m_hold = nullptr;
     adqt::widgets::AdSlider* m_fade = nullptr;
     QLabel* m_widthLabel = nullptr;
+    QLabel* m_glowLabel = nullptr;
     QLabel* m_holdLabel = nullptr;
     QLabel* m_fadeLabel = nullptr;
     QVector<qsizetype> m_rowIndices;
+    QWidget* m_colorRow = nullptr;
     QVector<QLabel*> m_titles;
     QVector<QLabel*> m_descriptions;
 };

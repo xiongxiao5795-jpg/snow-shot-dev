@@ -16,6 +16,7 @@
 
 class QBoxLayout;
 class QObject;
+class QToolButton;
 class QWidget;
 
 namespace adqt::widgets {
@@ -91,6 +92,9 @@ class ScreenshotToolPaletteColorPresets final {
     bool m_mixed = false;
     QPointer<QObject> m_receiver;
     QMetaObject::Connection m_settingsConnection;
+    ScreenshotToolPaletteColorPresetSource m_source = ScreenshotToolPaletteColorPresetSource::Fixed;
+    QPointer<QToolButton> m_rainbowButton;
+    QPointer<QToolButton> m_randomButton;
 };
 
 // Base protocol shared by every reusable sub-toolbar editor component. A

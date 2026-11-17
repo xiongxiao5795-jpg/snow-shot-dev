@@ -1556,6 +1556,23 @@ int main(int argc, char** argv) {
         require(toolbar->isVisible() && canvas->canvasTool() == SnowCanvasTool::Shape &&
                     !window->testAttribute(Qt::WA_TransparentForMouseEvents),
                 "toolbar selection arms a rectangle without closing before drawing");
+        auto* rainbowButton = floating->palette()->findChild<QToolButton*>(
+            QStringLiteral("quickAnnotationRainbowColor"));
+        auto* randomButton = floating->palette()->findChild<QToolButton*>(
+            QStringLiteral("quickAnnotationRandomColor"));
+        require(rainbowButton && randomButton && rainbowButton->isChecked(),
+                "quick annotation palette exposes the two color modes");
+        randomButton->click();
+        require(randomButton->isChecked() && !rainbowButton->isChecked() &&
+                    storage.configuration()
+                            .value(QStringLiteral("quick_annotation/options"))
+                            .toObject()
+                            .value(QStringLiteral("color_mode"))
+                            .toString() == QStringLiteral("random_stroke"),
+                "random stroke selection persists and updates palette state");
+        rainbowButton->click();
+        require(rainbowButton->isChecked() && !randomButton->isChecked(),
+                "rainbow selection restores the multicolor mode");
         now = 1000;
         mouse(canvas, QEvent::MouseButtonPress, {40, 40}, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseMove, {140, 120}, Qt::NoButton, Qt::LeftButton);

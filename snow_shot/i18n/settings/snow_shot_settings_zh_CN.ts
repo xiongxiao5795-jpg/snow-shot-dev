@@ -3994,6 +3994,14 @@
             <translation>快速修改选区</translation>
         </message>
         <message>
+            <source>Rainbow stroke</source>
+            <translation>彩色笔迹</translation>
+        </message>
+        <message>
+            <source>Random stroke color</source>
+            <translation>单笔迹随机色</translation>
+        </message>
+        <message>
             <source>Rapidly drag a pinned window back and forth to show hidden pinned windows in the current group, or hide the other pinned windows when none are hidden</source>
             <translation>快速来回拖动固定到屏幕的窗口，以显示当前分组中已隐藏的固定到屏幕窗口；如果没有隐藏的窗口，则隐藏其他固定到屏幕窗口</translation>
         </message>
@@ -4854,6 +4862,10 @@
             <translation>柔和</translation>
         </message>
         <message>
+            <source>Soft colored glow around new marks</source>
+            <translation>在新笔迹边缘显示渐变荧光</translation>
+        </message>
+        <message>
             <source>Soften all three skin images with blur</source>
             <translation>通过模糊柔化三种皮肤图像</translation>
         </message>
@@ -4972,6 +4984,10 @@
         <message>
             <source>Stroke color presets</source>
             <translation>描边颜色预设</translation>
+        </message>
+        <message>
+            <source>Stroke glow width</source>
+            <translation>笔迹荧光粗细</translation>
         </message>
         <message>
             <source>Stroke width</source>

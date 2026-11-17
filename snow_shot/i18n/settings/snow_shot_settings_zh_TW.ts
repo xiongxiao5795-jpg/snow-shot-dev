@@ -3994,6 +3994,14 @@
             <translation>快速修改選取範圍</translation>
         </message>
         <message>
+            <source>Rainbow stroke</source>
+            <translation>彩色筆跡</translation>
+        </message>
+        <message>
+            <source>Random stroke color</source>
+            <translation>單筆跡隨機色</translation>
+        </message>
+        <message>
             <source>Rapidly drag a pinned window back and forth to show hidden pinned windows in the current group, or hide the other pinned windows when none are hidden</source>
             <translation>快速來回拖曳固定到螢幕的視窗，以顯示目前群組中已隱藏的固定到螢幕視窗；如果沒有隱藏的視窗，則隱藏其他固定到螢幕視窗</translation>
         </message>
@@ -4854,6 +4862,10 @@
             <translation>柔和</translation>
         </message>
         <message>
+            <source>Soft colored glow around new marks</source>
+            <translation>在新筆跡邊緣顯示漸層螢光</translation>
+        </message>
+        <message>
             <source>Soften all three skin images with blur</source>
             <translation>透過模糊柔化三種佈景影像</translation>
         </message>
@@ -4972,6 +4984,10 @@
         <message>
             <source>Stroke color presets</source>
             <translation>描邊顏色預設</translation>
+        </message>
+        <message>
+            <source>Stroke glow width</source>
+            <translation>筆跡螢光粗細</translation>
         </message>
         <message>
             <source>Stroke width</source>

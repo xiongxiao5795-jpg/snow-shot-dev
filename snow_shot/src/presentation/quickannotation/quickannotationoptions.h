@@ -10,6 +10,8 @@
 
 namespace snow_shot::presentation {
 
+enum class QuickAnnotationColorMode { Solid, Rainbow, RandomStroke };
+
 // This configuration belongs to the fork's quick-annotation module only.
 struct QuickAnnotationOptions {
     QColor color{0xf5, 0x22, 0x2d};
@@ -17,6 +19,8 @@ struct QuickAnnotationOptions {
                                  QColor(0xfa, 0xdb, 0x14), QColor(0x52, 0xc4, 0x1a),
                                  QColor(0x18, 0x90, 0xff)};
     int width = 3;
+    int glowWidth = 1;
+    QuickAnnotationColorMode colorMode = QuickAnnotationColorMode::Rainbow;
     int holdMs = 0;
     int fadeMs = 500;
     QString defaultTool = QStringLiteral("rounded_rectangle");
@@ -38,6 +42,12 @@ struct QuickAnnotationOptions {
                 result.colorPresets[i] = preset;
         }
         result.width = std::clamp(object.value(QStringLiteral("width")).toInt(3), 1, 20);
+        result.glowWidth = std::clamp(object.value(QStringLiteral("glow_width")).toInt(1), 0, 5);
+        const auto mode = object.value(QStringLiteral("color_mode")).toString();
+        if (mode == QStringLiteral("solid"))
+            result.colorMode = QuickAnnotationColorMode::Solid;
+        else if (mode == QStringLiteral("random_stroke"))
+            result.colorMode = QuickAnnotationColorMode::RandomStroke;
         result.holdMs = std::clamp(object.value(QStringLiteral("hold_ms")).toInt(0), 0, 3000);
         result.fadeMs = std::clamp(object.value(QStringLiteral("fade_ms")).toInt(500), 0, 3000);
         const QString tool = object.value(QStringLiteral("default_tool")).toString();
@@ -66,6 +76,12 @@ struct QuickAnnotationOptions {
         return {{QStringLiteral("color"), color.name()},
                 {QStringLiteral("color_presets"), colors},
                 {QStringLiteral("width"), width},
+                {QStringLiteral("glow_width"), glowWidth},
+                {QStringLiteral("color_mode"), colorMode == QuickAnnotationColorMode::Solid
+                                                   ? QStringLiteral("solid")
+                                               : colorMode == QuickAnnotationColorMode::RandomStroke
+                                                   ? QStringLiteral("random_stroke")
+                                                   : QStringLiteral("rainbow")},
                 {QStringLiteral("hold_ms"), holdMs},
                 {QStringLiteral("fade_ms"), fadeMs},
                 {QStringLiteral("default_tool"), defaultTool},

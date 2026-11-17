@@ -46,6 +46,8 @@ int main(int argc, char** argv) {
             QStringLiteral("quickAnnotationSettingsHold"));
         auto* fade = widget.findChild<adqt::widgets::AdSlider*>(
             QStringLiteral("quickAnnotationSettingsFade"));
+        auto* glow = widget.findChild<adqt::widgets::AdSlider*>(
+            QStringLiteral("quickAnnotationSettingsGlow"));
         auto* holdValue =
             widget.findChild<QLabel*>(QStringLiteral("quickAnnotationSettingsHoldValue"));
         auto* toolbarPreset = toolbarWidget.findChild<adqt::widgets::AdColorPicker*>(
@@ -60,28 +62,35 @@ int main(int argc, char** argv) {
                     toolbarWidth->isVisibleTo(&toolbarWidget) &&
                     !toolbarHold->isVisibleTo(&toolbarWidget),
                 "stroke presets and width appear in the toolbar section only");
-        require(tool && color && preset && width && hold && fade && holdValue &&
+        require(tool && color && preset && width && hold && fade && glow && holdValue &&
                     holdValue->text() == QStringLiteral("0.0 s") &&
                     tool->currentValue().toString() == QStringLiteral("shape") &&
                     tool->options().size() == 3 && hold->value() == 0.0 && fade->value() == 0.5 &&
+                    glow->value() == 1 && !color->isVisibleTo(&widget) &&
                     color->presets().size() == 1 && color->presets().front().colors.size() == 5,
                 "quick annotation settings expose requested defaults");
+        const auto key = QStringLiteral("quick_annotation/options");
+        auto& configuration = storage.configuration();
+        auto solidOptions = configuration.value(key).toObject();
+        solidOptions.insert(QStringLiteral("color_mode"), QStringLiteral("solid"));
+        require(configuration.setValue(key, solidOptions) && color->isVisibleTo(&widget),
+                "default color is shown for solid mode");
         tool->setCurrentValue(QStringLiteral("arrow"));
         color->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#1890ff"))));
         preset->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#abcdef"))));
         width->setValue(7);
+        glow->setValue(4);
         hold->setValue(3.0);
         require(holdValue->text() == QStringLiteral("3.0 s"),
                 "the duration slider displays its current value");
         fade->setValue(1.2);
-        const auto key = QStringLiteral("quick_annotation/options");
-        auto& configuration = storage.configuration();
         const auto saved = configuration.value(key).toObject();
         require(saved.value(QStringLiteral("default_tool")) == QStringLiteral("arrow") &&
                     saved.value(QStringLiteral("color")) == QStringLiteral("#1890ff") &&
                     saved.value(QStringLiteral("color_presets")).toArray().at(1).toString() ==
                         QStringLiteral("#abcdef") &&
                     saved.value(QStringLiteral("width")).toInt() == 7 &&
+                    saved.value(QStringLiteral("glow_width")).toInt() == 4 &&
                     saved.value(QStringLiteral("hold_ms")).toInt() == 3000 &&
                     saved.value(QStringLiteral("fade_ms")).toInt() == 1200,
                 "settings persist independently");

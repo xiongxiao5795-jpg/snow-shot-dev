@@ -2,6 +2,7 @@
 
 #include "../globalcanvas/globalcanvasplatform.h"
 #include "quickannotationoptions.h"
+#include "quickannotationeffects.h"
 #include "snow_shot/platform/physicalcursor.h"
 #include "snow_shot/platform/screenshotnative.h"
 #ifdef Q_OS_MACOS
@@ -30,6 +31,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
+#include <QRandomGenerator>
 #include <QScreen>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -203,6 +205,8 @@ class GestureCanvas final : public SnowCanvasWidget {
     std::function<void()> released;
     std::function<void()> cancelled;
     std::function<bool()> ignoreModifiers;
+    std::function<void(QPointF, bool)> recordPoint;
+    std::function<void(QPainter&)> paintEffect;
 
   protected:
     void mousePressEvent(QMouseEvent* event) override {
@@ -215,16 +219,24 @@ class GestureCanvas final : public SnowCanvasWidget {
         }
         if (pressed)
             pressed();
+        if (recordPoint)
+            recordPoint(event->position(), true);
         dispatchMouse(event, [this](QMouseEvent* e) { SnowCanvasWidget::mousePressEvent(e); });
     }
     void mouseMoveEvent(QMouseEvent* event) override {
         dispatchMouse(event, [this](QMouseEvent* e) { SnowCanvasWidget::mouseMoveEvent(e); });
+        if (recordPoint && event->buttons() != Qt::NoButton) {
+            recordPoint(event->position(), false);
+            update();
+        }
     }
     void mouseReleaseEvent(QMouseEvent* event) override {
         if (event->button() != Qt::LeftButton && !m_controlClick) {
             event->accept();
             return;
         }
+        if (recordPoint)
+            recordPoint(event->position(), false);
         dispatchMouse(event, [this](QMouseEvent* e) { SnowCanvasWidget::mouseReleaseEvent(e); });
         m_controlClick = false;
         if (released)
@@ -237,6 +249,13 @@ class GestureCanvas final : public SnowCanvasWidget {
             return;
         }
         SnowCanvasWidget::keyPressEvent(event);
+    }
+    void paintEvent(QPaintEvent* event) override {
+        SnowCanvasWidget::paintEvent(event);
+        if (paintEffect) {
+            QPainter painter(this);
+            paintEffect(painter);
+        }
     }
 
   private:
@@ -288,7 +307,25 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         m_canvas.setWheelZoomEnabled(false);
         m_runtime.setAutomaticallySelectNewlyCreatedElements(false);
         applyScreenshotCanvasToolStyles(m_canvas, screenshotCanvasToolStyleDefaults());
-        m_canvas.pressed = [this] { m_onPress(this); m_state.begin(); };
+        m_canvas.pressed = [this] {
+            m_onPress(this);
+            m_strokeWidth = m_canvas.canvasStyleToolbarState().shapeStyle.strokeWidth;
+            m_state.begin();
+        };
+        m_canvas.recordPoint = [this](QPointF point, bool start) {
+            if (start) {
+                m_points.clear();
+                m_hue = QRandomGenerator::global()->bounded(360);
+            }
+            m_points.push_back(point);
+        };
+        m_canvas.paintEffect = [this](QPainter& painter) {
+            if (m_state.phase() != QuickAnnotationState::Phase::Drawing || m_points.isEmpty())
+                return;
+            const auto result = currentEffect();
+            if (!result.first.isNull())
+                painter.drawImage(result.second, result.first);
+        };
         m_canvas.released = [this] { completeGesture(); };
         m_canvas.cancelled = [this] { m_onExit(); };
         m_canvas.ignoreModifiers = std::move(ignoreModifiers);
@@ -341,6 +378,11 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         m_holdMs = options.holdMs;
         m_fadeMs = options.fadeMs;
         m_persistent = options.persistent;
+        m_effectOptions = options;
+        m_effectTool = tool;
+        m_strokeWidth = tool == QuickAnnotationTool::Brush   ? defaults.freeDraw.strokeWidth
+                        : tool == QuickAnnotationTool::Arrow ? defaults.arrow.strokeWidth
+                                                             : defaults.rectangle.strokeWidth;
         applyScreenshotCanvasToolStyles(m_canvas, defaults);
         const auto canvasTool = tool == QuickAnnotationTool::Brush   ? SnowCanvasTool::FreeDraw
                                 : tool == QuickAnnotationTool::Arrow ? SnowCanvasTool::Arrow
@@ -412,6 +454,9 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     }
     void clearRedoMarks() {
         m_redoMarks.clear();
+    }
+    void setEffectOptions(const QuickAnnotationOptions& options) {
+        m_effectOptions = options;
     }
 
     void cancel() {
@@ -486,6 +531,34 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         setGeometry(m_screen->geometry());
     }
 
+    std::pair<QImage, QRectF> currentEffect() {
+        if (m_points.isEmpty())
+            return {};
+        const qreal dpr = devicePixelRatioF();
+        const QSize physical(qRound(width() * dpr), qRound(height() * dpr));
+        const QImage image = m_canvas.renderContentToImage(physical);
+        if (image.isNull())
+            return {};
+        QRectF bounds(m_points.first(), m_points.first());
+        for (const auto& point : m_points)
+            bounds |= QRectF(point, QSizeF(1, 1));
+        const qreal margin = m_strokeWidth * 10 + m_effectOptions.glowWidth + 12;
+        bounds = bounds.adjusted(-margin, -margin, margin, margin).intersected(rect());
+        const QRect pixels =
+            QRectF(bounds.x() * dpr, bounds.y() * dpr, bounds.width() * dpr, bounds.height() * dpr)
+                .toAlignedRect()
+                .intersected(image.rect());
+        if (pixels.isEmpty())
+            return {};
+        const QPointF origin(pixels.x() / dpr, pixels.y() / dpr);
+        const auto points =
+            m_effectTool == QuickAnnotationTool::Brush ? m_points : QVector<QPointF>{};
+        const auto effect =
+            quickAnnotationEffects(image.copy(pixels), m_effectOptions.colorMode, m_hue,
+                                   m_effectOptions.glowWidth, points, origin, dpr, m_strokeWidth);
+        return {effect, QRectF(origin, QSizeF(pixels.width() / dpr, pixels.height() / dpr))};
+    }
+
     void completeGesture() {
         if (!m_state.finish())
             return;
@@ -497,9 +570,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
         }
         if (m_canvas.canvasHistoryState().canUndo) {
             const qreal dpr = devicePixelRatioF();
-            const QSize physical(qRound(width() * dpr), qRound(height() * dpr));
-            const QImage image = m_canvas.renderContentToImage(physical).convertToFormat(
-                QImage::Format_ARGB32_Premultiplied);
+            auto [image, effectRect] = currentEffect();
             if (!image.isNull()) {
                 int left = image.width(), top = image.height(), right = -1, bottom = -1;
                 for (int y = 0; y < image.height(); ++y) {
@@ -516,8 +587,8 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
                 if (right >= left && bottom >= top) {
                     const QRect bounds(QPoint(left, top), QPoint(right, bottom));
                     const QImage markImage = image.copy(bounds);
-                    const QRectF markRect(left / dpr, top / dpr, bounds.width() / dpr,
-                                          bounds.height() / dpr);
+                    const QRectF markRect(effectRect.x() + left / dpr, effectRect.y() + top / dpr,
+                                          bounds.width() / dpr, bounds.height() / dpr);
                     m_marks.push_back(
                         {markImage, markRect, m_now(), m_holdMs, m_fadeMs, m_persistent});
                     if (m_persistent)
@@ -569,6 +640,11 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     int m_holdMs = 0;
     int m_fadeMs = 500;
     bool m_persistent = false;
+    QuickAnnotationOptions m_effectOptions;
+    QuickAnnotationTool m_effectTool = QuickAnnotationTool::Brush;
+    QVector<QPointF> m_points;
+    qreal m_strokeWidth = 3;
+    int m_hue = 0;
     std::function<void()> m_onError;
     std::function<qint64()> m_now;
     std::function<bool(QWidget*, bool)> m_setInputTransparent;
@@ -617,6 +693,8 @@ class QuickAnnotationController::Impl {
                     const auto previous = options;
                     options = QuickAnnotationOptions::fromJson(value.toObject());
                     options.persistent = previous.persistent;
+                    for (const auto& window : windows)
+                        window->setEffectOptions(options);
                     if (previous.color != options.color || previous.width != options.width) {
                         for (auto* style : {&styles.rectangle, &styles.arrow, &styles.freeDraw}) {
                             if (previous.color != options.color)

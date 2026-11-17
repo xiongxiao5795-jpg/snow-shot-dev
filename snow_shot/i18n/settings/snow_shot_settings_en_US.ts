@@ -3994,6 +3994,14 @@
             <translation>Quick selection modification</translation>
         </message>
         <message>
+            <source>Rainbow stroke</source>
+            <translation>Rainbow stroke</translation>
+        </message>
+        <message>
+            <source>Random stroke color</source>
+            <translation>Random stroke color</translation>
+        </message>
+        <message>
             <source>Rapidly drag a pinned window back and forth to show hidden pinned windows in the current group, or hide the other pinned windows when none are hidden</source>
             <translation>Rapidly drag a pinned window back and forth to show hidden pinned windows in the current group, or hide the other pinned windows when none are hidden</translation>
         </message>
@@ -4854,6 +4862,10 @@
             <translation>Soft</translation>
         </message>
         <message>
+            <source>Soft colored glow around new marks</source>
+            <translation>Soft colored glow around new marks</translation>
+        </message>
+        <message>
             <source>Soften all three skin images with blur</source>
             <translation>Soften all three skin images with blur</translation>
         </message>
@@ -4972,6 +4984,10 @@
         <message>
             <source>Stroke color presets</source>
             <translation>Stroke color presets</translation>
+        </message>
+        <message>
+            <source>Stroke glow width</source>
+            <translation>Stroke glow width</translation>
         </message>
         <message>
             <source>Stroke width</source>
