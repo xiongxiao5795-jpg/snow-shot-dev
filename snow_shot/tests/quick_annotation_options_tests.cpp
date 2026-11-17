@@ -15,7 +15,7 @@ static void require(bool condition, const char* message) {
 int main() {
     const auto defaults = QuickAnnotationOptions::fromJson({});
     require(defaults.color == QColor(0xf5, 0x22, 0x2d) && defaults.width == 3 &&
-                defaults.holdMs == 300 && defaults.fadeMs == 500 &&
+                defaults.holdMs == 0 && defaults.fadeMs == 500 &&
                 defaults.defaultTool == QStringLiteral("rounded_rectangle") &&
                 defaults.holdShortcut == QStringLiteral("function") && !defaults.persistent,
             "independent default appearance, hold and fade");

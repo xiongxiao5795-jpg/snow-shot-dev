@@ -97,6 +97,7 @@ permissionForRenderer(settings::SettingsCustomRenderer renderer) {
         return Permission::Microphone;
     case Renderer::QuickAnnotationHoldShortcuts:
     case Renderer::QuickAnnotationOptions:
+    case Renderer::QuickAnnotationToolbarOptions:
     case Renderer::CloudUploadConfigurations:
     case Renderer::TextTranslationConfigurations:
     case Renderer::CustomAiModels:

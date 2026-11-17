@@ -3057,9 +3057,11 @@ void globalShortcutActionsHaveStableContracts() {
     require(quickSection->items.first().id == QStringLiteral("quick-annotation.hold-shortcuts"),
             "macOS quick annotation includes editable hold shortcuts");
 #endif
-    require(catalog.section(QStringLiteral("quick-annotation"), QStringLiteral("toolbar")) !=
-                nullptr,
-            "quick annotation has its own toolbar section");
+    const auto* toolbarSection =
+        catalog.section(QStringLiteral("quick-annotation"), QStringLiteral("toolbar"));
+    require(toolbarSection && toolbarSection->items.size() == 2 &&
+                toolbarSection->items.at(1).id == QStringLiteral("quick-annotation.toolbar-options"),
+            "quick annotation toolbar section includes stroke presets and width");
 #else
     require(!catalog.page(QStringLiteral("quick-annotation")) &&
                 !catalog.section(QStringLiteral("global-hotkeys"), QStringLiteral("quick-annotation")),

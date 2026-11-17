@@ -566,7 +566,7 @@ class AnnotationWindow final : public QWidget, public SnowCanvasCustomRenderer {
     SnowCanvasRuntime m_runtime;
     GestureCanvas m_canvas;
     QuickAnnotationState m_state;
-    int m_holdMs = 300;
+    int m_holdMs = 0;
     int m_fadeMs = 500;
     bool m_persistent = false;
     std::function<void()> m_onError;

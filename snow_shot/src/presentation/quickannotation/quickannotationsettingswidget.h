@@ -19,7 +19,7 @@ namespace snow_shot::presentation {
 
 class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
   public:
-    explicit QuickAnnotationSettingsWidget(QWidget* parent = nullptr)
+    explicit QuickAnnotationSettingsWidget(QWidget* parent = nullptr, bool toolbar = false)
         : SettingsCustomWidget(parent) {
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
@@ -56,7 +56,13 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         QVector<QWidget*> controls{m_tool};
         controls += {m_color, presetsHost, sliderControl(m_width, &m_widthLabel),
                      sliderControl(m_hold, &m_holdLabel), sliderControl(m_fade, &m_fadeLabel)};
-        for (QWidget* control : controls) {
+        for (qsizetype index = 0; index < controls.size(); ++index) {
+            QWidget* control = controls.at(index);
+            if ((index == 2 || index == 3) != toolbar) {
+                control->hide();
+                continue;
+            }
+            m_rowIndices.push_back(index);
             QLabel* title = nullptr;
             QLabel* description = nullptr;
             auto* row = components::createSettingItemRow(this, metric, &title, &description,
@@ -115,9 +121,9 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
             QT_TRANSLATE_NOOP("SettingsCatalog", "How long temporary marks remain visible"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "How long marks take to fade out")};
         for (qsizetype i = 0; i < m_titles.size(); ++i) {
-            m_titles.at(i)->setText(QCoreApplication::translate("SettingsCatalog", titles[i]));
+            m_titles.at(i)->setText(QCoreApplication::translate("SettingsCatalog", titles[m_rowIndices[i]]));
             m_descriptions.at(i)->setText(
-                QCoreApplication::translate("SettingsCatalog", descriptions[i]));
+                QCoreApplication::translate("SettingsCatalog", descriptions[m_rowIndices[i]]));
         }
         for (qsizetype i = 0; i < m_presets.size(); ++i) {
             const auto title =
@@ -215,6 +221,7 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
     QLabel* m_widthLabel = nullptr;
     QLabel* m_holdLabel = nullptr;
     QLabel* m_fadeLabel = nullptr;
+    QVector<qsizetype> m_rowIndices;
     QVector<QLabel*> m_titles;
     QVector<QLabel*> m_descriptions;
 };

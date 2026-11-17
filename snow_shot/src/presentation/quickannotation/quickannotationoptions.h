@@ -17,7 +17,7 @@ struct QuickAnnotationOptions {
                                  QColor(0xfa, 0xdb, 0x14), QColor(0x52, 0xc4, 0x1a),
                                  QColor(0x18, 0x90, 0xff)};
     int width = 3;
-    int holdMs = 300;
+    int holdMs = 0;
     int fadeMs = 500;
     QString defaultTool = QStringLiteral("rounded_rectangle");
     QString holdShortcut = QStringLiteral("function");
@@ -38,7 +38,7 @@ struct QuickAnnotationOptions {
                 result.colorPresets[i] = preset;
         }
         result.width = std::clamp(object.value(QStringLiteral("width")).toInt(3), 1, 20);
-        result.holdMs = std::clamp(object.value(QStringLiteral("hold_ms")).toInt(300), 0, 3000);
+        result.holdMs = std::clamp(object.value(QStringLiteral("hold_ms")).toInt(0), 0, 3000);
         result.fadeMs = std::clamp(object.value(QStringLiteral("fade_ms")).toInt(500), 0, 3000);
         const QString tool = object.value(QStringLiteral("default_tool")).toString();
         if (tool == QStringLiteral("shape") || tool == QStringLiteral("brush") ||

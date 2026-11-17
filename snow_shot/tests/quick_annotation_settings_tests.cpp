@@ -31,6 +31,9 @@ int main(int argc, char** argv) {
             "initialize isolated storage");
     {
         snow_shot::presentation::QuickAnnotationSettingsWidget widget;
+        snow_shot::presentation::QuickAnnotationSettingsWidget toolbarWidget(nullptr, true);
+        widget.show();
+        toolbarWidget.show();
         auto* tool = widget.findChild<adqt::widgets::AdSelect*>(
             QStringLiteral("quickAnnotationSettingsTool"));
         auto* color = widget.findChild<adqt::widgets::AdColorPicker*>(
@@ -45,11 +48,23 @@ int main(int argc, char** argv) {
             QStringLiteral("quickAnnotationSettingsFade"));
         auto* holdValue =
             widget.findChild<QLabel*>(QStringLiteral("quickAnnotationSettingsHoldValue"));
+        auto* toolbarPreset = toolbarWidget.findChild<adqt::widgets::AdColorPicker*>(
+            QStringLiteral("quickAnnotationColorPreset2"));
+        auto* toolbarWidth = toolbarWidget.findChild<adqt::widgets::AdSlider*>(
+            QStringLiteral("quickAnnotationSettingsWidth"));
+        auto* toolbarHold = toolbarWidget.findChild<adqt::widgets::AdSlider*>(
+            QStringLiteral("quickAnnotationSettingsHold"));
+        require(toolbarPreset && toolbarWidth && toolbarHold &&
+                    !preset->isVisibleTo(&widget) && !width->isVisibleTo(&widget) &&
+                    hold->isVisibleTo(&widget) && toolbarPreset->isVisibleTo(&toolbarWidget) &&
+                    toolbarWidth->isVisibleTo(&toolbarWidget) &&
+                    !toolbarHold->isVisibleTo(&toolbarWidget),
+                "stroke presets and width appear in the toolbar section only");
         require(tool && color && preset && width && hold && fade && holdValue &&
-                    holdValue->text() == QStringLiteral("0.3 s") &&
+                    holdValue->text() == QStringLiteral("0.0 s") &&
                     tool->currentValue().toString() == QStringLiteral("shape") &&
                     tool->options().size() == 3 &&
-                    hold->value() == 0.3 && fade->value() == 0.5 && color->presets().size() == 1 &&
+                    hold->value() == 0.0 && fade->value() == 0.5 && color->presets().size() == 1 &&
                     color->presets().front().colors.size() == 5,
                 "quick annotation settings expose requested defaults");
         tool->setCurrentValue(QStringLiteral("arrow"));

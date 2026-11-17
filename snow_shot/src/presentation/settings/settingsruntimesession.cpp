@@ -1011,6 +1011,7 @@ QVariant SettingsRuntimeSession::readValue(const SettingsFieldDescriptor& descri
                     return QVariant::fromValue(m_backend.cloudUploadSettings());
                 case SettingsCustomRenderer::QuickAnnotationHoldShortcuts:
                 case SettingsCustomRenderer::QuickAnnotationOptions:
+                case SettingsCustomRenderer::QuickAnnotationToolbarOptions:
                 case SettingsCustomRenderer::McpStatus:
                 case SettingsCustomRenderer::PermissionScreenRecording:
                 case SettingsCustomRenderer::PermissionAccessibility:
@@ -1107,6 +1108,7 @@ bool SettingsRuntimeSession::writeValue(const SettingsFieldDescriptor& descripto
                 switch (payload.renderer) {
                 case SettingsCustomRenderer::QuickAnnotationHoldShortcuts:
                 case SettingsCustomRenderer::QuickAnnotationOptions:
+                case SettingsCustomRenderer::QuickAnnotationToolbarOptions:
                 case SettingsCustomRenderer::McpStatus:
                 case SettingsCustomRenderer::PermissionScreenRecording:
                 case SettingsCustomRenderer::PermissionAccessibility:

@@ -804,6 +804,13 @@ SettingsItemDefinition showEditSelectionToolbarItem() {
 }
 
 #if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
+SettingsItemDefinition quickAnnotationToolbarOptionsItem() {
+    return {QStringLiteral("quick-annotation.toolbar-options"),
+            settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation toolbar")),
+            settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Choose a quick annotation tool")),
+            {}, {}, SettingsCustomDefinition{SettingsCustomRenderer::QuickAnnotationToolbarOptions}};
+}
+
 SettingsItemDefinition quickAnnotationToolbarEditorItem() {
     return {
         QStringLiteral("quick-annotation.toolbar-editor"),
@@ -5251,7 +5258,7 @@ constexpr CatalogSectionRecord catalogPageAppPermissionsSections[] = {
 #if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
 constexpr CatalogItemFactory catalogPageQuickAnnotationItems[] = {{quickAnnotationOptionsItem}};
 constexpr CatalogItemFactory catalogPageQuickAnnotationToolbarItems[] = {
-    {quickAnnotationToolbarEditorItem}};
+    {quickAnnotationToolbarEditorItem}, {quickAnnotationToolbarOptionsItem}};
 constexpr CatalogSectionRecord catalogPageQuickAnnotationSections[] = {
     {.id = u"appearance",
      .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Quick annotation appearance")),
@@ -7297,6 +7304,9 @@ QStringList SettingsCatalog::validationErrors() const {
                     storage::ConfigurationValueKind expectedKind =
                         storage::ConfigurationValueKind::Structured;
                     switch (custom->renderer) {
+                    case SettingsCustomRenderer::QuickAnnotationToolbarOptions:
+                        rendererSupported = true;
+                        break;
                     case SettingsCustomRenderer::QuickAnnotationOptions:
                         rendererSupported = true;
                         expectedKey = QStringLiteral("quick_annotation/options");

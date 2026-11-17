@@ -1568,6 +1568,12 @@ SettingsCustomWidget* createSettingsCustomWidget(
 #else
         return nullptr;
 #endif
+    case SettingsCustomRenderer::QuickAnnotationToolbarOptions:
+#if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
+        return new snow_shot::presentation::QuickAnnotationSettingsWidget(parent, true);
+#else
+        return nullptr;
+#endif
     case SettingsCustomRenderer::QuickAnnotationOptions:
 #if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
         return new snow_shot::presentation::QuickAnnotationSettingsWidget(parent);
