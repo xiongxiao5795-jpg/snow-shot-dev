@@ -1040,6 +1040,11 @@ class MacOSBuildScripts(unittest.TestCase):
             "import os, sys\n"
             "if os.environ.get('SNOW_TEST_RELEASE_IDENTITY_MISSING'): sys.exit(1)\n"
             "print('A' * 40)\n")
+        # Bootstrap is exercised separately; these command-sequencing fixtures must
+        # never download or depend on a real Sparkle distribution.
+        (self.root / 'scripts/snow-shot-sparkle.py').write_text(
+            "import sys\n"
+            "assert sys.argv[1:] == ['bootstrap']\n")
         ocr_pin = self.root / 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml'
         ocr_pin.parent.mkdir(parents=True)
         shutil.copyfile(ROOT / 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml', ocr_pin)
