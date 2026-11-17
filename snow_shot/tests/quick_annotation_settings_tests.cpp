@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
             QStringLiteral("quickAnnotationSettingsWidth"));
         auto* toolbarHold = toolbarWidget.findChild<adqt::widgets::AdSlider*>(
             QStringLiteral("quickAnnotationSettingsHold"));
-        require(toolbarPreset && toolbarWidth && toolbarHold &&
+        require(preset && width && hold && toolbarPreset && toolbarWidth && toolbarHold &&
                     !preset->isVisibleTo(&widget) && !width->isVisibleTo(&widget) &&
                     hold->isVisibleTo(&widget) && toolbarPreset->isVisibleTo(&toolbarWidget) &&
                     toolbarWidth->isVisibleTo(&toolbarWidget) &&
@@ -63,9 +63,8 @@ int main(int argc, char** argv) {
         require(tool && color && preset && width && hold && fade && holdValue &&
                     holdValue->text() == QStringLiteral("0.0 s") &&
                     tool->currentValue().toString() == QStringLiteral("shape") &&
-                    tool->options().size() == 3 &&
-                    hold->value() == 0.0 && fade->value() == 0.5 && color->presets().size() == 1 &&
-                    color->presets().front().colors.size() == 5,
+                    tool->options().size() == 3 && hold->value() == 0.0 && fade->value() == 0.5 &&
+                    color->presets().size() == 1 && color->presets().front().colors.size() == 5,
                 "quick annotation settings expose requested defaults");
         tool->setCurrentValue(QStringLiteral("arrow"));
         color->setValue(adqt::widgets::AdColorValue::solid(QColor(QStringLiteral("#1890ff"))));

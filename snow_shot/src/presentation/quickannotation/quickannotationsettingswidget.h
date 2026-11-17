@@ -121,7 +121,8 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
             QT_TRANSLATE_NOOP("SettingsCatalog", "How long temporary marks remain visible"),
             QT_TRANSLATE_NOOP("SettingsCatalog", "How long marks take to fade out")};
         for (qsizetype i = 0; i < m_titles.size(); ++i) {
-            m_titles.at(i)->setText(QCoreApplication::translate("SettingsCatalog", titles[m_rowIndices[i]]));
+            m_titles.at(i)->setText(
+                QCoreApplication::translate("SettingsCatalog", titles[m_rowIndices[i]]));
             m_descriptions.at(i)->setText(
                 QCoreApplication::translate("SettingsCatalog", descriptions[m_rowIndices[i]]));
         }
@@ -137,8 +138,10 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
             {{QStringLiteral("shape"), QCoreApplication::translate("SettingsCatalog", "Rectangle")},
              {QStringLiteral("arrow"), QCoreApplication::translate("SettingsCatalog", "Arrow")},
              {QStringLiteral("brush"), QCoreApplication::translate("SettingsCatalog", "Brush")}});
-        m_tool->setCurrentValue(selected == QStringLiteral("arrow") || selected == QStringLiteral("brush")
-                                    ? selected : QStringLiteral("shape"));
+        m_tool->setCurrentValue(selected == QStringLiteral("arrow") ||
+                                        selected == QStringLiteral("brush")
+                                    ? selected
+                                    : QStringLiteral("shape"));
         updateValueLabels();
     }
 
@@ -187,7 +190,8 @@ class QuickAnnotationSettingsWidget final : public SettingsCustomWidget {
         const QSignalBlocker a(m_tool), b(m_color), c(m_width), e(m_hold), f(m_fade);
         m_tool->setCurrentValue(options.defaultTool == QStringLiteral("arrow") ||
                                         options.defaultTool == QStringLiteral("brush")
-                                    ? options.defaultTool : QStringLiteral("shape"));
+                                    ? options.defaultTool
+                                    : QStringLiteral("shape"));
         QVector<adqt::widgets::AdColorValue> presetValues;
         for (qsizetype i = 0; i < m_presets.size(); ++i) {
             const QSignalBlocker presetBlocker(m_presets[i]);
