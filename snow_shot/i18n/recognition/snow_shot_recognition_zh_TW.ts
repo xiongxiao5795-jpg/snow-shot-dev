@@ -31,16 +31,8 @@
     <context>
         <name>ScreenshotImageConversionController</name>
         <message>
-            <source>Cancel</source>
-            <translation>取消</translation>
-        </message>
-        <message>
             <source>Image conversion failed</source>
             <translation>影像轉換失敗</translation>
-        </message>
-        <message>
-            <source>Image conversion settings</source>
-            <translation>影像轉換設定</translation>
         </message>
         <message>
             <source>Model configuration changed. Retry to use the updated settings</source>
@@ -49,14 +41,6 @@
         <message>
             <source>No vision models are available</source>
             <translation>沒有可用的視覺模型</translation>
-        </message>
-        <message>
-            <source>OK</source>
-            <translation>確定</translation>
-        </message>
-        <message>
-            <source>Retry</source>
-            <translation>重試</translation>
         </message>
         <message>
             <source>The image conversion service is unavailable</source>
@@ -73,10 +57,6 @@
         <message>
             <source>Unable to load vision models</source>
             <translation>無法載入視覺模型</translation>
-        </message>
-        <message>
-            <source>Vision model</source>
-            <translation>視覺模型</translation>
         </message>
     </context>
     <context>
@@ -172,6 +152,10 @@
             <translation>正在轉換為 Markdown</translation>
         </message>
         <message>
+            <source>Document recognition service is unavailable</source>
+            <translation>文件辨識服務無法使用</translation>
+        </message>
+        <message>
             <source>LaTeX recognition failed</source>
             <translation>LaTeX 辨識失敗</translation>
         </message>
@@ -220,6 +204,10 @@
             <translation>正在辨識條碼</translation>
         </message>
         <message>
+            <source>Recognizing document</source>
+            <translation>正在辨識文件</translation>
+        </message>
+        <message>
             <source>Recognizing table</source>
             <translation>正在辨識表格</translation>
         </message>
@@ -266,6 +254,10 @@
         <message>
             <source>Text recognition request could not be prepared</source>
             <translation>無法準備文字辨識請求</translation>
+        </message>
+        <message>
+            <source>The document file could not be opened</source>
+            <translation>無法開啟文件檔案</translation>
         </message>
         <message>
             <source>The selected recognition model is unavailable. Choose another model or retry</source>
@@ -337,6 +329,10 @@
         <message>
             <source>Paste</source>
             <translation>貼上</translation>
+        </message>
+        <message>
+            <source>Recognized document</source>
+            <translation>已辨識文件</translation>
         </message>
         <message>
             <source>Rendering formula...</source>

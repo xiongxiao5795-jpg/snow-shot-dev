@@ -782,6 +782,17 @@ SettingsItemDefinition showGuidesByDefaultItem() {
             SettingsSwitchDefinition{SettingsSwitchBinding::ShowGuidesByDefault}};
 }
 
+SettingsItemDefinition adaptiveGuideColorsItem() {
+    return {QStringLiteral("interface.screenshot.adaptive-guide-colors"),
+            settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Adaptive guide colors")),
+            settingsText(QT_TRANSLATE_NOOP(
+                "SettingsCatalog",
+                "Invert guide colors that are similar to their sampled background color")),
+            {},
+            QStringLiteral("screenshot_ui/adaptive_guide_colors"),
+            SettingsSwitchDefinition{SettingsSwitchBinding::AdaptiveGuideColors}};
+}
+
 SettingsItemDefinition showEditSelectionToolbarItem() {
     return {QStringLiteral("interface.screenshot.show-edit-selection-toolbar"),
             settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Show edit selection toolbar")),
@@ -1237,19 +1248,14 @@ SettingsItemDefinition updateModeItem() {
 #ifndef Q_OS_MACOS
         {QStringLiteral("download"),
          settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Download automatically"))},
+#endif
         {QStringLiteral("next_launch"),
          settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Auto-update on next launch"))},
-#endif
     };
     return {QStringLiteral("updates.mode"),
             settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Updates")),
-#ifdef Q_OS_MACOS
-            settingsText(
-                QT_TRANSLATE_NOOP("SettingsCatalog", "Check for new versions on GitHub and Gitee")),
-#else
             settingsText(QT_TRANSLATE_NOOP("SettingsCatalog",
                                            "Choose how updates are downloaded and installed")),
-#endif
             {settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Software updates"))},
             QStringLiteral("updates/mode"),
             payload};
@@ -1417,20 +1423,31 @@ SettingsItemDefinition toggleGlobalShortcutsItem() {
         {QT_TRANSLATE_NOOP("SettingsCatalog", "Disable global shortcuts"), true});
 }
 
+SettingsItemDefinition toggleGlobalMouseItem() {
+    return quickActionItem(
+        QStringLiteral("quick.toggle-global-mouse"),
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Disable/enable global mouse"),
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Pause or resume configured global mouse gestures"),
+        {}, GlobalShortcutAction::ToggleGlobalMouse,
+        QStringLiteral("global_shortcuts/toggle_global_mouse"),
+        []() { return custom_outlined_icons::Mouse(); }, SettingsShortcutAdjustment::None,
+        {QT_TRANSLATE_NOOP("SettingsCatalog", "Disable global mouse"), true});
+}
+
 SettingsItemDefinition toggleDisableOnFocusedFullscreenWindowItem() {
     return quickActionItem(
         QStringLiteral("quick.toggle-disable-on-focused-fullscreen-window"),
-        QT_TRANSLATE_NOOP("SettingsCatalog", "Disable shortcuts in fullscreen windows"),
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Automatic disabling in fullscreen windows"),
         QT_TRANSLATE_NOOP(
             "SettingsCatalog",
-            "Turn off or back on the suppression of global shortcuts while the focused window is "
-            "fullscreen; this shortcut stays active while fullscreen suppression is enabled"),
+            "Toggle automatic disabling of the selected inputs in fullscreen windows. This "
+            "shortcut stays active while automatic disabling is enabled"),
         {settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Fullscreen suppression"))},
         GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow,
         QStringLiteral("global_shortcuts/toggle_disable_on_focused_fullscreen_window"),
         []() { return custom_outlined_icons::ScreenshotFullScreen(); },
         SettingsShortcutAdjustment::None,
-        {QT_TRANSLATE_NOOP("SettingsCatalog", "Disable shortcuts in fullscreen windows"), true});
+        {QT_TRANSLATE_NOOP("SettingsCatalog", "Automatic disabling in fullscreen windows"), true});
 }
 
 SettingsItemDefinition pinClipboardContentItem() {
@@ -2613,7 +2630,7 @@ SettingsItemDefinition fullscreenShortcutSuppressionItem() {
                           "Automatically disable when a focused fullscreen window exists"),
         QT_TRANSLATE_NOOP(
             "SettingsCatalog",
-            "Ignore global shortcuts while a matching focused window occupies an entire monitor"),
+            "Pause the selected inputs while a matching focused window occupies an entire monitor"),
         QStringLiteral("global_shortcuts/disable_on_focused_fullscreen_window"),
         SettingsSwitchBinding::DisableShortcutsOnFocusedFullscreen);
 }
@@ -2623,13 +2640,32 @@ SettingsItemDefinition fullscreenWindowFilterItem() {
         QStringLiteral("global-hotkeys.window-filter-type"),
         QT_TRANSLATE_NOOP("SettingsCatalog", "Window filter type"),
         QT_TRANSLATE_NOOP("SettingsCatalog",
-                          "Choose which fullscreen windows automatically disable global shortcuts"),
+                          "Choose which fullscreen windows trigger automatic disabling"),
         QStringLiteral("global_shortcuts/fullscreen_window_filter"),
         SettingsSelectBinding::FullscreenWindowFilter,
         {{QStringLiteral("all_windows"),
           settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "All windows"))},
          {QStringLiteral("game_windows"),
           settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Game windows"))}});
+}
+
+SettingsItemDefinition fullscreenDisableScopeItem() {
+    SettingsMultiSelectDefinition payload;
+    payload.binding = SettingsMultiSelectBinding::FullscreenDisableScope;
+    payload.options = {
+        {QStringLiteral("global_shortcuts"),
+         settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Global shortcuts"))},
+        {QStringLiteral("global_mouse"),
+         settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Global mouse"))},
+    };
+    return {
+        QStringLiteral("global-hotkeys.disable-scope"),
+        settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Disable scope")),
+        settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Choose which inputs to disable")),
+        {},
+        QStringLiteral("global_shortcuts/fullscreen_disable_scope"),
+        std::move(payload),
+    };
 }
 
 #ifndef Q_OS_MACOS
@@ -2656,21 +2692,6 @@ SettingsItemDefinition restartAsAdministratorItem() {
             payload};
 }
 #endif
-#ifdef Q_OS_MACOS
-SettingsItemDefinition loginItemSettingsItem() {
-    SettingsActionDefinition payload;
-    payload.binding = SettingsActionBinding::OpenLoginItemSettings;
-    payload.iconFactory = [] { return outlined_icons::Setting(); };
-    payload.buttonText = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Open"));
-    return {QStringLiteral("system.login-item-settings"),
-            settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Open Login Items settings")),
-            settingsText(QT_TRANSLATE_NOOP(
-                "SettingsCatalog", "Manage Snow Shot's login permission in macOS System Settings")),
-            {},
-            {},
-            payload};
-}
-#endif
 SettingsItemDefinition autoStartItem() {
     if (app::distribution::isStoreManaged())
         return switchItem(QStringLiteral("system.auto-start-at-boot"),
@@ -2682,8 +2703,10 @@ SettingsItemDefinition autoStartItem() {
     return switchItem(
         QStringLiteral("system.auto-start-at-boot"),
 #ifdef Q_OS_MACOS
-        QT_TRANSLATE_NOOP("SettingsCatalog", "Launch at login"),
-        QT_TRANSLATE_NOOP("SettingsCatalog", "Start Snow Shot in the background when you log in"),
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Open at login"),
+        QT_TRANSLATE_NOOP(
+            "SettingsCatalog",
+            "Automatically start Snow Shot in the background when you log in to your Mac"),
 #else
         QT_TRANSLATE_NOOP("SettingsCatalog", "Auto start at boot"),
         QT_TRANSLATE_NOOP("SettingsCatalog",
@@ -4098,12 +4121,14 @@ constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionOtherItems[] = {
     {toggleWindowUnderCursorAlwaysOnTopItem},
 #endif
     {toggleGlobalShortcutsItem},
+    {toggleGlobalMouseItem},
     {toggleDisableOnFocusedFullscreenWindowItem},
 };
 
 constexpr CatalogItemFactory catalogPageGlobalHotkeysSectionGlobalHotkeysItems[] = {
     {fullscreenShortcutSuppressionItem},
     {fullscreenWindowFilterItem},
+    {fullscreenDisableScopeItem},
 };
 
 constexpr CatalogSectionRecord catalogPageGlobalHotkeysSections[] = {
@@ -4167,8 +4192,8 @@ constexpr CatalogSectionRecord catalogPageGlobalHotkeysSections[] = {
     {
         .id = u"global-hotkeys",
         .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Automatic disabling")),
-        .description = settingsText(
-            QT_TRANSLATE_NOOP("SettingsCatalog", "Global shortcut activation behavior")),
+        .description =
+            settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Fullscreen input settings")),
         .reset = SettingsSectionReset ::GlobalShortcuts,
         .items = catalogPageGlobalHotkeysSectionGlobalHotkeysItems,
         .factory = nullptr,
@@ -4234,9 +4259,6 @@ constexpr CatalogItemFactory catalogPageGeneralSectionSystemGeneralItems[] = {
 #endif
 #if defined(Q_OS_WIN)
     {nullptr, &catalogItemSystemAnnotationModeWhenOpeningForEditing},
-#endif
-#if defined(Q_OS_MACOS)
-    {loginItemSettingsItem},
 #endif
     {updateModeItem},
 };
@@ -4371,6 +4393,7 @@ constexpr CatalogItemFactory catalogPageScreenshotsSectionInterfaceScreenshotIte
     {shortcutHintOpacityItem},
     {screenshotAreaTypeHintItem},
     {showGuidesByDefaultItem},
+    {adaptiveGuideColorsItem},
     {nullptr, &catalogItemInterfaceScreenshotCursorGuideLineColor},
     {nullptr, &catalogItemInterfaceScreenshotSelectionCenterGuideLineColor},
     {nullptr, &catalogItemInterfaceScreenshotMonitorCenterGuideLineColor},
@@ -4943,8 +4966,27 @@ constexpr CatalogItemFactory catalogPageDesktopToolsSectionTrayItems[] = {
     {trayMenuOptionsItem},
 };
 
+SettingsItemDefinition floatingToolbarDropBehaviorItem() {
+    return fixedSelectItem(
+        QStringLiteral("floating-toolbar.drop-behavior"),
+        QT_TRANSLATE_NOOP("SettingsCatalog", "Toolbar drop behavior"),
+        QT_TRANSLATE_NOOP("SettingsCatalog",
+                          "Choose what happens when content is dropped on the floating toolbar"),
+        QStringLiteral("floating_toolbar/drop_behavior"),
+        SettingsSelectBinding::FloatingToolbarDropBehavior,
+        {{QStringLiteral("pin_to_screen"),
+          settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Pin to screen"))},
+         {QStringLiteral("image_stitching"),
+          settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Image stitching"))},
+         {QStringLiteral("image_splitting"),
+          settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Image splitting"))},
+         {QStringLiteral("image_editing"),
+          settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Image editing"))}});
+}
+
 constexpr CatalogItemFactory catalogPageDesktopToolsSectionFloatingToolbarItems[] = {
     {floatingToolbarEnabledItem},
+    {floatingToolbarDropBehaviorItem},
     {floatingToolbarOpacityItem},
     {floatingToolbarEditorItem},
 };
@@ -5318,6 +5360,17 @@ constexpr CatalogPageRecord catalogPages[] = {
         .aliases = catalogPageGeneralAliases,
     },
     {
+        .id = u"account",
+        .route = u"/settings/account",
+        .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Account")),
+        .description = settingsText(
+            QT_TRANSLATE_NOOP("SettingsCatalog", "Membership, credits and transactions")),
+        .sections = {},
+        .kind = SettingsPageKind::Account,
+        .links = {},
+        .aliases = {},
+    },
+    {
         .id = u"general-appearance",
         .route = u"/settings/general-appearance",
         .title = settingsText(QT_TRANSLATE_NOOP("SettingsCatalog", "Appearance")),
@@ -5581,6 +5634,8 @@ QVector<SettingsNavigationNode> builtInNavigation() {
     settingsGroup.pages = {
         {QStringLiteral("nav.general"), QStringLiteral("general"),
          []() { return outlined_icons::Setting(); }},
+        {QStringLiteral("nav.account"), QStringLiteral("account"),
+         []() { return outlined_icons::User(); }},
         {QStringLiteral("nav.general-appearance"), QStringLiteral("general-appearance"),
          []() { return outlined_icons::Control(); }},
         {QStringLiteral("nav.screenshots"), QStringLiteral("screenshots"),
@@ -5729,6 +5784,8 @@ QString shortcutConfigurationKey(GlobalShortcutAction action) {
         return QStringLiteral("global_shortcuts/toggle_window_under_cursor_always_on_top");
     case GlobalShortcutAction::ToggleGlobalShortcuts:
         return QStringLiteral("global_shortcuts/toggle_global_hotkeys");
+    case GlobalShortcutAction::ToggleGlobalMouse:
+        return QStringLiteral("global_shortcuts/toggle_global_mouse");
     case GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow:
         return QStringLiteral("global_shortcuts/toggle_disable_on_focused_fullscreen_window");
     }
@@ -5781,7 +5838,8 @@ SettingsCatalog::SettingsCatalog(QVector<SettingsPageDefinition> pages,
                   !app::edition::textTranslation || !app::edition::apiConfiguration ||
                   !app::edition::extendedFeatures) {
         const auto pageAvailable = [](const QString& id) {
-            return (app::edition::textTranslation || id != QStringLiteral("translation")) &&
+            return (!app::edition::isMini || id != QStringLiteral("account")) &&
+                   (app::edition::textTranslation || id != QStringLiteral("translation")) &&
                    (app::edition::apiConfiguration || id != QStringLiteral("api-configuration")) &&
                    (app::edition::extendedFeatures || id != QStringLiteral("extended-features"));
         };
@@ -6168,8 +6226,14 @@ TrayCommandManifest buildBuiltInTrayCommandManifest() {
               []() { return custom_outlined_icons::Disabled(); }, SettingsShortcutAdjustment::None,
               true),
           quick(
+              QStringLiteral("quick.toggle-global-mouse"),
+              QT_TRANSLATE_NOOP("SettingsCatalog", "Disable global mouse"),
+              GlobalShortcutAction::ToggleGlobalMouse,
+              []() { return custom_outlined_icons::Mouse(); }, SettingsShortcutAdjustment::None,
+              true),
+          quick(
               QStringLiteral("quick.toggle-disable-on-focused-fullscreen-window"),
-              QT_TRANSLATE_NOOP("SettingsCatalog", "Disable shortcuts in fullscreen windows"),
+              QT_TRANSLATE_NOOP("SettingsCatalog", "Automatic disabling in fullscreen windows"),
               GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow,
               []() { return custom_outlined_icons::ScreenshotFullScreen(); },
               SettingsShortcutAdjustment::None, true)}},
@@ -6454,6 +6518,9 @@ QStringList SettingsCatalog::validationErrors() const {
                     case SettingsSelectBinding::PinDuplicateContentAction:
                         expectedKey = QStringLiteral("pin_to_screen/duplicate_content_action");
                         break;
+                    case SettingsSelectBinding::FloatingToolbarDropBehavior:
+                        expectedKey = QStringLiteral("floating_toolbar/drop_behavior");
+                        break;
                     case SettingsSelectBinding::PinTextSelectionOnRecognitionResults:
                         expectedKey =
                             QStringLiteral("pin_to_screen/text_selection_on_recognition_results");
@@ -6596,6 +6663,9 @@ QStringList SettingsCatalog::validationErrors() const {
                         break;
                     case SettingsSwitchBinding::ShowGuidesByDefault:
                         expectedKey = QStringLiteral("screenshot_ui/show_guides_by_default");
+                        break;
+                    case SettingsSwitchBinding::AdaptiveGuideColors:
+                        expectedKey = QStringLiteral("screenshot_ui/adaptive_guide_colors");
                         break;
                     case SettingsSwitchBinding::ShowEditSelectionToolbar:
                         expectedKey = QStringLiteral("screenshot_ui/show_edit_selection_toolbar");
@@ -6796,6 +6866,9 @@ QStringList SettingsCatalog::validationErrors() const {
                     case SettingsMultiSelectBinding::ScreenshotAutoSaveAfterExecution:
                         expectedKey =
                             QStringLiteral("screenshot/auto_save_after_execution_actions");
+                        break;
+                    case SettingsMultiSelectBinding::FullscreenDisableScope:
+                        expectedKey = QStringLiteral("global_shortcuts/fullscreen_disable_scope");
                         break;
                     }
                     QSet<QString> configuredValues;

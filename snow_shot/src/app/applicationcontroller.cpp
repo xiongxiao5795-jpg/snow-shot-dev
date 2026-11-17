@@ -21,6 +21,7 @@
 #include "snow_shot/platform/windows/administratorlaunch.h"
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
 #include "snow_shot/translation/translationservice.h"
+#include "snow_shot/app/accountsessionservice.h"
 #endif
 #include "snow_shot/presentation/languagemanager.h"
 #include "snow_shot/presentation/styles/thememanager.h"
@@ -58,7 +59,6 @@
 #include "snow_shot/presentation/screenshotpinnedwindow.h"
 #include "snow_shot/presentation/screenrecordingfolder.h"
 #include "snow_shot/presentation/systemtraycontroller.h"
-#include "snow_shot/presentation/systemnotificationfeedback.h"
 #include "snow_shot/presentation/floatingtoolbarcontroller.h"
 #include "snow_shot/app/mcp/mcpruntimelifecycle.h"
 #include "snow_shot/app/mcp/mcpruntimegraph.h"
@@ -86,6 +86,7 @@
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QScreen>
 #include <QTimer>
 #include <QtMath>
@@ -153,18 +154,7 @@ class ApplicationController::Impl {
     Impl(ApplicationController& owner, QApplication& application)
         : q(owner), app(application), restartCoordinator(application),
           groupManager(initializedPinnedWindowRepository()),
-          systemTray(presentation::settings::builtInTrayCommandManifest(), &groupManager) {
-        QObject::connect(&systemTray,
-                         &presentation::SystemTrayController::notificationDeliveryFinished, &q,
-                         [this](const platform::SystemNotificationRequest& request,
-                                const platform::SystemNotificationResult& result) {
-                             presentation::presentSystemNotificationResult(
-                                 request, result, [this]() -> QWidget* {
-                                     MainWindow& window = ensureMainWindow();
-                                     window.showAndActivate();
-                                     return &window;
-                                 });
-                         });
+          systemTray(presentation::settings::builtInTrayCommandManifest(), &groupManager, &q) {
         QObject::connect(&floatingToolbar,
                          &presentation::FloatingToolbarController::actionRequested, &q,
                          [this](const QString& action) { dispatchFloatingAction(action); });
@@ -183,6 +173,37 @@ class ApplicationController::Impl {
                     [this, snapshot = std::move(snapshot), paths = std::move(paths)]() mutable {
                         if (auto* controller = ensureScreenshotController())
                             controller->pinDroppedContent(std::move(snapshot), std::move(paths));
+                    }));
+            });
+        QObject::connect(
+            &floatingToolbar, &presentation::FloatingToolbarController::imageContentDropped, &q,
+            [this](presentation::FloatingToolbarImageAction action,
+                   ScreenshotClipboardContentSnapshot snapshot, QStringList paths,
+                   std::shared_ptr<presentation::ImageStitchingImportReservation> reservation) {
+                if (storage::ApplicationStorage::instance().directoryChanging())
+                    return;
+                static_cast<void>(actionGate.dispatch(
+                    [this, action, snapshot = std::move(snapshot), paths = std::move(paths),
+                     reservation = std::move(reservation)]() mutable {
+                        const auto present = [&](auto& coordinator) {
+                            if (!paths.isEmpty())
+                                coordinator.presentFiles(paths);
+                            else
+                                coordinator.presentDroppedImage(std::move(snapshot),
+                                                                std::move(reservation));
+                        };
+                        using Action = presentation::FloatingToolbarImageAction;
+                        switch (action) {
+                        case Action::Stitch:
+                            present(ensureImageStitchingWindowCoordinator());
+                            break;
+                        case Action::Split:
+                            present(ensureImageSplitWindowCoordinator());
+                            break;
+                        case Action::Edit:
+                            present(ensureImageEditingWindowCoordinator());
+                            break;
+                        }
                     }));
             });
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &floatingToolbar,
@@ -287,6 +308,17 @@ class ApplicationController::Impl {
             &globalShortcutManager,
             &presentation::GlobalShortcutManager::focusedFullscreenSuppressionChanged, &systemTray,
             &presentation::SystemTrayController::setFocusedFullscreenSuppressionActive);
+        QObject::connect(
+            &globalShortcutManager,
+            &presentation::GlobalShortcutManager::focusedFullscreenMouseSuppressionChanged,
+            &globalMouseManager,
+            &presentation::GlobalMouseManager::setFocusedFullscreenSuppressionActive);
+        QObject::connect(&globalMouseManager,
+                         &presentation::GlobalMouseManager::globalMouseEnabledChanged, &q,
+                         [this](bool enabled) {
+                             systemTray.setQuickActionChecked(
+                                 presentation::GlobalShortcutAction::ToggleGlobalMouse, !enabled);
+                         });
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &systemTray,
                          &presentation::SystemTrayController::hide);
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &globalMouseManager,
@@ -338,6 +370,11 @@ class ApplicationController::Impl {
                 applicationStorage.configuration()
                     .value(QStringLiteral("api_configuration/server_url"))
                     .toString()));
+        auto* accountSession = AccountSessionService::forClient(translationClient.get());
+        QObject::connect(accountSession, &AccountSessionService::registrationActivated, &q, [this] {
+            static_cast<void>(actionGate.dispatch(
+                [this] { ensureMainWindow().showSettingsLocation(QStringLiteral("account")); }));
+        });
         translationService = &translation::TranslationService::forClient(
             *translationClient, applicationStorage.configuration(),
             presentation::LanguageManager::instance().currentLocale());
@@ -650,7 +687,12 @@ class ApplicationController::Impl {
                         screenshotController->prepareForSessionEnd(timeoutMs);
                 },
                 [this] {
+                    shuttingDown = true;
+                    deferredStartup.stop();
+                    if (handoffPause)
+                        handoffPause->commit();
                     handoffInput->active = true;
+                    mcpGraph.setSourcesSuspended(true);
                     if (screenshotController)
                         screenshotController->setCaptureSuspended(true);
                     static_cast<void>(globalShortcutManager.suspendRegistrations());
@@ -701,7 +743,9 @@ class ApplicationController::Impl {
         OperationFacts facts;
         facts.suspended =
             (ownedPause != OwnedPause::Relocation && migrationInput && migrationInput->active) ||
-            (ownedPause != OwnedPause::UpdateHandoff && handoffInput && handoffInput->active);
+            (ownedPause != OwnedPause::UpdateHandoff &&
+             (handoffPauseRequested || (handoffInput && handoffInput->active) ||
+              (handoffPause && handoffPause->committed())));
         facts.storageChanging = applicationStorage.directoryChanging();
         facts.updaterUnavailableOrApplying =
             !updates || updates->status().state == update::UpdateState::Applying;
@@ -793,53 +837,143 @@ class ApplicationController::Impl {
         });
     }
 
+    void restoreApplicationInput(ApplicationInputGuard& input) {
+        const QPointer<ApplicationController> lifetime(&q);
+        input.active = &input == handoffInput && handoffPauseRequested;
+        reconcileSuspension();
+        if (!lifetime)
+            return;
+        globalMouseManager.setCaptureAvailable(
+            !applicationSuspended() &&
+            (!screenshotController || screenshotController->captureAvailable()));
+        if (!lifetime)
+            return;
+        systemTray.setEnabled(!applicationSuspended() && storage::ApplicationStorage::instance()
+                                                             .configuration()
+                                                             .value(kTrayEnabledKey)
+                                                             .toBool());
+    }
+
     void acquireApplicationPause(QuiescenceSession& pause, ApplicationInputGuard& input) {
+        const QPointer<ApplicationController> lifetime(&q);
         input.active = true;
-        pause.acquired([this, &input] {
-            input.active = false;
-            reconcileSuspension();
-            globalMouseManager.setCaptureAvailable(
-                !applicationSuspended() &&
-                (!screenshotController || screenshotController->captureAvailable()));
-            systemTray.setEnabled(!applicationSuspended() && storage::ApplicationStorage::instance()
-                                                                 .configuration()
-                                                                 .value(kTrayEnabledKey)
-                                                                 .toBool());
+        pause.acquired([this, lifetime, &input] {
+            if (lifetime)
+                restoreApplicationInput(input);
         });
         // Close admission before the stacking checkpoint can notify reentrant producers.
         if (screenshotController)
             screenshotController->setCaptureSuspended(true);
+        if (!lifetime)
+            return;
         mcpGraph.setSourcesSuspended(true);
+        if (!lifetime)
+            return;
         groupManager.stackingCoordinator()->beginMutation();
-        pause.acquired([this] { groupManager.stackingCoordinator()->endMutation(); });
+        if (!lifetime)
+            return;
+        pause.acquired([this, lifetime] {
+            if (lifetime)
+                groupManager.stackingCoordinator()->endMutation();
+        });
         reconcileSuspension(); // close delayed/programmatic admission before draining producers
+        if (!lifetime)
+            return;
         systemTray.setEnabled(false);
         globalMouseManager.setCaptureAvailable(false);
+        if (!lifetime)
+            return;
         const auto token = globalShortcutManager.suspendRegistrations();
-        pause.acquired([this, token] { globalShortcutManager.resumeRegistrations(token); });
+        pause.acquired([this, lifetime, token] {
+            if (lifetime)
+                globalShortcutManager.resumeRegistrations(token);
+        });
     }
 
     void setUpdateHandoffPending(bool pending) {
-        if (pending) {
-            if (handoffPause)
-                return;
-            auto pause = std::make_unique<QuiescenceSession>();
-            acquireApplicationPause(*pause, *handoffInput);
-            handoffPause = std::move(pause);
-        } else {
-            if (!handoffPause)
-                return;
-            handoffPause.reset();
-            reconcileMcpConfiguration();
-#ifdef Q_OS_WIN
-            const auto intent = shellLaunches.takeUpdate();
-            updates->clearRelaunchArguments();
-            if (!intent.paths.isEmpty())
-                pinShellFiles(intent.paths);
-            if (intent.foreground)
-                showMainWindow();
-#endif
+        // Retain the latest request, but let the current acquisition/restoration stack
+        // finish before changing its resource ownership. In particular a listener-stop
+        // observer may cancel the handoff before acquisition has returned.
+        if (shuttingDown || (handoffPause && handoffPause->committed()))
+            return;
+        handoffPauseRequested = pending;
+        if (handoffPauseReconciling) {
+            // A restoration observer can enter a native event loop before reacquisition.
+            // Its new request closes widget input immediately while the old owner is visible.
+            if (pending)
+                handoffInput->active = true;
+            return;
         }
+        const QPointer<ApplicationController> lifetime(&q);
+        reconcileUpdateHandoffPause();
+        // Replay can dispatch another native query. Its pause must acquire and restore
+        // synchronously, outside the resource reconciliation stack that has just finished.
+        // A failed acquisition may already have retired its owner before this cancellation.
+        if (lifetime && !shuttingDown && !handoffPauseRequested && !handoffPause)
+            resumeAfterUpdateHandoff();
+    }
+
+    void reconcileUpdateHandoffPause() {
+        handoffPauseReconciling = true;
+        const QPointer<ApplicationController> lifetime(&q);
+        const auto reconciliation = qScopeGuard([this, lifetime] {
+            if (lifetime)
+                handoffPauseReconciling = false;
+        });
+        while (lifetime && !shuttingDown && !(handoffPause && handoffPause->committed()) &&
+               (handoffPauseRequested != static_cast<bool>(handoffPause) ||
+                (!handoffPauseRequested && handoffInput->active))) {
+            if (!handoffPauseRequested) {
+                if (const auto pause = handoffPause) {
+                    // Terminal callbacks must still see and commit the restoring owner.
+                    pause->restore();
+                    if (!lifetime || pause->committed())
+                        return;
+                    handoffPause.reset();
+                } else {
+                    // A request cancelled inside restoration can leave input preclosed
+                    // after its owner retires. Reconcile that state before replay too.
+                    restoreApplicationInput(*handoffInput);
+                }
+                continue;
+            }
+            std::shared_ptr<QuiescenceSession> pause;
+            try {
+                pause = std::make_shared<QuiescenceSession>();
+                // Publish before callbacks, keeping a local reference through acquisition.
+                handoffPause = pause;
+                acquireApplicationPause(*pause, *handoffInput);
+            } catch (...) {
+                if (lifetime && !shuttingDown) {
+                    handoffPauseRequested = false;
+                    if (pause)
+                        pause->restore();
+                    else
+                        restoreApplicationInput(*handoffInput);
+                    if (lifetime && (!pause || !pause->committed()))
+                        handoffPause.reset();
+                }
+                throw;
+            }
+        }
+    }
+
+    void resumeAfterUpdateHandoff() {
+        if (shuttingDown || handoffPauseRequested || (updates && updates->handoffPending()))
+            return;
+        const QPointer<ApplicationController> lifetime(&q);
+        reconcileMcpConfiguration();
+        if (!lifetime || shuttingDown || handoffPauseRequested ||
+            (handoffPause && handoffPause->committed()))
+            return;
+#ifdef Q_OS_WIN
+        const auto intent = shellLaunches.takeUpdate();
+        updates->clearRelaunchArguments();
+        if (!intent.paths.isEmpty())
+            pinShellFiles(intent.paths);
+        if (intent.foreground)
+            showMainWindow();
+#endif
     }
 
     void reportSelectedFilePinFailure(const QString& message) {
@@ -903,7 +1037,9 @@ class ApplicationController::Impl {
     }
 
     bool applicationSuspended() const {
-        return (migrationInput && migrationInput->active) || (handoffInput && handoffInput->active);
+        return (migrationInput && migrationInput->active) || handoffPauseRequested ||
+               (handoffInput && handoffInput->active) ||
+               (handoffPause && handoffPause->committed());
     }
 
     bool actionsAvailable() const {
@@ -1298,6 +1434,9 @@ class ApplicationController::Impl {
             screenshotController = std::make_unique<ScreenshotController>(
                 &q, &groupManager, ocrRecognition.get(), apiClient());
             screenshotController->setCaptureSuspended(applicationSuspended());
+#ifdef Q_OS_MACOS
+            screenshotController->setCaptureBackgroundWindow(mainWindow);
+#endif
             QObject::connect(screenshotController.get(),
                              &ScreenshotController::recordingExportNotificationRequested,
                              &systemTray,
@@ -1470,6 +1609,14 @@ class ApplicationController::Impl {
         if (mainWindow == nullptr) {
             ensureSettingsRuntime();
             mainWindow = new MainWindow(*settingsRegistry, *runtimeSession, nullptr, apiClient());
+#ifdef Q_OS_MACOS
+            if (screenshotController)
+                screenshotController->setCaptureBackgroundWindow(mainWindow);
+            QObject::connect(mainWindow, &MainWindow::aboutToShowAndActivate, &q, [this] {
+                if (screenshotController)
+                    screenshotController->releaseCaptureBackgroundWindow();
+            });
+#endif
             QObject::connect(mainWindow, &QObject::destroyed, &q,
                              [this]() { mainWindow = nullptr; });
             QObject::connect(mainWindow, &MainWindow::screenshotRequested, &q, [this]() {
@@ -1855,6 +2002,9 @@ class ApplicationController::Impl {
             globalShortcutManager.setGlobalShortcutsEnabled(
                 !globalShortcutManager.globalShortcutsEnabled());
             break;
+        case presentation::GlobalShortcutAction::ToggleGlobalMouse:
+            globalMouseManager.setGlobalMouseEnabled(!globalMouseManager.globalMouseEnabled());
+            break;
         case presentation::GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow: {
             storage::GlobalShortcutSettings shortcutSettings;
             shortcutSettings.setDisableOnFocusedFullscreenWindow(
@@ -1864,13 +2014,15 @@ class ApplicationController::Impl {
         }
     }
 
-    ScreenshotPinnedImageSnapshotRequest pinnedImageSnapshotRequest() {
-        return [this](const QString& id, auto complete) {
+    ScreenshotPinnedImageSnapshotRequest pinnedImageSnapshotRequest(
+        ScreenshotPinnedRenderMode mode = ScreenshotPinnedRenderMode::WindowAppearance) {
+        return [this, mode](const QString& id, auto complete) {
             if (auto* pin = groupManager.liveWindow(id)) {
                 pin->requestRenderedImageSnapshot(
                     [complete = std::move(complete)](ScreenshotPinnedImageSnapshot snapshot) {
                         complete(std::move(snapshot));
-                    });
+                    },
+                    mode);
             } else {
                 complete(std::nullopt);
             }
@@ -1905,7 +2057,8 @@ class ApplicationController::Impl {
     presentation::ImageSplitWindowCoordinator& ensureImageSplitWindowCoordinator() {
         if (!imageSplitWindowCoordinator) {
             presentation::ImageSplitWindowServices services;
-            services.requestPinnedSnapshot = pinnedImageSnapshotRequest();
+            services.requestPinnedSnapshot =
+                pinnedImageSnapshotRequest(ScreenshotPinnedRenderMode::SourceResolution);
             services.stitchToPdf = [this](presentation::ImageSplitSnapshot snapshot) {
                 return ensureImageStitchingWindowCoordinator().presentSplitImagesAsPdf(
                     std::move(snapshot));
@@ -1924,6 +2077,11 @@ class ApplicationController::Impl {
         if (!imageStitchingWindowCoordinator) {
             presentation::ImageStitchingWindowServices services;
             services.requestPinnedSnapshot = pinnedImageSnapshotRequest();
+            services.openImageEditing = [this](ScreenshotExportSource source) {
+                static_cast<void>(actionGate.dispatch([this, source = std::move(source)]() mutable {
+                    ensureImageEditingWindowCoordinator().presentSource(std::move(source));
+                }));
+            };
             imageStitchingWindowCoordinator =
                 std::make_unique<presentation::ImageStitchingWindowCoordinator>(
                     &q, std::move(services));
@@ -2034,7 +2192,9 @@ class ApplicationController::Impl {
         QuiescenceSession resources;
     };
     std::unique_ptr<DirectoryPause> migrationPause;
-    std::unique_ptr<QuiescenceSession> handoffPause;
+    std::shared_ptr<QuiescenceSession> handoffPause;
+    bool handoffPauseRequested = false;
+    bool handoffPauseReconciling = false;
     // These services outlive the disposable configuration window.
     presentation::PinnedWindowGroupManager groupManager;
     presentation::SystemTrayController systemTray;

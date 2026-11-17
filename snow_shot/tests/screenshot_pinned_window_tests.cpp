@@ -1418,13 +1418,17 @@ void waitForUi(int milliseconds) {
     }
 }
 
-ScreenshotPinnedImageSnapshot pinnedRenderedSnapshot(ScreenshotPinnedWindow& window) {
+ScreenshotPinnedImageSnapshot pinnedRenderedSnapshot(
+    ScreenshotPinnedWindow& window,
+    ScreenshotPinnedRenderMode mode = ScreenshotPinnedRenderMode::WindowAppearance) {
     ScreenshotPinnedImageSnapshot snapshot;
     bool complete = false;
-    window.requestRenderedImageSnapshot([&](ScreenshotPinnedImageSnapshot value) {
-        snapshot = std::move(value);
-        complete = true;
-    });
+    window.requestRenderedImageSnapshot(
+        [&](ScreenshotPinnedImageSnapshot value) {
+            snapshot = std::move(value);
+            complete = true;
+        },
+        mode);
     QElapsedTimer deadline;
     deadline.start();
     while (!complete && deadline.elapsed() < 10000)
@@ -1436,7 +1440,8 @@ ScreenshotPinnedImageSnapshot pinnedRenderedSnapshot(ScreenshotPinnedWindow& win
 
 snow_shot::presentation::ImageEditingSource
 pinnedRenderedEditingSource(ScreenshotPinnedWindow& window) {
-    const auto snapshot = pinnedRenderedSnapshot(window);
+    const auto snapshot =
+        pinnedRenderedSnapshot(window, ScreenshotPinnedRenderMode::SourceResolution);
     auto artifact = std::make_shared<ScreenshotExportArtifact>(snapshot.source);
     snow_shot::presentation::ImageEditingSource source;
     bool complete = false;
@@ -2658,7 +2663,7 @@ void pinnedOriginalImagePreviewFollowsViewAndAuxiliaryLifecycle() {
     require(canvas->internalWinId() == 0 && content->internalWinId() == 0,
             "creating the preview must preserve the pin's shared nonnative recognition canvas");
     int projectionPass = 0;
-    const auto verifyProjection = [&] {
+    const auto verifyProjection = [&](bool preferLeft = false) {
         ++projectionPass;
         refreshPreview();
         const auto source = Access::originalPreviewSource(window);
@@ -2694,7 +2699,7 @@ void pinnedOriginalImagePreviewFollowsViewAndAuxiliaryLifecycle() {
                               QSizeF(contentNative.size()) / contentDpr)
                            .toRect();
         const auto placement = ScreenshotOriginalImagePreviewWindow::placement(
-            result, PreviewAccess::workArea(*preview), PreviewAccess::gap(*preview));
+            result, PreviewAccess::workArea(*preview), PreviewAccess::gap(*preview), preferLeft);
         const QSize expectedSize = placement.geometry.size();
         if (ScreenshotOriginalImagePreviewWindow::nativeClientRect(preview).size() !=
             expectedSize) {
@@ -2838,6 +2843,13 @@ void pinnedOriginalImagePreviewFollowsViewAndAuxiliaryLifecycle() {
     verifyProjection();
     require(session->editing(), "text editing must keep its original-image preview visible");
     session->endTextEditing();
+
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION
+    session->activate(ScreenshotRecognitionSessionController::Mode::Table);
+    verifyProjection(true);
+    session->activate(ScreenshotRecognitionSessionController::Mode::Text);
+    verifyProjection();
+#endif
 
     const auto initialSource = Access::originalPreviewSource(window);
     auto clippedSource = initialSource;
@@ -11944,8 +11956,15 @@ void pinnedClickThroughGeometry() {
                 QRect(328, 28, 48, 48),
             "fractional-DPR placement must round size and inset independently");
     require(exitButtonGeometry(QRect(-1920, 0, 200, 120), QRect(-1920, 0, 1920, 1080), 1.0) ==
-                QRect(-1720, 0, 32, 32),
-            "top-edge clamping must work on a display with a negative origin");
+                QRect(-1720, 136, 32, 32),
+            "a pin at the top of a display must place the controls below it");
+    const QRect workArea(-2560, -1440, 2560, 1440);
+    require(exitButtonGeometry(QRect(-2000, -1430, 600, 1358), workArea, 1.5) ==
+                QRect(-1472, -48, 48, 48),
+            "the controls must fit below when their bottom meets the work area edge");
+    require(exitButtonGeometry(QRect(-2000, -1430, 600, 1359), workArea, 1.5) ==
+                QRect(-1472, -1406, 48, 48),
+            "when neither outside position fits, use the pin's top-right corner");
     require(exitButtonGeometry(QRect(-100, 100, 2500, 120), QRect(-1920, 0, 1920, 1080), 1.0) ==
                 QRect(-32, 52, 32, 32),
             "right-edge clamping must keep the complete button on its display");
@@ -12007,9 +12026,13 @@ void pinnedClickThroughStationaryControls() {
             return QObject::eventFilter(watched, event);
         }
     };
-    for (const int top : {0, 120}) {
+    const auto monitor = screenshot_pinned_hide_to_top::screenGeometry(screen);
+    const QRect workArea = monitor.workArea;
+    for (const bool overlaps : {false, true}) {
         auto config = clickThroughTestConfig(*screen);
-        config.nativeGeometry = physicalPinGeometry(*screen, QPoint(100, top), QSize(400, 400));
+        const int height = overlaps ? workArea.height() : std::min(400, workArea.height() / 2);
+        config.nativeGeometry =
+            QRect(workArea.left() + qRound(100 * monitor.dpi), workArea.top(), 400, height);
         ScreenshotPinnedWindow window;
         window.setAttribute(Qt::WA_DeleteOnClose, false);
         if (QGuiApplication::platformName() == QStringLiteral("windows")) {
@@ -12018,14 +12041,23 @@ void pinnedClickThroughStationaryControls() {
             Access::restoreOffscreen(window, config);
             window.show();
         }
+        Access::shadowState(window, true, true);
         require(Access::setClickThrough(window, true), "enter stationary controls fixture");
         waitForUi(20);
         auto* editor = Access::clickThroughOpacityEditor(window);
         auto* exit = Access::clickThroughExitButton(window);
         auto* slider = editor->findChild<adqt::widgets::AdSlider*>();
         require(slider != nullptr, "stationary controls need a slider");
-        require(editor->geometry().intersects(window.geometry()) == (top == 0),
-                "only the screen-clamped fixture must overlap the pinned image");
+        const QRect content = Access::contentGeometry(window);
+        const QRect expectedExit =
+            screenshot_pinned_click_through::exitButtonGeometry(content, workArea, monitor.dpi);
+        require(exit->pos() ==
+                    snow_shot::presentation::pinnedLogicalRect(expectedExit, screen).topLeft(),
+                "click-through controls must align to the content edge with the shadow visible");
+        const QRect logicalContent = snow_shot::presentation::pinnedLogicalRect(content, screen);
+        require(overlaps ? editor->geometry().intersects(logicalContent)
+                         : editor->geometry().top() > logicalContent.bottom(),
+                "stationary controls must use the space below or overlap a full-height pin");
         PlacementProbe probe;
         editor->installEventFilter(&probe);
         exit->installEventFilter(&probe);
@@ -12829,11 +12861,11 @@ void pinnedClickThroughOffscreen() {
     require(persistenceWrites > 0 && lastPersisted.clickThroughMode,
             "entry must schedule durable click-through state");
 
-    const QRect physicalBounds = ScreenshotGeometryMapper::physicalRectForScreen(*screen);
-    const QRect expectedPhysicalGeometry = screenshot_pinned_click_through::exitButtonGeometry(
-        window.currentNativeGeometry(), physicalBounds, screen->devicePixelRatio());
+    const auto monitor = screenshot_pinned_hide_to_top::screenGeometry(screen);
+    const QRect expectedNativeGeometry = screenshot_pinned_click_through::exitButtonGeometry(
+        ScreenshotPinnedWindowTestAccess::contentGeometry(window), monitor.workArea, monitor.dpi);
     const QRect expectedLogicalGeometry =
-        ScreenshotGeometryMapper::logicalRectForPhysicalRect(expectedPhysicalGeometry, screen);
+        snow_shot::presentation::pinnedLogicalRect(expectedNativeGeometry, screen);
     exitButton->move(QPoint(-10000, -10000));
     QEvent screenChanged(QEvent::ScreenChangeInternal);
     QCoreApplication::sendEvent(&window, &screenChanged);
@@ -24180,6 +24212,7 @@ void pinnedImageSplittingSnapshots() {
         "split fixture contains an annotation");
     Access::transformReplacement(window);
     Access::setFractionalScale(window, 50);
+    Access::setGeneralOpacity(window, 60);
     require(Access::selectFirstAnnotation(window), "split fixture selects an existing annotation");
     require(!Access::selectedAnnotationIds(window).isEmpty(),
             "split source starts with an active annotation selection");
@@ -24253,13 +24286,14 @@ void pinnedImageSplittingSnapshots() {
     loading.start();
     while (editor->document()->image().isNull() && loading.elapsed() < 10000)
         waitForUi(1);
-    require(editor->document()->image() == source.image &&
+    require(editor->document()->image() == source.image && source.image.size() == QSize(80, 120) &&
+                source.image.pixelColor(0, 0).alpha() == 255 &&
                 editor->document()->bounds() == source.canvasRect &&
                 !editor->document()->runtime().hasDocumentContent() && window.isVisible(),
             "pinned editor imports rendered pixels into an independent empty annotation document");
     editors.shutdown();
     split->trigger();
-    require(requests == 1 && snapshot.source.isValid() && snapshot.outputSize == QSize(40, 60) &&
+    require(requests == 1 && snapshot.source.isValid() && snapshot.outputSize == QSize(80, 120) &&
                 snapshot.originalFileName == QStringLiteral("section.reference.png") &&
                 snapshot.createdUtc == window.sourceCreatedUtc(),
             "splitting dispatches the current processed source with original naming metadata");
@@ -24268,6 +24302,7 @@ void pinnedImageSplittingSnapshots() {
                 Access::drawingHistory(window) == history &&
                 Access::originalImage(window) == original &&
                 window.currentNativeGeometry() == geometry &&
+                after.opacityPercent == before.opacityPercent &&
                 after.imageTransform == before.imageTransform &&
                 after.quarterTurns == before.quarterTurns,
             "splitting commits editing while preserving source pixels, transforms, content and "
@@ -24278,8 +24313,9 @@ void pinnedImageSplittingSnapshots() {
     for (int y = 0; y < processed.height(); ++y)
         for (int x = 0; x < processed.width(); ++x)
             magenta |= processed.pixelColor(x, y) == QColor(Qt::magenta);
-    require(magenta && processed.size() == QSize(40, 60),
-            "owned split snapshot includes rotated and flipped annotations at the chosen zoom");
+    require(magenta && processed.size() == QSize(80, 120) &&
+                processed.pixelColor(0, 0).alpha() == 255,
+            "split snapshot includes transformed annotations at source resolution and opacity");
     ScreenshotPinnedWindow unavailable;
     materializePinnedMenuTree(unavailable);
     auto* unavailableSplit =
@@ -28211,6 +28247,7 @@ int main(int argc, char* argv[]) {
         }
         if (app.arguments().contains(QStringLiteral("--splitting-snapshot-only"))) {
             pinnedImageSplittingSnapshots();
+            live_pinned_tests::splittingAndEditingRetainTheirLiveSource();
             return 0;
         }
         if (app.arguments().contains(QStringLiteral("--stitching-snapshot-only"))) {

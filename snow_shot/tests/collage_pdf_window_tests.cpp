@@ -2,6 +2,7 @@
 #include "snow_shot/presentation/collagewindow.h"
 #include "snow_shot/presentation/collagesettingsstore.h"
 #include "snow_shot/presentation/components/collageeditorwidget.h"
+#include "snow_shot/presentation/screenshotexportartifact.h"
 #include "snow_shot/presentation/screenshotexportcoordinator.h"
 #include "snow_shot/presentation/styles/thememanager.h"
 #include "snow_shot/storage/applicationstorage.h"
@@ -11,6 +12,7 @@
 #include "widgets/modal.h"
 #include "widgets/segmented.h"
 #include "widgets/select.h"
+#include "widgets/slider.h"
 
 #include <QApplication>
 #include <QColorSpace>
@@ -30,6 +32,7 @@ using adqt::widgets::AdButton;
 using adqt::widgets::AdLineEdit;
 using adqt::widgets::AdSegmented;
 using adqt::widgets::AdSelect;
+using adqt::widgets::AdSlider;
 namespace storage = snow_shot::storage;
 
 namespace {
@@ -90,6 +93,9 @@ void choosingLocksAndCancelPreservesContent() {
     int completions = 0;
     ImageStitchingWindowServices::PdfChoice choice;
     ImageStitchingWindowServices services;
+    services.openImageEditing = [](ScreenshotExportSource) {
+        require(false, "PDF mode cannot open the image editor");
+    };
     services.choosePdfDestination = [&](QWidget*, ImageStitchingPdfExportMode mode,
                                         auto completion) {
         require(mode == ImageStitchingPdfExportMode::Combined, "combined export is the default");
@@ -110,6 +116,9 @@ void choosingLocksAndCancelPreservesContent() {
                          ++completions;
                      });
     require(!control<AdButton>(window, "collageCopy")->isVisible(), "PDF hides Copy");
+    auto* edit = control<AdButton>(window, "collageImageEditing");
+    require(edit && !edit->isVisible() && !edit->isEnabled(), "PDF hides Image editing");
+    edit->click();
     window.copy();
     require(!window.busy() && writes == 0, "programmatic Copy cannot export PDF mode");
     window.save();
@@ -521,27 +530,32 @@ void templatePreferencesReopenAndMerge() {
         ->setCurrentValue(static_cast<int>(ImageStitchingPdfStitchingMethod::TemplateBased));
     control<AdButton>(first, "collagePdfTemplateFiveImages")->click();
     control<AdLineEdit>(first, "collagePdfImageSpacing")->setText(QStringLiteral("6.375"));
+    control<AdSlider>(first, "collagePdfImageQuality")->setValue(0);
     ImageStitchingWindow reopened;
     reopened.present();
     require(reopened.document()->pdfSettings().stitchingMethod ==
                     ImageStitchingPdfStitchingMethod::TemplateBased &&
                 reopened.document()->pdfSettings().templateType ==
                     ImageStitchingPdfTemplateType::FiveImages &&
-                reopened.document()->pdfSettings().imageSpacingMm == 6.375,
-            "reopening restores the last stitching method, template and fractional spacing");
+                reopened.document()->pdfSettings().imageSpacingMm == 6.375 &&
+                reopened.document()->pdfSettings().imageQuality == 0 &&
+                control<AdSlider>(reopened, "collagePdfImageQuality")->value() == 0,
+            "reopening restores the stitching method, template, spacing and image quality");
     control<AdButton>(first, "collagePdfTemplateNineImages")->click();
+    control<AdSlider>(first, "collagePdfImageQuality")->setValue(52);
     control<AdLineEdit>(reopened, "collagePdfImageSpacing")->setText(QStringLiteral("3.125"));
     const auto merged = store.readPdf();
     require(merged.templateType == ImageStitchingPdfTemplateType::NineImages &&
-                merged.imageSpacingMm == 3.125 &&
+                merged.imageSpacingMm == 3.125 && merged.imageQuality == 52 &&
                 first.document()->pdfSettings().imageSpacingMm == 6.375 &&
+                reopened.document()->pdfSettings().imageQuality == 0 &&
                 reopened.document()->pdfSettings().templateType ==
                     ImageStitchingPdfTemplateType::FiveImages,
             "independent windows merge only their changed template preference fields");
     first.shutdown();
     reopened.shutdown();
     require(store.writePdf({QStringLiteral("stitching_method"), QStringLiteral("template_type"),
-                            QStringLiteral("image_spacing_mm")},
+                            QStringLiteral("image_spacing_mm"), QStringLiteral("image_quality")},
                            previous),
             "restore isolated window template preferences");
 }
@@ -666,6 +680,11 @@ void templateExportUsesComposedSnapshot() {
     require(window.document()->setPdfPlacement(first, {{4.25, -3.5}, 0.375}) &&
                 window.document()->rotate(first, true) && window.document()->flip(first, false),
             "template snapshot includes position, scale, rotation and flip edits");
+    const auto placement = window.document()->items().front().pdfPlacement;
+    settings.imageQuality = 72;
+    window.document()->setPdfSettings(settings);
+    require(window.document()->items().front().pdfPlacement == placement,
+            "changing image quality preserves the current image placement");
     snapshot->items = window.document()->items();
     snapshot->settings = settings;
     int completions = 0;
@@ -684,6 +703,7 @@ void templateExportUsesComposedSnapshot() {
             "later document edits differ from the pending snapshot");
     settings.templateType = ImageStitchingPdfTemplateType::NineImages;
     settings.imageSpacingMm = 3;
+    settings.imageQuality = 35;
     window.document()->setPdfSettings(settings);
     require(imageStitchingPdfPageCount(window.document()->items().size(), settings) == 1,
             "the live document now has a different composed page count");

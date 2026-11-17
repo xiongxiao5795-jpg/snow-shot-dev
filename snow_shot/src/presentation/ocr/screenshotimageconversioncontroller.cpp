@@ -2,14 +2,6 @@
 
 #include "snow_shot/presentation/languagemanager.h"
 #include "snow_shot/storage/settingsadapters.h"
-#include "widgets/alert.h"
-#include "widgets/button.h"
-#include "widgets/form.h"
-#include "widgets/modal.h"
-#include "widgets/select.h"
-
-#include <QPushButton>
-#include <QVBoxLayout>
 
 #include <algorithm>
 #include <utility>
@@ -31,19 +23,6 @@ ScreenshotImageConversionController::ScreenshotImageConversionController(QObject
 ScreenshotImageConversionController::~ScreenshotImageConversionController() {
     m_destroying = true;
     cancelRequests();
-    if (m_api)
-        m_api->cancel(m_settingsToken);
-    // Retire callback-owning children while their controller state still exists.
-    QList<QPointer<QObject>> ownedChildren;
-    for (QObject* child : children())
-        ownedChildren.append(child);
-    for (const auto& child : ownedChildren) {
-        if (!child)
-            continue;
-        disconnect(child, nullptr, this, nullptr);
-        child->blockSignals(true);
-        delete child.data();
-    }
 }
 
 bool ScreenshotImageConversionController::notifyChanged() {
@@ -71,16 +50,10 @@ void ScreenshotImageConversionController::setProvider(SnowShotApiClient* provide
     }
     const QPointer<SnowShotApiClient> nextProvider(provider);
     const quint64 providerGeneration = ++m_providerGeneration;
-    if (m_modal)
-        m_modal->reject();
-    if (!lifetime || providerGeneration != m_providerGeneration)
-        return;
     cancelRequests();
     if (m_api != nullptr) {
-        m_api->cancel(m_settingsToken);
         disconnect(m_api, nullptr, this, nullptr);
     }
-    m_settingsToken = 0;
     m_api = nextProvider;
     // Provider subscriptions are part of the binding transaction, not a conversion request.
     // Complete them before any observer can reset a conversion or replace the provider again.
@@ -163,7 +136,6 @@ void ScreenshotImageConversionController::bindProviderSignals() {
                 return;
             ++m_providerGeneration;
             cancelRequests();
-            m_settingsToken = 0;
             if (busy()) {
                 fail(tr("The image conversion service is unavailable"));
             }
@@ -261,6 +233,7 @@ void ScreenshotImageConversionController::trimCache() {
 
 void ScreenshotImageConversionController::cancelRequests() {
     ++m_generation;
+    m_reasoningActive = false;
     m_previewTimer.stop();
     if (m_api != nullptr) {
         m_api->cancel(m_modelsToken);
@@ -286,14 +259,8 @@ void ScreenshotImageConversionController::reset(bool discardCache) {
     m_source.clear();
     m_error.clear();
     if (discardCache) {
-        if (m_api)
-            m_api->cancel(m_settingsToken);
-        m_settingsToken = 0;
         m_cache.clear();
         m_key.clear();
-    }
-    if (m_modal != nullptr) {
-        m_modal->reject();
     }
     if (lifetime)
         notifyChanged();
@@ -324,6 +291,25 @@ void ScreenshotImageConversionController::retry() {
     if (m_active && !busy()) {
         start(true);
     }
+}
+
+void ScreenshotImageConversionController::selectVisionModel(const QString& model) {
+    if (!m_active || model == m_requestModel || !m_api)
+        return;
+    const auto& models = m_api->cachedChatModels();
+    if (std::none_of(models.cbegin(), models.cend(), [&model](const auto& candidate) {
+            return candidate.supportsVision && candidate.id == model;
+        }))
+        return;
+    const QPointer<ScreenshotImageConversionController> lifetime(this);
+    const quint64 generation = m_generation;
+    const bool saved = Settings().setVisionModel(model);
+    if (!lifetime || generation != m_generation)
+        return;
+    if (saved)
+        start(false);
+    else
+        notifyChanged();
 }
 
 void ScreenshotImageConversionController::fail(const QString& message) {
@@ -385,8 +371,9 @@ void ScreenshotImageConversionController::startWithModels(
         return model.supportsVision && model.id == saved;
     });
     if (selected == models.cend()) {
-        selected = std::find_if(models.cbegin(), models.cend(),
-                                [](const auto& model) { return model.supportsVision; });
+        selected = std::find_if(models.cbegin(), models.cend(), [](const auto& model) {
+            return model.supportsVision && !snowShotExpertModelId(model.id);
+        });
     }
     if (selected == models.cend()) {
         fail(tr("No vision models are available"));
@@ -452,207 +439,17 @@ void ScreenshotImageConversionController::startWithModels(
             if (!notifyChanged())
                 return;
             notifyResultsChanged();
+        },
+        [this, generation](bool active) {
+            if (generation != m_generation || !m_active)
+                return;
+            m_reasoningActive = active;
+            emit reasoningChanged(active);
         });
     if (!lifetime || generation != m_generation)
         return;
     m_conversionToken = token;
     if (m_conversionToken == 0) {
         fail(tr("The image could not be prepared for conversion"));
-    }
-}
-
-void ScreenshotImageConversionController::openSettings(QWidget* owner) {
-    using namespace adqt::widgets;
-    const QPointer<ScreenshotImageConversionController> lifetime(this);
-    if (owner == nullptr || m_modal != nullptr) {
-        return;
-    }
-    auto* modal = new AdModal(this);
-    m_modal = modal;
-    modal->setObjectName(QStringLiteral("screenshotImageConversionSettingsModal"));
-    modal->setOwnerWindow(owner);
-    modal->setMode(AdModal::Mode::Window);
-    modal->setWindowModality(Qt::ApplicationModal);
-    modal->setCentered(true);
-    modal->setPreferredWidth(440);
-    modal->setMaskVisible(false);
-    modal->setCloseOnMaskClick(false);
-    modal->setClosePolicy(AdModal::ClosePolicy::Manual);
-    modal->setStandardButtons(AdModal::StandardButton::Ok | AdModal::StandardButton::Cancel);
-    auto* body = new QWidget;
-    auto* layout = new QVBoxLayout(body);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(12);
-    auto* alert = new AdAlert(body);
-    alert->setObjectName(QStringLiteral("screenshotVisionModelsError"));
-    alert->setSeverity(AdAlert::Severity::Error);
-    auto* retry = new AdButton(alert);
-    retry->setObjectName(QStringLiteral("screenshotVisionModelsRetry"));
-    retry->setButtonStyle(AdButton::ButtonStyle::Text);
-    alert->setActionsWidget(retry);
-    layout->addWidget(alert);
-    auto* form = new AdForm(body);
-    form->setFormLayout(AdForm::FormLayout::Vertical);
-    auto* select = new AdSelect(form);
-    select->setObjectName(QStringLiteral("screenshotVisionModel"));
-    select->setPopupLayerMode(AdSelect::PopupLayerMode::QtTool);
-    auto* field = form->addField(tr("Vision model"), select, QStringLiteral("model"));
-    layout->addWidget(form);
-    modal->setContentWidget(body);
-    modal->setInitialFocusWidget(select);
-    const auto retranslate = [modal, field, select, retry]() {
-        modal->setWindowTitle(tr("Image conversion settings"));
-        modal->setAcceptText(tr("OK"));
-        modal->setRejectText(tr("Cancel"));
-        field->setLabel(tr("Vision model"));
-        select->setAccessibleName(tr("Vision model"));
-        retry->setText(tr("Retry"));
-    };
-    retranslate();
-    const auto apply = [modal, select, alert](const QVector<SnowShotChatModel>& models) {
-        const QString selected =
-            snowShotResolvedBuiltInModelId(models, select->currentValue().toString().isEmpty()
-                                                       ? Settings().visionModel()
-                                                       : select->currentValue().toString());
-        QVector<AdSelect::Option> options;
-        for (const auto& model : models) {
-            if (model.supportsVision) {
-                options.push_back({model.id, model.name});
-            }
-        }
-        select->setOptions(options);
-        const bool available = !options.isEmpty();
-        select->setEnabled(available);
-        select->setLoading(false);
-        if (available) {
-            const bool found =
-                std::any_of(options.cbegin(), options.cend(), [&selected](const auto& item) {
-                    return item.value.toString() == selected;
-                });
-            select->setCurrentValue(found ? selected : options.first().value);
-        } else {
-            select->setCurrentValue(QVariant());
-        }
-        alert->setText(tr("No vision models are available"));
-        alert->setVisible(!available);
-        if (modal->acceptButton() != nullptr) {
-            modal->acceptButton()->setEnabled(available);
-        }
-    };
-    const QPointer<AdModal> guard(modal);
-    const auto load = [this, guard, select, alert, retry, apply](bool refreshModels) {
-        // Rejected modals remain alive until deferred deletion. Only the current
-        // settings window may own or cancel the shared settings request.
-        if (guard == nullptr || guard != m_modal) {
-            return;
-        }
-        if (m_api != nullptr) {
-            m_api->cancel(m_settingsToken);
-        }
-        m_settingsToken = 0;
-        const bool available = m_api != nullptr && !m_api->fallbackModel(true).isEmpty();
-        select->setEnabled(available);
-        select->setLoading(!available);
-        retry->setBusy(true);
-        alert->hide();
-        if (guard->acceptButton() != nullptr) {
-            guard->acceptButton()->setEnabled(available);
-        }
-        const auto failure = [select, alert, retry]() {
-            select->setLoading(false);
-            retry->setBusy(false);
-            alert->setText(tr("Unable to load vision models"));
-            alert->show();
-        };
-        if (m_api == nullptr) {
-            failure();
-            return;
-        }
-        m_settingsToken = m_api->ensureChatModels(
-            currentLocale(), guard.data(),
-            [this, guard, retry, apply, failure](SnowShotChatModelsResult result) {
-                if (guard == nullptr || guard != m_modal) {
-                    return;
-                }
-                m_settingsToken = 0;
-                retry->setBusy(false);
-                if (result.succeeded()) {
-                    apply(result.models);
-                } else {
-                    failure();
-                }
-            },
-            refreshModels ? SnowShotApiClient::ChatModelsCachePolicy::Refresh
-                          : SnowShotApiClient::ChatModelsCachePolicy::UseCached);
-        if (m_settingsToken == 0) {
-            failure();
-        }
-    };
-    connect(retry, &AdButton::clicked, modal, [load]() { load(true); });
-    if (m_api != nullptr) {
-        connect(m_api, &QObject::destroyed, modal, [load]() { load(false); });
-        connect(m_api, &SnowShotApiClient::baseUrlChanged, modal, [load]() { load(false); });
-        connect(m_api, &SnowShotApiClient::chatModelsChanged, modal, [this, guard, apply]() {
-            if (guard && guard == m_modal && m_api)
-                apply(m_api->cachedChatModels());
-        });
-    }
-    connect(owner, &QObject::destroyed, modal, [modal]() { modal->reject(); });
-    connect(&snow_shot::presentation::LanguageManager::instance(),
-            &snow_shot::presentation::LanguageManager::languageChanged, modal,
-            [this, guard, retranslate, load]() {
-                if (!guard || guard != m_modal)
-                    return;
-                retranslate();
-                load(false);
-            });
-    connect(modal, &AdModal::closeRequested, modal,
-            [this, modal, select](AdModal::CloseReason reason) {
-                if (modal != m_modal)
-                    return;
-                const QPointer<ScreenshotImageConversionController> lifetime(this);
-                if (reason != AdModal::CloseReason::OkAction) {
-                    modal->reject();
-                    return;
-                }
-                if (!select->isEnabled() || select->currentValue().toString().isEmpty()) {
-                    return;
-                }
-                const QString model = select->currentValue().toString();
-                const bool changed = model != Settings().visionModel();
-                Settings().setVisionModel(model);
-                if (!lifetime)
-                    return;
-                modal->accept();
-                if (!lifetime)
-                    return;
-                if (changed && m_active) {
-                    start(false);
-                }
-            });
-    connect(modal, &AdModal::finished, this, [this, modal]() {
-        if (modal == m_modal) {
-            if (m_api != nullptr) {
-                m_api->cancel(m_settingsToken);
-            }
-            m_settingsToken = 0;
-            m_modal = nullptr;
-        }
-        modal->deleteLater();
-    });
-    // Establish the initial content before the modal measures and shows its window.
-    if (m_api != nullptr) {
-        apply(m_api->cachedChatModels());
-    }
-    if (m_api == nullptr || !m_api->hasBuiltInModels(currentLocale())) {
-        load(false);
-    }
-    if (!lifetime || !guard)
-        return;
-    modal->open();
-    if (!lifetime || !guard)
-        return;
-    if (modal->acceptButton() != nullptr) {
-        modal->acceptButton()->setEnabled(select->isEnabled());
     }
 }

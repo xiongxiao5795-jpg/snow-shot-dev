@@ -1,5 +1,6 @@
 #include "snow_shot/presentation/screenshotimageconversioncontroller.h"
 #include "snow_shot/presentation/languagemanager.h"
+#include "snow_shot/presentation/canvasstatusreadout.h"
 #include "snow_shot/presentation/screenshotimageconversionpersistence.h"
 #include "snow_shot/presentation/screenshotimageconversionview.h"
 #include "snow_shot/presentation/screenshottoolbarlayoutmodel.h"
@@ -25,7 +26,6 @@
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QEventLoop>
-#include <QPushButton>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTextBrowser>
@@ -186,15 +186,19 @@ void conversionAiModelMigrationPreservesHistoricalOutput(const QString& legacy) 
     until([&] { return controller.state() == Controller::State::Completed; });
     require(settings.visionModel() == legacy, "older catalog preserves conversion preference");
     const QString original = controller.source();
+    const auto expert = QStringLiteral("expert-model");
     server.models = QJsonArray{QJsonObject{{QStringLiteral("model"), QStringLiteral("ai-model")},
-                                           {QStringLiteral("name"), QStringLiteral("AI Model")},
+                                           {QStringLiteral("name"), QStringLiteral("Fast Model")},
+                                           {QStringLiteral("supports_vision"), true}},
+                               QJsonObject{{QStringLiteral("model"), expert},
+                                           {QStringLiteral("name"), QStringLiteral("Expert Model")},
                                            {QStringLiteral("supports_vision"), true}}};
     bool completed = false;
     const auto catalogToken = api.fetchChatModels(QLocale().name(), &controller, [&](auto result) {
-        require(result.succeeded(), "load AI Model conversion catalog");
+        require(result.succeeded(), "load the Fast and Expert conversion catalog");
         completed = true;
     });
-    require(catalogToken != 0, "AI Model catalog refresh starts");
+    require(catalogToken != 0, "conversion catalog refresh starts");
     until([&] { return completed; });
     require(settings.visionModel() == QStringLiteral("ai-model") &&
                 controller.source() == original &&
@@ -216,7 +220,7 @@ void conversionAiModelMigrationPreservesHistoricalOutput(const QString& legacy) 
     controller.activate(QStringLiteral("future-ai"), sampleImage(), Format::Html);
     until([&] { return controller.state() == Controller::State::Completed; });
     require(server.requests.last().value(QStringLiteral("model")) == QStringLiteral("ai-model"),
-            "future conversion uses AI Model");
+            "future conversion uses Fast Model");
     controller.activate(QStringLiteral("historical-ai"), sampleImage(), Format::Markdown);
     server.source = QStringLiteral("# Refreshed");
     controller.retry();
@@ -232,6 +236,55 @@ void conversionAiModelMigrationPreservesHistoricalOutput(const QString& legacy) 
     require(controller.activeModel() == QStringLiteral("ai-model") &&
                 controller.source() == server.source && server.requests.size() == 3,
             "an exact canonical cache entry takes precedence over a more recent legacy result");
+    require(settings.setVisionModel(expert), "explicitly select Expert for conversion");
+    controller.activate(QStringLiteral("expert-image"), sampleImage(), Format::Markdown);
+    until([&] { return controller.state() == Controller::State::Completed; });
+    require(controller.activeModel() == expert && settings.visionModel() == expert &&
+                server.requests.size() == 4 &&
+                server.requests.last().value(QStringLiteral("model")) == expert,
+            "image conversion sends and retains the explicitly selected Expert Model");
+}
+
+void expertConversionRequiresAnExplicitSelection() {
+    using Controller = ScreenshotImageConversionController;
+    using Format = SnowShotImageConversionFormat;
+    const snow_shot::storage::ScreenshotImageConversionSettings settings;
+    const QString previousModel = settings.visionModel();
+    const auto restore = qScopeGuard([&] { settings.setVisionModel(previousModel); });
+    require(settings.setVisionModel({}), "clear the saved model");
+
+    ConversionServer server;
+    const auto expert = QStringLiteral("expert-model");
+    const auto fast = QStringLiteral("ai-model");
+    const QJsonObject expertEntry{{QStringLiteral("model"), expert},
+                                  {QStringLiteral("name"), QStringLiteral("Expert Model")},
+                                  {QStringLiteral("supports_vision"), true}};
+    server.models =
+        QJsonArray{expertEntry, QJsonObject{{QStringLiteral("model"), fast},
+                                            {QStringLiteral("name"), QStringLiteral("Fast Model")},
+                                            {QStringLiteral("supports_vision"), true}}};
+    SnowShotApiClient api(server.url());
+    Controller controller;
+    controller.setProvider(&api);
+    controller.activate(QStringLiteral("first-conversion"), sampleImage(), Format::Markdown);
+    until([&] { return controller.state() == Controller::State::Completed; });
+    require(settings.visionModel() == fast && server.requests.size() == 1 &&
+                server.requests.last().value(QStringLiteral("model")) == fast,
+            "the first conversion picks Fast even when Expert leads the catalog");
+
+    server.models = QJsonArray{expertEntry};
+    require(settings.setVisionModel({}), "clear the automatically chosen Fast model");
+    controller.retry();
+    until([&] { return controller.state() == Controller::State::Failed; });
+    require(settings.visionModel().isEmpty() && server.requests.size() == 1 &&
+                api.fallbackModel(true).isEmpty() && api.builtInVisionModel().isEmpty(),
+            "an Expert-only catalog does not submit a conversion or resolve an implicit default");
+
+    controller.selectVisionModel(expert);
+    until([&] { return controller.state() == Controller::State::Completed; });
+    require(settings.visionModel() == expert && server.requests.size() == 2 &&
+                server.requests.last().value(QStringLiteral("model")) == expert,
+            "the explicit Expert choice is saved and sent");
 }
 
 void conversionNotificationsAllowOwnerDeletion() {
@@ -370,25 +423,16 @@ void conversionProviderReplacementKeepsOnlyCurrentBindings() {
     const auto restoreModel = qScopeGuard([&] { settings.setVisionModel(previousModel); });
     require(settings.setVisionModel(QStringLiteral("vision-a")),
             "select the provider replacement model");
-    for (bool replaceFromModal : {false, true}) {
+    {
         ConversionServer server;
         auto original = std::make_unique<SnowShotApiClient>(server.url());
         auto replacement = std::make_unique<SnowShotApiClient>(server.url());
         Controller controller;
         bool replaced = false;
-        const auto replace = [&] {
+        QObject::connect(&controller, &Controller::resultsChanged, &controller, [&] {
             if (!std::exchange(replaced, true))
                 controller.setProvider(replacement.get());
-        };
-        QWidget owner;
-        if (replaceFromModal) {
-            controller.openSettings(&owner);
-            auto* modal = controller.findChild<adqt::widgets::AdModal*>();
-            require(modal, "provider replacement owns an open settings modal");
-            QObject::connect(modal, &adqt::widgets::AdModal::finished, &controller, replace);
-        } else {
-            QObject::connect(&controller, &Controller::resultsChanged, &controller, replace);
-        }
+        });
         controller.setProvider(original.get());
         require(replaced, "a nested provider replacement is accepted");
         original.reset();
@@ -398,29 +442,6 @@ void conversionProviderReplacementKeepsOnlyCurrentBindings() {
         replacement.reset();
         require(controller.state() == Controller::State::Failed && !controller.busy(),
                 "only the latest binding supplies provider retirement notifications");
-    }
-
-    {
-        ConversionServer server;
-        auto original = std::make_unique<SnowShotApiClient>(server.url());
-        auto replacement = std::make_unique<SnowShotApiClient>(server.url());
-        Controller controller;
-        controller.setProvider(original.get());
-        QWidget owner;
-        controller.openSettings(&owner);
-        auto* modal = controller.findChild<adqt::widgets::AdModal*>();
-        require(modal, "retiring a bound provider owns an open settings modal");
-        QObject::connect(modal, &adqt::widgets::AdModal::finished, &controller,
-                         [&] { original.reset(); });
-        controller.setProvider(replacement.get());
-        require(!original, "closing settings retires the preceding provider");
-        controller.activate(QStringLiteral("modal-provider-retirement"), sampleImage(),
-                            Format::Markdown);
-        require(controller.state() == Controller::State::LoadingModels,
-                "retiring the old provider cannot cancel its pending replacement binding");
-        replacement.reset();
-        require(controller.state() == Controller::State::Failed && !controller.busy(),
-                "the replacement retains its destruction subscription after modal reentry");
     }
 
     ConversionServer server;
@@ -435,78 +456,6 @@ void conversionProviderReplacementKeepsOnlyCurrentBindings() {
     controller.setProvider(api.get());
     require(!api && controller.state() == Controller::State::Completed && !controller.busy(),
             "cached-result publication safely permits bound-provider destruction");
-}
-
-void settingsIgnoreRetiredProviderCallbacks() {
-    using adqt::widgets::AdButton;
-    using adqt::widgets::AdModal;
-    using adqt::widgets::AdSelect;
-    for (const bool destroyOriginal : {false, true}) {
-        ConversionServer originalServer;
-        ConversionServer replacementServer;
-        auto original = std::make_unique<SnowShotApiClient>(originalServer.url());
-        SnowShotApiClient replacement(replacementServer.url());
-        ScreenshotImageConversionController controller;
-        QWidget owner;
-        controller.setProvider(original.get());
-        controller.openSettings(&owner);
-        const QPointer<AdModal> retired(controller.findChild<AdModal*>());
-        require(retired, "original settings modal exists");
-        controller.setProvider(&replacement);
-        require(retired, "retired modal remains alive until deferred deletion");
-        controller.openSettings(&owner);
-        AdModal* current = nullptr;
-        for (auto* candidate : controller.findChildren<AdModal*>()) {
-            if (candidate != retired) {
-                current = candidate;
-            }
-        }
-        require(current, "replacement settings modal exists");
-        auto* retry = current->contentWidget()->findChild<AdButton*>(
-            QStringLiteral("screenshotVisionModelsRetry"));
-        auto* select =
-            current->contentWidget()->findChild<AdSelect*>(QStringLiteral("screenshotVisionModel"));
-        require(retry && select && retry->busy(), "current settings starts loading models");
-        if (destroyOriginal) {
-            original.reset();
-        } else {
-            require(original->setBaseUrl(QStringLiteral("http://127.0.0.1:1")),
-                    "retired provider changes its URL");
-        }
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        require(!retired, "retired settings modal is deleted");
-        bool catalogLoaded = false;
-        const auto token = replacement.ensureChatModels(
-            snow_shot::presentation::LanguageManager::instance().currentLocale().name(),
-            &controller, [&catalogLoaded](SnowShotChatModelsResult result) {
-                catalogLoaded = result.succeeded();
-            });
-        require(token != 0, "replacement catalog request starts");
-        until([&]() { return catalogLoaded; });
-        require(select->isEnabled() && !retry->busy(),
-                "retired provider callbacks preserve the current settings subscription");
-        current->reject();
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    }
-
-    ConversionServer server;
-    auto api = std::make_unique<SnowShotApiClient>(server.url());
-    ScreenshotImageConversionController controller;
-    QWidget owner;
-    controller.setProvider(api.get());
-    controller.openSettings(&owner);
-    auto* modal = controller.findChild<AdModal*>();
-    require(modal, "current-provider retirement settings modal exists");
-    auto* retry =
-        modal->contentWidget()->findChild<AdButton*>(QStringLiteral("screenshotVisionModelsRetry"));
-    auto* select =
-        modal->contentWidget()->findChild<AdSelect*>(QStringLiteral("screenshotVisionModel"));
-    require(retry && select && retry->busy(), "current provider starts settings discovery");
-    api.reset();
-    require(!retry->busy() && !select->loading(),
-            "current-provider destruction still settles the current settings window");
-    modal->reject();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
 void sessionNotificationsAllowOwnerDeletion() {
@@ -983,27 +932,6 @@ void synchronousRecognitionCompletionAllowsOwnerDeletion() {
     }
 }
 
-void settingsInitialAvailability() {
-    ConversionServer server;
-    SnowShotApiClient api(server.url());
-    QWidget owner;
-    owner.resize(640, 480);
-    owner.show();
-    for (auto* provider : {&api, static_cast<SnowShotApiClient*>(nullptr)}) {
-        ScreenshotImageConversionController controller;
-        controller.setProvider(provider);
-        controller.openSettings(&owner);
-        auto* modal = controller.findChild<adqt::widgets::AdModal*>();
-        require(modal && modal->acceptButton() && !modal->acceptButton()->isEnabled(),
-                "loading and unavailable providers disable OK on first display");
-        auto* select = modal->contentWidget()->findChild<adqt::widgets::AdSelect*>();
-        require(select && !select->isEnabled(),
-                "model selection is disabled until models are available");
-        modal->reject();
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    }
-}
-
 void conversionCacheUsesRecognitionKeys() {
     using Controller = ScreenshotImageConversionController;
     using Format = SnowShotImageConversionFormat;
@@ -1047,7 +975,7 @@ void conversionCacheUsesRecognitionKeys() {
     }
 }
 
-void conversionLifecycleAndSettings() {
+void conversionLifecycleAndModelSelection() {
     using Controller = ScreenshotImageConversionController;
     using Format = SnowShotImageConversionFormat;
     const snow_shot::storage::ScreenshotImageConversionSettings settings;
@@ -1066,61 +994,15 @@ void conversionLifecycleAndSettings() {
     controller.activate(QStringLiteral("image-one"), sampleImage(), Format::Markdown);
     require(controller.state() == Controller::State::Completed && server.requests.size() == 1,
             "matching completed conversion is reused without a request");
-    QWidget owner;
-    owner.resize(640, 480);
-    owner.show();
-    controller.openSettings(&owner);
-    auto* modal = controller.findChild<adqt::widgets::AdModal*>();
-    require(modal != nullptr, "conversion settings opens a modal");
-    const QRect initialGeometry = modal->contentWidget()->window()->geometry();
-    const QRect initialBodyGeometry = modal->contentWidget()->geometry();
-    require(modal->contentWidget()->height() == modal->contentWidget()->sizeHint().height(),
-            "settings opens with content-sized height without unused alert space");
-    QCoreApplication::processEvents();
-    require(modal->contentWidget()->window()->geometry() == initialGeometry,
-            "settings geometry is stable after first display");
-    require(modal->contentWidget()->geometry() == initialBodyGeometry,
-            "settings content geometry is stable after first display");
-    require(modal->acceptButton()->isEnabled(), "cached vision models enable OK on first display");
-    auto* select = modal->contentWidget()->findChild<adqt::widgets::AdSelect*>(
-        QStringLiteral("screenshotVisionModel"));
-    require(select && select->options().size() == 2 &&
-                select->options().first().value == QStringLiteral("vision-a") &&
-                select->popupLayerMode() == adqt::widgets::AdSelect::PopupLayerMode::QtTool,
-            "settings offers only vision models in server order using a tool popup");
-    const QString snapshots = qEnvironmentVariable("SNOW_SHOT_CONVERSION_SNAPSHOTS");
-    if (!snapshots.isEmpty()) {
-        require(QDir().mkpath(snapshots), "create settings snapshot directory");
-        QCoreApplication::processEvents();
-        require(modal->contentWidget()->window()->grab().save(
-                    QDir(snapshots).filePath(QStringLiteral("vision-settings.png"))),
-                "save settings snapshot");
-    }
-    select->setCurrentValue(QStringLiteral("vision-b"));
-    modal->closeRequested(adqt::widgets::AdModal::CloseReason::CancelAction);
-    require(settings.visionModel() == QStringLiteral("vision-a") && server.requests.size() == 1,
-            "cancel does not save settings or rerun conversion");
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    controller.openSettings(&owner);
-    modal = controller.findChild<adqt::widgets::AdModal*>();
-    select = modal->contentWidget()->findChild<adqt::widgets::AdSelect*>(
-        QStringLiteral("screenshotVisionModel"));
-    select->setCurrentValue(QStringLiteral("vision-b"));
-    modal->closeRequested(adqt::widgets::AdModal::CloseReason::OkAction);
+    controller.selectVisionModel(QStringLiteral("vision-b"));
     until([&]() { return controller.state() == Controller::State::Completed; });
     require(settings.visionModel() == QStringLiteral("vision-b") && server.requests.size() == 2 &&
                 server.requests.last().value(QStringLiteral("model")) == QStringLiteral("vision-b"),
-            "accept persists the shared model and reruns only the active window");
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    controller.openSettings(&owner);
-    modal = controller.findChild<adqt::widgets::AdModal*>();
-    select = modal->contentWidget()->findChild<adqt::widgets::AdSelect*>(
-        QStringLiteral("screenshotVisionModel"));
-    select->setCurrentValue(QStringLiteral("vision-a"));
-    modal->closeRequested(adqt::widgets::AdModal::CloseReason::OkAction);
+            "selecting another model persists the preference and reruns the conversion");
+    controller.selectVisionModel(QStringLiteral("vision-a"));
     require(controller.state() == Controller::State::Completed && server.requests.size() == 2 &&
                 controller.source() == saved.first().source,
-            "changing settings back to a completed model restores its result without uploading");
+            "selecting a completed model restores its result without uploading");
     settings.setVisionModel(QStringLiteral("vision-b"));
     server.source = QStringLiteral("```html\n<h1>Hello</h1>\n```");
     controller.activate(QStringLiteral("image-one"), sampleImage(), Format::Html);
@@ -1157,11 +1039,6 @@ void conversionLifecycleAndSettings() {
     until([&]() { return controller.state() == Controller::State::Failed; });
     require(controller.error().contains(QStringLiteral("No vision models")),
             "empty vision catalog has a distinct error");
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    controller.openSettings(&owner);
-    modal = controller.findChild<adqt::widgets::AdModal*>();
-    require(modal && modal->acceptButton() && !modal->acceptButton()->isEnabled(),
-            "settings cannot accept an empty vision catalog");
     controller.deactivate();
 }
 
@@ -1397,19 +1274,11 @@ void customModelWorkflows() {
     QWidget owner;
     owner.resize(800, 700);
     owner.show();
-    controller.openSettings(&owner);
-    auto* modal = controller.findChild<adqt::widgets::AdModal*>();
-    auto* select = modal->contentWidget()->findChild<adqt::widgets::AdSelect*>(
-        QStringLiteral("screenshotVisionModel"));
-    require(select && select->isEnabled() && select->options().size() == 2,
-            "custom conversion choices available while builtin catalog loads");
     model.supportsVision = false;
     require(apiSettings.setCustomModels({model, second}),
             "update shared custom model capabilities");
-    require(select->options().size() == 1 && settings.visionModel() == second.selectionId(),
-            "vision removal updates open selector and shared fallback");
-    modal->reject();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    require(settings.visionModel() == second.selectionId(),
+            "vision removal updates the shared fallback model");
     ScreenshotRecognitionSessionActions actions;
     actions.translationSettingsOwner = [&]() { return &owner; };
     ScreenshotRecognitionSessionController session(nullptr, nullptr, &api, actions);
@@ -1618,6 +1487,121 @@ void renderingCopyAndPersistence() {
                 boundedRestored.conversions.size() == 1 &&
                 boundedRestored.conversions.first().model == QStringLiteral("vision-b"),
             "the persistence byte budget retains the newest usable result instead of losing all");
+}
+
+void conversionSessionSwitchesVisionModels() {
+    using Mode = ScreenshotRecognitionSessionController::Mode;
+    const auto settings = snow_shot::storage::ScreenshotImageConversionSettings();
+    const QString previous = settings.visionModel();
+    const auto restore = qScopeGuard([&] { settings.setVisionModel(previous); });
+    const QString firstModel = QStringLiteral("vision-a");
+    const QString secondModel = QStringLiteral("vision-b");
+    require(settings.setVisionModel(firstModel), "save the initial conversion model");
+
+    ConversionServer server;
+    server.hold = true;
+    SnowShotApiClient api(server.url());
+    ScreenshotRecognitionModelState modelState;
+    auto modelMode = Mode::Text;
+    ScreenshotRecognitionSessionActions actions;
+    actions.setRecognitionModelState = [&](int mode, const ScreenshotRecognitionModelState& state) {
+        const auto publishedMode = static_cast<Mode>(mode);
+        if (publishedMode != Mode::Markdown && publishedMode != Mode::Html)
+            return;
+        modelMode = publishedMode;
+        modelState = state;
+    };
+    ScreenshotRecognitionSessionController session(nullptr, nullptr, &api, actions);
+    session.setTarget({QStringLiteral("conversion-models"), sampleImage(), QRectF(0, 0, 240, 120)});
+    session.activate(Mode::Markdown);
+    require(modelMode == Mode::Markdown && modelState.loading && modelState.selection == firstModel,
+            "the Markdown toolbar reports the saved model while loading the catalog");
+    until([&] { return server.requests.size() == 1; });
+    require(!modelState.loading && modelState.models.size() == 3 && server.modelRequests == 1 &&
+                server.requests.first().value(QStringLiteral("model")) == firstModel,
+            "the toolbar and conversion share one catalog request");
+
+    server.hold = false;
+    session.setRecognitionModel(secondModel);
+    until([&] { return session.recognitionResultsSnapshot().visibleConversion.has_value(); });
+    const auto markdown = session.recognitionResultsSnapshot();
+    require(settings.visionModel() == secondModel && modelState.selection == secondModel &&
+                server.requests.size() == 2 &&
+                server.requests.last().value(QStringLiteral("model")) == secondModel &&
+                markdown.conversions.size() == 1 &&
+                markdown.conversions.first().model == secondModel,
+            "selecting a new Markdown model replaces the pending request and saves its result");
+
+    server.source = QStringLiteral("<p>HTML</p>");
+    session.activate(Mode::Html);
+    until([&] { return session.recognitionResultsSnapshot().visibleConversion.has_value(); });
+    require(modelMode == Mode::Html && modelState.selection == secondModel &&
+                server.requests.size() == 3 &&
+                server.requests.last().value(QStringLiteral("model")) == secondModel,
+            "HTML starts with the same saved model");
+    session.setRecognitionModel(firstModel);
+    until([&] { return session.recognitionResultsSnapshot().visibleConversion.has_value(); });
+    require(settings.visionModel() == firstModel && modelState.selection == firstModel &&
+                server.requests.size() == 4 &&
+                server.requests.last().value(QStringLiteral("model")) == firstModel,
+            "selecting a model in HTML reruns the active format");
+    session.setRecognitionModel(secondModel);
+    require(session.recognitionResultsSnapshot().visibleConversion.has_value() &&
+                modelState.selection == secondModel && server.requests.size() == 4,
+            "switching back reuses the result for that format and model");
+}
+
+void conversionThinkingReadoutFollowsReasoningPhase() {
+    using Mode = ScreenshotRecognitionSessionController::Mode;
+    const snow_shot::storage::ScreenshotImageConversionSettings settings;
+    const QString previousModel = settings.visionModel();
+    const auto restore = qScopeGuard([&] { settings.setVisionModel(previousModel); });
+    require(settings.setVisionModel(QStringLiteral("vision")),
+            "select a streaming conversion model");
+
+    translation_tests::Server server;
+    SnowShotApiClient api(server.url());
+    ScreenshotRecognitionWindow window({});
+    const QRectF selection(0, 0, 240, 120);
+    require(window.present(
+                {QGuiApplication::primaryScreen(), nullptr, QRect(300, 180, 400, 160), selection}),
+            "present the conversion thinking fixture");
+    ScreenshotRecognitionSessionActions actions;
+    actions.ensureContent = [&] { return &window; };
+    ScreenshotRecognitionSessionController session(nullptr, nullptr, &api, actions);
+    session.setTarget({QStringLiteral("thinking-conversion"), sampleImage(), selection});
+    const auto readout = [&] {
+        return window.findChild<CanvasStatusReadout*>(
+            QStringLiteral("screenshotModelThinkingReadout"));
+    };
+    const auto showsThinking = [&] { return readout() && readout()->isVisible(); };
+    const auto startReasoning = [&](int index) {
+        until([&] { return server.streams.size() == index + 1; }, "conversion stream starts");
+        require(!showsThinking(),
+                "conversion waits for a reasoning delta before showing the readout");
+        server.reasoning(index, QStringLiteral("model reasoning"));
+        until(showsThinking, "conversion displays the shared thinking readout");
+    };
+
+    session.activate(Mode::Markdown);
+    startReasoning(0);
+    server.delta(0, QStringLiteral("# Markdown"));
+    until([&] { return readout()->isHidden(); }, "Markdown output dismisses the thinking readout");
+    require(session.busy(Mode::Markdown), "Markdown remains busy until the stream finishes");
+    server.finish(0);
+    until([&] { return !session.busy(Mode::Markdown); }, "Markdown conversion finishes");
+
+    session.activate(Mode::Html);
+    startReasoning(1);
+    server.fail(1);
+    until([&] { return !session.busy(Mode::Html); }, "HTML conversion reports the stream error");
+    require(readout()->isHidden(), "an error during HTML reasoning dismisses the readout");
+
+    session.activate(Mode::Html);
+    startReasoning(2);
+    session.activate(Mode::Markdown);
+    require(readout()->isHidden(), "switching to the cached Markdown result clears HTML thinking");
+    until([&] { return server.disconnected(2); }, "switching formats cancels the HTML stream");
 }
 
 void conversionSessionRoutesSourceAndClearsOldViews() {
@@ -1989,6 +1973,7 @@ void conversionToolbarMigration() {
         layout::normalizedLayout(original, storage::ScreenshotToolbarLayoutKind::ActionTools);
     require(migrated.positions.at(0) == original.positions.at(0) &&
                 migrated.positions.at(1) == QStringList{QStringLiteral("barcode-recognition"),
+                                                        QStringLiteral("document-recognition"),
                                                         QStringLiteral("table-recognition"),
                                                         QStringLiteral("convert-to-markdown"),
                                                         QStringLiteral("latex-recognition"),
@@ -2071,6 +2056,7 @@ void conversionToolbarMigration() {
     customGrouped.positions.move(0, 1);
     auto expectedCustomGrouped = customGrouped;
     expectedCustomGrouped.positions[1].insert(3, QStringLiteral("latex-recognition"));
+    expectedCustomGrouped.positions[1].prepend(QStringLiteral("document-recognition"));
     expectedCustomGrouped.positions += formerFixedPositions;
     verify(customGrouped, expectedCustomGrouped);
     verify({}, defaults);
@@ -2078,6 +2064,9 @@ void conversionToolbarMigration() {
     customized.positions.move(1, customized.positions.size() - 1);
     auto expectedCustomized = customized;
     expectedCustomized.positions.last().append(QStringLiteral("latex-recognition"));
+    auto& recognitionGroup = expectedCustomized.positions[0];
+    recognitionGroup.insert(recognitionGroup.indexOf(QStringLiteral("table-recognition")),
+                            QStringLiteral("document-recognition"));
     expectedCustomized.positions += formerFixedPositions;
     verify(customized, expectedCustomized);
     auto qrHidden = original;
@@ -2093,6 +2082,7 @@ void conversionToolbarMigration() {
     recognitionHidden.hidden = {QStringLiteral("barcode-recognition"),
                                 QStringLiteral("table-recognition")};
     auto conversionsOnly = recognitionHidden;
+    conversionsOnly.hidden.append(QStringLiteral("document-recognition"));
     conversionsOnly.positions.push_back({QStringLiteral("convert-to-html"),
                                          QStringLiteral("convert-to-markdown"),
                                          QStringLiteral("latex-recognition")});
@@ -2119,10 +2109,9 @@ void runImageConversionNetworkTests() {
     initializeRecognitionTestFonts();
     for (const auto& legacy : {QStringLiteral("qwen3.8-flash"), QStringLiteral("qwen-mt-flash")})
         conversionAiModelMigrationPreservesHistoricalOutput(legacy);
-    settingsInitialAvailability();
-    settingsIgnoreRetiredProviderCallbacks();
+    expertConversionRequiresAnExplicitSelection();
     conversionCacheUsesRecognitionKeys();
-    conversionLifecycleAndSettings();
+    conversionLifecycleAndModelSelection();
     conversionServerAndProviderIdentity();
     conversionCacheBoundsAndSeededModels();
     conversionDiscoveryJoinsPendingRefresh();
@@ -2147,6 +2136,8 @@ void runRecognitionNotificationLifetimeTests() {
 
 void runImageConversionTests() {
     runImageConversionNetworkTests();
+    conversionSessionSwitchesVisionModels();
+    conversionThinkingReadoutFollowsReasoningPhase();
     conversionClipboardPreservesFormats();
     conversionSessionRoutesSourceAndClearsOldViews();
     recognitionFileSnapshotTracksPartialConversionAndQrValues();
@@ -2313,7 +2304,15 @@ void latexVisionPublishesProvisionalSourceBeforeCompletion() {
     session.activate(Mode::Latex);
     translation_tests::waitUntil([&] { return server.streams.size() == 1; },
                                  "formula session starts a streaming vision request");
+    const auto readout = [&] {
+        return window.findChild<CanvasStatusReadout*>(
+            QStringLiteral("screenshotModelThinkingReadout"));
+    };
+    server.reasoning(0, QStringLiteral("formula reasoning"));
+    until([&] { return readout() && !readout()->isHidden(); },
+          "formula reasoning shows the shared thinking readout");
     server.delta(0, QStringLiteral("`"));
+    until([&] { return readout()->isHidden(); }, "the first formula delta hides the readout");
     server.delta(0, QStringLiteral("``la"));
     server.delta(0, QStringLiteral("tex\r\nx"));
     const auto editor = [&] {
@@ -2374,6 +2373,15 @@ void latexVisionRetiresProvisionalOutput() {
         session->activate(Mode::Latex);
         translation_tests::waitUntil([&] { return server.streams.size() == 1; },
                                      "retirement fixture starts a formula stream");
+        const auto readout = [&] {
+            return window.findChild<CanvasStatusReadout*>(
+                QStringLiteral("screenshotModelThinkingReadout"));
+        };
+        if (variant == 6) {
+            server.reasoning(0, QStringLiteral("formula reasoning"));
+            until([&] { return readout() && !readout()->isHidden(); },
+                  "formula reasoning is visible before deactivation");
+        }
         server.delta(0, QStringLiteral("x+\\frac{a}{"));
         if (variant != 6) {
             until(
@@ -2400,8 +2408,10 @@ void latexVisionRetiresProvisionalOutput() {
             api.reset();
         else if (variant == 5)
             session.reset();
-        else
-            session->deactivate(); // Retire a source flush that may still be queued.
+        else {
+            session->deactivate();
+            require(readout()->isHidden(), "deactivating formula recognition clears thinking");
+        }
         translation_tests::waitUntil([&] { return server.disconnected(0); },
                                      "retiring formula progress cancels its transport");
         // The peer can disconnect before the client handles finished, and preview widgets

@@ -53,13 +53,15 @@ constexpr QSize kToolbarWindowPresetSize(1242, 142);
 } // namespace
 
 ScreenshotFloatingToolPaletteWindow::ScreenshotFloatingToolPaletteWindow(
-    const ScreenshotToolPalette::Options& options, QWidget* parent)
+    const ScreenshotToolPalette::Options& options, QWidget* parent,
+    [[maybe_unused]] bool attachToMacOwner)
     : QWidget(parent, native::windowFlags()) {
 #ifdef Q_OS_MACOS
     snow_shot::platform::configureControlledWindowDragging(this);
     // Qt's transient parent alone cannot keep equal-level Cocoa tools above
     // their owner. Track native child ownership across show/hide and recreation.
-    adqt::widgets::detail::syncMacTopLevelPopupOwnership(this);
+    if (attachToMacOwner)
+        adqt::widgets::detail::syncMacTopLevelPopupOwnership(this);
 #endif
     SNOW_SHOT_TOOLBAR_PERF_SCOPE("window.base_ctor");
     applyWindowAttributes();
@@ -566,7 +568,7 @@ bool ScreenshotFloatingToolPaletteWindow::eventFilter(QObject* watched, QEvent* 
     }
 
     if (event != nullptr && event->type() == QEvent::Wheel &&
-        handleToolbarWheel(static_cast<QWheelEvent*>(event))) {
+        handleToolbarWheel(static_cast<QWheelEvent*>(event), qobject_cast<QWidget*>(watched))) {
         return true;
     }
 
@@ -622,7 +624,7 @@ void ScreenshotFloatingToolPaletteWindow::paintEvent(QPaintEvent* event) {
 }
 
 void ScreenshotFloatingToolPaletteWindow::wheelEvent(QWheelEvent* event) {
-    if (handleToolbarWheel(event)) {
+    if (handleToolbarWheel(event, this)) {
         return;
     }
 
@@ -1134,8 +1136,9 @@ void ScreenshotFloatingToolPaletteWindow::finishPaletteDrag(bool emitFinished) {
     }
 }
 
-bool ScreenshotFloatingToolPaletteWindow::handleToolbarWheel(QWheelEvent* event) {
-    return m_paletteHost != nullptr && m_paletteHost->handleToolbarWheel(event);
+bool ScreenshotFloatingToolPaletteWindow::handleToolbarWheel(QWheelEvent* event,
+                                                             const QWidget* receiver) {
+    return m_paletteHost != nullptr && m_paletteHost->handleToolbarWheel(event, receiver);
 }
 
 void ScreenshotFloatingToolPaletteWindow::applyWindowAttributes() {

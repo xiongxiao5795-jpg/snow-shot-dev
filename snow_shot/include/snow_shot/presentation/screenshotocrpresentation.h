@@ -8,7 +8,10 @@
 #include <QString>
 #include <QTransform>
 #include <QVector>
+#include <atomic>
 #include <optional>
+
+class QImage;
 
 enum class ScreenshotOcrTextDirection {
     Horizontal,
@@ -36,6 +39,16 @@ struct ScreenshotOcrLine {
     std::optional<qreal> fontSizeCapRatio{};
     bool translationStreaming = false;
     std::optional<ScreenshotOcrSourceTextMetrics> sourceTextMetrics{};
+    // Derived from original pixels. Invalid means insufficient evidence; never a render default.
+    QColor sourceTextColor{};
+    // Aligned with sourceLineQuads, including separate word boxes on the same visual row.
+    QVector<QColor> sourceLineTextColors{};
+};
+
+struct ScreenshotOcrTextUpdate {
+    int index;
+    QString text;
+    bool streaming;
 };
 
 struct ScreenshotOcrTextPosition {
@@ -68,6 +81,8 @@ class ScreenshotOcrPresentation final {
     bool solidBackgroundFill = false;
 
     void prepareForRendering();
+    // Publish worker-prepared colors without replacing live text or selection state.
+    bool applyPreparedColors(const ScreenshotOcrPresentation& source);
     void setLineText(int lineIndex, const QString& text, bool streaming = false);
     [[nodiscard]] bool empty() const;
     [[nodiscard]] int lineAt(const QPointF& canvasPosition) const;
@@ -102,6 +117,21 @@ class ScreenshotOcrPresentation final {
     void copyCommittedSelectionFrom(const ScreenshotOcrPresentation& source);
 
   private:
+    friend void prepareScreenshotOcrTextColors(ScreenshotOcrPresentation&, const QImage&,
+                                               const QRectF&, const std::atomic_bool*);
+    friend void prepareScreenshotOcrFillColors(ScreenshotOcrPresentation&, const QImage&,
+                                               const QRectF&, bool, const std::atomic_bool*);
+    struct ColorGeometry {
+        QPolygonF quad;
+        QVector<QPolygonF> sourceLineQuads;
+    };
+    qint64 m_textColorImageKey = 0;
+    QRectF m_textColorCanvasRect;
+    QVector<ColorGeometry> m_textColorGeometry;
+    qint64 m_fillColorImageKey = 0;
+    QRectF m_fillColorCanvasRect;
+    QVector<QPolygonF> m_fillColorGeometry;
+
     struct CachedLineGeometry {
         QRectF bounds;
         QTransform canvasToNormalized;

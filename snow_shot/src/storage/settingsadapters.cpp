@@ -882,6 +882,14 @@ bool ShortcutSettings::setToggleGlobalShortcuts(
     return setShortcutValue(QStringLiteral("global_shortcuts/toggle_global_hotkeys"), bindings);
 }
 
+shortcuts::ShortcutBindingList ShortcutSettings::toggleGlobalMouse() const {
+    return shortcutValue(QStringLiteral("global_shortcuts/toggle_global_mouse"));
+}
+
+bool ShortcutSettings::setToggleGlobalMouse(const shortcuts::ShortcutBindingList& bindings) const {
+    return setShortcutValue(QStringLiteral("global_shortcuts/toggle_global_mouse"), bindings);
+}
+
 shortcuts::ShortcutBindingList ShortcutSettings::toggleDisableOnFocusedFullscreenWindow() const {
     return shortcutValue(
         QStringLiteral("global_shortcuts/toggle_disable_on_focused_fullscreen_window"));
@@ -1018,6 +1026,18 @@ QString GlobalShortcutSettings::fullscreenWindowFilter() const {
 
 bool GlobalShortcutSettings::setFullscreenWindowFilter(const QString& filter) const {
     return cache().setValue(QStringLiteral("global_shortcuts/fullscreen_window_filter"), filter);
+}
+
+QStringList GlobalShortcutSettings::fullscreenDisableScope() const {
+    return cache()
+        .value(QStringLiteral("global_shortcuts/fullscreen_disable_scope"))
+        .toVariant()
+        .toStringList();
+}
+
+bool GlobalShortcutSettings::setFullscreenDisableScope(const QStringList& scope) const {
+    return cache().setValue(QStringLiteral("global_shortcuts/fullscreen_disable_scope"),
+                            QJsonArray::fromStringList(scope));
 }
 
 bool ScreenshotSettings::shutterSoundNotification() const {
@@ -1933,6 +1953,14 @@ bool ScreenshotUiSettings::setShowGuidesByDefault(bool enabled) const {
     return cache().setValue(QStringLiteral("screenshot_ui/show_guides_by_default"), enabled);
 }
 
+bool ScreenshotUiSettings::adaptiveGuideColors() const {
+    return cache().value(QStringLiteral("screenshot_ui/adaptive_guide_colors")).toBool();
+}
+
+bool ScreenshotUiSettings::setAdaptiveGuideColors(bool enabled) const {
+    return cache().setValue(QStringLiteral("screenshot_ui/adaptive_guide_colors"), enabled);
+}
+
 QColor ScreenshotUiSettings::cursorGuideLineColor() const {
     return colorValue(QStringLiteral("screenshot_ui/cursor_guide_line_color"));
 }
@@ -2144,6 +2172,26 @@ QColor RecordingSettings::mouseClickColor() const {
 
 bool RecordingSettings::setMouseClickColor(const QColor& color) const {
     return setColorValue(QStringLiteral("screen_recording/mouse_click_color"), color);
+}
+
+bool RecordingSettings::followMouse() const {
+    return cache().value(QStringLiteral("screen_recording/follow_mouse")).toBool();
+}
+bool RecordingSettings::setFollowMouse(bool enabled) const {
+    return cache().setValue(QStringLiteral("screen_recording/follow_mouse"), enabled);
+}
+bool RecordingSettings::followMouseSmoothMovement() const {
+    return cache().value(QStringLiteral("screen_recording/follow_mouse_smooth_movement")).toBool();
+}
+bool RecordingSettings::setFollowMouseSmoothMovement(bool enabled) const {
+    return cache().setValue(QStringLiteral("screen_recording/follow_mouse_smooth_movement"),
+                            enabled);
+}
+bool RecordingSettings::followMouseReduceJitter() const {
+    return cache().value(QStringLiteral("screen_recording/follow_mouse_reduce_jitter")).toBool();
+}
+bool RecordingSettings::setFollowMouseReduceJitter(bool enabled) const {
+    return cache().setValue(QStringLiteral("screen_recording/follow_mouse_reduce_jitter"), enabled);
 }
 
 bool RecordingSettings::webcamEnabled() const {
@@ -2406,6 +2454,14 @@ bool FloatingToolbarSettings::enabled() const {
 
 bool FloatingToolbarSettings::setEnabled(bool value) const {
     return cache().setValue(QStringLiteral("floating_toolbar/enabled"), value);
+}
+
+QString FloatingToolbarSettings::dropBehavior() const {
+    return cache().value(QStringLiteral("floating_toolbar/drop_behavior")).toString();
+}
+
+bool FloatingToolbarSettings::setDropBehavior(const QString& value) const {
+    return cache().setValue(QStringLiteral("floating_toolbar/drop_behavior"), value);
 }
 
 bool FloatingToolbarSettings::hideInFullscreen() const {

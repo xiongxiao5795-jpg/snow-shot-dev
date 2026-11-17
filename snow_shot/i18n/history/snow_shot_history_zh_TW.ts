@@ -551,6 +551,10 @@
             <translation>請輸入正數的紙張尺寸</translation>
         </message>
         <message>
+            <source>Enter an image quality from 0% to 100%</source>
+            <translation>請輸入 0% 至 100% 之間的影像品質</translation>
+        </message>
+        <message>
             <source>Image stitching requires too much temporary memory. Try fewer images or smaller image sizes</source>
             <translation>此影像拼接需要過多暫存記憶體。請減少影像數量或使用較小的影像</translation>
         </message>
@@ -1313,12 +1317,20 @@
             <translation>捨棄此影像拼接？</translation>
         </message>
         <message>
+            <source>Dropped image</source>
+            <translation>拖放的影像</translation>
+        </message>
+        <message>
             <source>Export could not be started. Try again</source>
             <translation>無法開始匯出，請重試</translation>
         </message>
         <message>
             <source>Exporting PDF page %1 of %2: %3%</source>
             <translation>正在匯出 PDF 第 %1 頁，共 %2 頁：%3%</translation>
+        </message>
+        <message>
+            <source>Image editing</source>
+            <translation>影像編輯</translation>
         </message>
         <message>
             <source>Image loading could not be started. Try again</source>

@@ -102,14 +102,6 @@ so every moment on screen can be expressed clearly and shared easily</source>
             <translation>交流与答疑 · 群号 %1</translation>
         </message>
         <message>
-            <source>Download from GitHub</source>
-            <translation>从 GitHub 下载</translation>
-        </message>
-        <message>
-            <source>Download from Gitee</source>
-            <translation>从 Gitee 下载</translation>
-        </message>
-        <message>
             <source>Download update</source>
             <translation>下载更新</translation>
         </message>
@@ -182,10 +174,6 @@ so every moment on screen can be expressed clearly and shared easily</source>
             <translation>隐私政策</translation>
         </message>
         <message>
-            <source>QQ group 3</source>
-            <translation>QQ 交流群 3</translation>
-        </message>
-        <message>
             <source>QQ group 4</source>
             <translation>QQ 交流群 4</translation>
         </message>
@@ -238,6 +226,14 @@ so every moment on screen can be expressed clearly and shared easily</source>
             <translation>不可用</translation>
         </message>
         <message>
+            <source>Update %1 is ready. It will install after you quit and be available on your next launch</source>
+            <translation>更新 %1 已就绪。退出应用程序后将进行安装，下次启动时即可使用</translation>
+        </message>
+        <message>
+            <source>Update %1 will install when you quit</source>
+            <translation>更新 %1 将在退出应用时安装</translation>
+        </message>
+        <message>
             <source>Update available: %1</source>
             <translation>发现新版本：%1</translation>
         </message>
@@ -254,12 +250,20 @@ so every moment on screen can be expressed clearly and shared easily</source>
             <translation>更新由 Microsoft Store 管理</translation>
         </message>
         <message>
+            <source>User agreement</source>
+            <translation>用户协议</translation>
+        </message>
+        <message>
             <source>Verifying update…</source>
             <translation>正在验证更新…</translation>
         </message>
         <message>
             <source>View the source and improve it together</source>
             <translation>查看源码，一起改进</translation>
+        </message>
+        <message>
+            <source>View update details</source>
+            <translation>查看更新详情</translation>
         </message>
         <message>
             <source>You are up to date</source>
@@ -322,6 +326,10 @@ so every moment on screen can be expressed clearly and shared easily</source>
         <message>
             <source>Scale: %1%</source>
             <translation>缩放：%1%</translation>
+        </message>
+        <message>
+            <source>Thinking…</source>
+            <translation>思考中…</translation>
         </message>
     </context>
     <context>
@@ -688,6 +696,14 @@ so every moment on screen can be expressed clearly and shared easily</source>
     <context>
         <name>SnowShotApiClient</name>
         <message>
+            <source>Document recognition request timed out</source>
+            <translation>文档识别请求超时</translation>
+        </message>
+        <message>
+            <source>Document recognition response is too large</source>
+            <translation>文档识别结果过大</translation>
+        </message>
+        <message>
             <source>Image conversion failed</source>
             <translation>图像转换失败</translation>
         </message>
@@ -722,6 +738,10 @@ so every moment on screen can be expressed clearly and shared easily</source>
         <message>
             <source>Invalid LaTeX recognition response</source>
             <translation>无效的 LaTeX 识别响应</translation>
+        </message>
+        <message>
+            <source>Invalid document recognition response</source>
+            <translation>文档识别结果无效</translation>
         </message>
         <message>
             <source>Invalid model stream response</source>
@@ -760,6 +780,18 @@ so every moment on screen can be expressed clearly and shared easily</source>
             <translation>没有可用的翻译服务</translation>
         </message>
         <message>
+            <source>Paid calls are paused because your account has an outstanding balance. Settle the balance in Account to continue</source>
+            <translation>账号有欠款，付费调用已暂停。请前往「账号」结清欠款后继续</translation>
+        </message>
+        <message>
+            <source>Sign in to your Snow Shot account to use Expert Model</source>
+            <translation>请登录 Snow Shot 账号以使用专家模型</translation>
+        </message>
+        <message>
+            <source>Sign in to your Snow Shot account to use this service</source>
+            <translation>请登录 Snow Shot 账号后使用此服务</translation>
+        </message>
+        <message>
             <source>Table recognition failed</source>
             <translation>表格识别失败</translation>
         </message>
@@ -774,6 +806,10 @@ so every moment on screen can be expressed clearly and shared easily</source>
         <message>
             <source>Table recognition returned no table</source>
             <translation>表格识别未返回表格</translation>
+        </message>
+        <message>
+            <source>The document image could not be encoded</source>
+            <translation>无法编码文档图像</translation>
         </message>
         <message>
             <source>The image could not be prepared for conversion</source>
@@ -792,6 +828,10 @@ so every moment on screen can be expressed clearly and shared easily</source>
             <translation>图像过大，无法识别。请选择较小的区域</translation>
         </message>
         <message>
+            <source>The image is too large. Select a smaller area.</source>
+            <translation>图像过大，请选择较小的区域。</translation>
+        </message>
+        <message>
             <source>The model response is too large</source>
             <translation>模型响应过大</translation>
         </message>
@@ -808,12 +848,20 @@ so every moment on screen can be expressed clearly and shared easily</source>
             <translation>模型服务已更改。请重试以加载其模型</translation>
         </message>
         <message>
+            <source>The service has reached its usage limit. Try again later</source>
+            <translation>服务已达到用量上限，请稍后重试</translation>
+        </message>
+        <message>
             <source>The text is too large to translate</source>
             <translation>文本过长，无法翻译</translation>
         </message>
         <message>
             <source>The translation response is too large</source>
             <translation>翻译响应过大</translation>
+        </message>
+        <message>
+            <source>This request requires payment. Check your balance in Account</source>
+            <translation>此请求需要付费，请前往「账号」查看余额</translation>
         </message>
         <message>
             <source>This service does not support the selected language combination</source>
@@ -838,6 +886,26 @@ so every moment on screen can be expressed clearly and shared easily</source>
         <message>
             <source>Translation stream ended unexpectedly</source>
             <translation>翻译流意外结束</translation>
+        </message>
+        <message>
+            <source>Your Snow Shot session is no longer valid. Sign in again</source>
+            <translation>Snow Shot 登录已失效，请重新登录</translation>
+        </message>
+        <message>
+            <source>Your available credits cannot cover this request. Purchase credits in Account</source>
+            <translation>可用余额不足以支付本次请求，请前往「账号」充值</translation>
+        </message>
+        <message>
+            <source>Your credits are reserved by other calls that are still running. Wait for them to finish and try again</source>
+            <translation>余额已被其他进行中的调用预留，请等待这些调用结束后重试</translation>
+        </message>
+        <message>
+            <source>Your credits cannot cover this Expert Model request. Purchase credits from Account to continue</source>
+            <translation>点数不足，无法使用专家模型完成此请求。请前往账户页面购买点数后继续</translation>
+        </message>
+        <message>
+            <source>Your daily free allowance is exhausted. Try again after it resets</source>
+            <translation>今日免费额度已用尽，请在额度重置后重试</translation>
         </message>
     </context>
     <context>

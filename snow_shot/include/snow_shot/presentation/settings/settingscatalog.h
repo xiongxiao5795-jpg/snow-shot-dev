@@ -93,6 +93,7 @@ enum class SettingsSelectBinding {
     PinMouseWheelZoomMode,
     PinTextSelectionOnRecognitionResults,
     PinDuplicateContentAction,
+    FloatingToolbarDropBehavior,
     PinDoubleClickAction,
     PinMiddleClickAction,
     ScreenRecordingClarity,
@@ -139,6 +140,7 @@ enum class SettingsSwitchBinding {
     OcrHardwareAcceleration,
     ScreenshotAreaTypeHint,
     ShowGuidesByDefault,
+    AdaptiveGuideColors,
     ShowEditSelectionToolbar,
     TrayEnabled,
     TrayUseSystemIconColor,
@@ -215,6 +217,7 @@ enum class SettingsMultiSelectBinding {
     DrawingQuickSelectionDisabledTools,
     TrayMenuOptions,
     ScreenshotAutoSaveAfterExecution,
+    FullscreenDisableScope,
 };
 
 struct SettingsMultiSelectDefinition {
@@ -370,7 +373,6 @@ struct SettingsLocalShortcutDefinition {
 };
 
 enum class SettingsActionBinding {
-    OpenLoginItemSettings,
     RestartAsAdministrator,
     ClearCaptureHistory,
     ClearPinnedHistory,
@@ -570,6 +572,7 @@ struct SettingsSectionDefinition {
 };
 
 enum class SettingsPageKind {
+    Account,
     GeneratedSettings,
     ScreenshotHistory,
     PinnedWindowManagement,

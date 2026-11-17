@@ -310,6 +310,7 @@ void routingPolicy() {
                         A::RestoreLastClosedWindows,
                         A::SwitchWindowGroup,
                         A::ToggleGlobalShortcuts,
+                        A::ToggleGlobalMouse,
                         A::ToggleDisableOnFocusedFullscreenWindow,
                         A::ToggleWindowUnderCursorAlwaysOnTop})
         require(requiredPermissions(action, true).isEmpty(),

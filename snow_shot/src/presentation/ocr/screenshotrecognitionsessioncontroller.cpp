@@ -1,4 +1,9 @@
 #include "snow_shot/presentation/screenshotrecognitionsessioncontroller.h"
+#include "snow_shot/presentation/screenshotlatexrenderer.h"
+#include <QTemporaryDir>
+#include <QDesktopServices>
+#include <QPainter>
+#include <QThreadPool>
 #include <QJsonArray>
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
 #include "snow_shot/presentation/components/screenshottranslationsettingsdialog.h"
@@ -27,6 +32,7 @@
 #include "snow_shot/storage/applicationstorage.h"
 #include "snow_shot/storage/configurationstore.h"
 #include "snow_shot/storage/settingsadapters.h"
+#include "snow_shot/runtime/runtimeactivitytracker.h"
 
 #include <QCoreApplication>
 #include <QApplication>
@@ -37,6 +43,7 @@
 #include <QMimeData>
 #include <QTextDocument>
 #include <QTextCursor>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -63,6 +70,30 @@
 #include <utility>
 
 namespace {
+
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+using FormulaFallback = ScreenshotRecognizedDocument::FormulaFallback;
+
+struct DocumentFormulaBatch {
+    QHash<QString, QStringList> idsBySource;
+    QStringList sources;
+    qsizetype next = 0;
+    qint64 imageBytes = 0;
+};
+
+std::shared_ptr<QTextDocument> prepareDocumentPreview(const ScreenshotRecognizedDocument& document,
+                                                      QThread* uiThread, FormulaFallback fallback) {
+    auto preview = document.createTextDocument(false, fallback);
+    if (!preview->moveToThread(uiThread))
+        return {};
+    return std::shared_ptr<QTextDocument>(preview.release(), [](QTextDocument* value) {
+        if (value->thread() == QThread::currentThread())
+            delete value;
+        else
+            value->deleteLater();
+    });
+}
+#endif
 
 #if SNOW_SHOT_ENABLE_LATEX_RECOGNITION
 QString streamingLatexSource(QString source) {
@@ -124,6 +155,25 @@ copyTextPresentation(const std::shared_ptr<ScreenshotOcrPresentation>& presentat
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
 using snow_shot::translation::TranslationJob;
 using snow_shot::translation::TranslationService;
+
+std::shared_ptr<ScreenshotOcrPresentation>
+prepareOverlayLayout(const ScreenshotOcrPresentation& source, bool merge, const QFont& font) {
+    auto overlay = std::make_shared<ScreenshotOcrPresentation>();
+    overlay->selection = source.selection;
+    QVector<QVector<int>> sourceIndices;
+    if (merge) {
+        overlay->lines = snow_shot::presentation::mergeOcrLayout(
+            source.lines, source.selection.topLeft(), &sourceIndices);
+    } else {
+        overlay->lines = source.lines;
+        sourceIndices.reserve(source.lines.size());
+        for (int index = 0; index < source.lines.size(); ++index)
+            sourceIndices.push_back({index});
+    }
+    setScreenshotOcrTranslationFontCaps(overlay->lines, source.lines, sourceIndices, font);
+    overlay->prepareForRendering();
+    return overlay;
+}
 #endif
 
 bool backgroundFillEnabled() {
@@ -140,6 +190,14 @@ ScreenshotRecognitionSessionController::ScreenshotRecognitionSessionController(
     SnowShotApiClient* tableRecognition, ScreenshotRecognitionSessionActions actions,
     QObject* parent)
     : QObject(parent), m_actions(std::move(actions)) {
+#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+    m_translationUpdateTimer = new QTimer(this);
+    m_translationUpdateTimer->setObjectName(QStringLiteral("screenshotTranslationUpdateTimer"));
+    m_translationUpdateTimer->setSingleShot(true);
+    m_translationUpdateTimer->setInterval(33);
+    connect(m_translationUpdateTimer, &QTimer::timeout, this,
+            [this] { flushTranslationUpdates(); });
+#endif
 #if SNOW_SHOT_ENABLE_TABLE_RECOGNITION
     m_tableModelSelection = snow_shot::storage::ScreenshotRecognitionModelSettings().tableModel();
 #endif
@@ -158,6 +216,12 @@ ScreenshotRecognitionSessionController::ScreenshotRecognitionSessionController(
             return;
         notify(&ScreenshotRecognitionSessionController::updateConversionMessage);
     });
+    connect(m_conversion, &ScreenshotImageConversionController::reasoningChanged, this,
+            [this](bool active) {
+                if (conversionModeActive())
+                    if (auto* view = content())
+                        view->setModelThinking(active);
+            });
     connect(m_conversion, &ScreenshotImageConversionController::resultsChanged, this,
             &ScreenshotRecognitionSessionController::recognitionResultsChanged);
 #endif
@@ -219,7 +283,7 @@ ScreenshotRecognitionSessionController::ScreenshotRecognitionSessionController(
                                     setPendingTextRecognitionRendering,
                                 true))
                         return;
-                    if (m_presentation != nullptr) {
+                    if (m_presentation != nullptr && !editing()) {
                         if (!notify(&ScreenshotRecognitionSessionController::applyPresentation,
                                     m_presentation, QImage{}, QRectF{}))
                             return;
@@ -352,10 +416,18 @@ void ScreenshotRecognitionSessionController::setProviders(
 #endif
 
         connect(tableRecognition, &QObject::destroyed, this, [this]() {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+            const bool documentRequestPending = m_documentRequestToken != 0 || m_documentParsing;
+            if (documentRequestPending)
+                cancelModelRecognition(Mode::Document);
+#endif
 #if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
             const bool awaitingModels = m_active &&
                                         (m_mode == Mode::Table || m_mode == Mode::Latex) &&
                                         m_recognitionAwaitingModel;
+#endif
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION ||                    \
+    SNOW_SHOT_ENABLE_IMAGE_CONVERSION
             m_recognitionModelsToken = 0;
             m_recognitionModelsLoading = false;
             ++m_recognitionModelsGeneration;
@@ -373,12 +445,39 @@ void ScreenshotRecognitionSessionController::setProviders(
                                                   : tr("LaTeX recognition failed")))
                     return;
 #endif
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+            if (documentRequestPending && m_active && m_mode == Mode::Document) {
+                failModelRecognition(tr("Document recognition service is unavailable"));
+                return;
+            }
+#endif
+            if (conversionModeActive())
+                updateRecognitionModels();
         });
-#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+        const auto documentProviderChanged = [this] {
+            if (!m_documentRequestToken && !m_documentParsing)
+                return;
+            cancelModelRecognition(Mode::Document);
+            failModelRecognition(
+                tr("Recognition service changed. Retry to use the updated settings"));
+        };
+        connect(tableRecognition, &SnowShotApiClient::accountIdentityChanged, this,
+                documentProviderChanged);
+        connect(tableRecognition, &SnowShotApiClient::baseUrlChanged, this, documentProviderChanged);
+#endif
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION ||                    \
+    SNOW_SHOT_ENABLE_IMAGE_CONVERSION
         connect(tableRecognition, &SnowShotApiClient::chatModelsChanged, this, [this] {
+            if (!m_recognitionModelsError.isEmpty() && m_tableRecognition &&
+                m_tableRecognition->hasBuiltInModels(
+                    snow_shot::presentation::LanguageManager::instance().currentLocale().name()))
+                m_recognitionModelsError.clear();
             if (migrateRecognitionModelPreferences())
                 updateRecognitionModels();
         });
+#endif
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
         connect(tableRecognition, &SnowShotApiClient::baseUrlChanged, this, [this] {
             const bool affected =
                 m_active && (m_mode == Mode::Table || m_mode == Mode::Latex) &&
@@ -489,8 +588,6 @@ void ScreenshotRecognitionSessionController::setProviders(
 
 void ScreenshotRecognitionSessionController::setIndependentEditing(bool enabled) {
     m_independentEditing = enabled;
-    if (enabled)
-        setShowOriginalImage(false);
     updateOriginalImagePreview();
 }
 
@@ -505,6 +602,10 @@ void ScreenshotRecognitionSessionController::setTarget(ScreenshotRecognitionTarg
     if (!notify(&ScreenshotRecognitionSessionController::resetTargetState))
         return;
     m_target = std::move(target);
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    m_documentPreview.reset();
+    m_documentPreviewKey.clear();
+#endif
     if (m_target.hasFormattedText()) {
         TextCacheEntry entry;
         entry.formatted = true;
@@ -548,6 +649,8 @@ void ScreenshotRecognitionSessionController::refreshFormattedTarget(
 void ScreenshotRecognitionSessionController::seedRecognitionResults(
     ScreenshotRecognitionResults results) {
     sanitizeEditionRecognitionResults(results);
+    if (results.document && results.isValidFor(m_target.key))
+        cacheDocument(m_target.key, results.document);
     if (!hasTarget() || !results.isValidFor(m_target.key)) {
         return;
     }
@@ -603,12 +706,16 @@ void ScreenshotRecognitionSessionController::seedRecognitionResults(
         entry.presentation = results.text->presentation;
         entry.editingSession = std::move(editingSession);
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
-        const auto sourceIndices = results.translatedText
-                                       ? snow_shot::presentation::ocrTranslationSourceIndices(
-                                             *results.translatedText, *entry.presentation)
-                                       : std::nullopt;
+        QVector<int> paragraphsToRestore;
+        const auto sourceIndices =
+            results.translatedText
+                ? snow_shot::presentation::ocrTranslationSourceIndices(
+                      *results.translatedText, *entry.presentation, &paragraphsToRestore)
+                : std::nullopt;
         if (sourceIndices) {
             entry.overlayTranslation.presentation = copyTextPresentation(results.translatedText);
+            for (const int index : paragraphsToRestore)
+                entry.overlayTranslation.presentation->lines[index].paragraph = true;
             setScreenshotOcrTranslationFontCaps(entry.overlayTranslation.presentation->lines,
                                                 entry.presentation->lines, *sourceIndices,
                                                 QApplication::font());
@@ -728,6 +835,7 @@ ScreenshotRecognitionSessionController::cachedRecognitionResults() const {
         return results;
     }
     results.key = m_target.key;
+    results.document = cachedDocument(m_target.key);
 #if SNOW_SHOT_ENABLE_LATEX_RECOGNITION
     results.latexModelSelection = m_latexModelSelection;
     results.latexEffectiveModel = resolvedRecognitionModel(Mode::Latex);
@@ -802,6 +910,14 @@ ScreenshotRecognitionSessionController::recognitionResultsSnapshot() const {
     if (const auto entry = m_textCache.constFind(m_target.key); entry != m_textCache.cend()) {
         // Freeze partial translation independently of the source session's live requests.
         results.translatedText = copyTextPresentation(entry->overlayTranslation.presentation);
+        if (results.translatedText && m_target.key == m_translationKey && entry->jobInImage &&
+            entry->translationJob) {
+            for (const int index : m_pendingTranslationUnits) {
+                const auto& text = entry->translationJob->units().at(index).text;
+                if (!text.isEmpty())
+                    results.translatedText->setLineText(index, text);
+            }
+        }
     }
 #endif
     return results;
@@ -971,7 +1087,8 @@ bool ScreenshotRecognitionSessionController::recognitionEntryValid(
 bool ScreenshotRecognitionSessionController::updateRecognitionModels() const {
     if (m_destroying)
         return true;
-#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION ||                    \
+    SNOW_SHOT_ENABLE_IMAGE_CONVERSION
     if (!m_actions.setRecognitionModelState)
         return true;
     ScreenshotRecognitionModelState state;
@@ -979,6 +1096,15 @@ bool ScreenshotRecognitionSessionController::updateRecognitionModels() const {
     state.error = m_recognitionModelsError;
     if (m_tableRecognition)
         state.models = m_tableRecognition->cachedChatModels();
+#if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
+    if (conversionModeActive()) {
+        state.selection = m_conversion->activeModel();
+        if (state.selection.isEmpty())
+            state.selection = snow_shot::storage::ScreenshotImageConversionSettings().visionModel();
+        return notifyUiCallback(m_actions.setRecognitionModelState, static_cast<int>(m_mode),
+                                state);
+    }
+#endif
 #if SNOW_SHOT_ENABLE_TABLE_RECOGNITION
     state.selection = m_tableModelSelection;
     state.effectiveModel =
@@ -1046,9 +1172,9 @@ bool ScreenshotRecognitionSessionController::migrateRecognitionModelPreferences(
 }
 
 void ScreenshotRecognitionSessionController::loadRecognitionModels(bool refresh) {
-#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
-    if (!m_active || (m_mode != Mode::Table && m_mode != Mode::Latex) || !m_tableRecognition ||
-        m_recognitionModelsToken) {
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION ||                    \
+    SNOW_SHOT_ENABLE_IMAGE_CONVERSION
+    if (!m_active || !m_tableRecognition || m_recognitionModelsToken) {
         if (!updateRecognitionModels())
             return;
         return;
@@ -1078,9 +1204,11 @@ void ScreenshotRecognitionSessionController::loadRecognitionModels(bool refresh)
             }
             if (!updateRecognitionModels())
                 return;
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
             if ((m_mode == Mode::Table || m_mode == Mode::Latex) && m_recognitionAwaitingModel)
                 if (!notify(&ScreenshotRecognitionSessionController::activateModelResult))
                     return;
+#endif
             if (!updateBusyState())
                 return;
         },
@@ -1098,6 +1226,23 @@ void ScreenshotRecognitionSessionController::loadRecognitionModels(bool refresh)
 }
 
 void ScreenshotRecognitionSessionController::cancelModelRecognition(Mode mode) {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (mode == Mode::Document) {
+        ++m_documentGeneration;
+        if (auto cancellation = std::exchange(m_documentCancellation, {}))
+            cancellation->store(true, std::memory_order_relaxed);
+        m_documentCopyJob.cancel();
+        m_documentCopyJob = {};
+        m_documentClipboardCommit.cancel();
+        m_documentClipboardCommit = {};
+        if (m_documentRequestToken && m_tableRecognition)
+            m_tableRecognition->cancel(m_documentRequestToken);
+        m_documentRequestToken = 0;
+        m_documentParsing = false;
+        m_openingDocument = false;
+        delete m_documentPreparation.data();
+    }
+#endif
 #if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
     if (mode == m_mode)
         m_recognitionAwaitingModel = false;
@@ -1114,6 +1259,9 @@ void ScreenshotRecognitionSessionController::cancelModelRecognition(Mode mode) {
             m_tableRecognition->cancel(m_tableRequestToken);
         m_tableRequestToken = 0;
         m_tableParsing = false;
+        if (m_mode == Mode::Table)
+            if (auto* view = content())
+                view->setModelThinking(false);
     }
 #endif
 #if SNOW_SHOT_ENABLE_LATEX_RECOGNITION
@@ -1156,6 +1304,12 @@ void ScreenshotRecognitionSessionController::failModelRecognition(const QString&
 }
 
 void ScreenshotRecognitionSessionController::setRecognitionModel(const QString& selection) {
+#if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
+    if (conversionModeActive()) {
+        m_conversion->selectVisionModel(selection);
+        return;
+    }
+#endif
 #if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
     const QPointer<ScreenshotRecognitionSessionController> lifetime(this);
     if (!m_active || (m_mode != Mode::Table && m_mode != Mode::Latex) || selection.isEmpty() ||
@@ -1217,6 +1371,12 @@ void ScreenshotRecognitionSessionController::setRecognitionModel(const QString& 
 }
 
 void ScreenshotRecognitionSessionController::retryRecognition() {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (m_active && m_mode == Mode::Document && !busy(m_mode)) {
+        activate(Mode::Document);
+        return;
+    }
+#endif
     if (!m_active || (m_mode != Mode::Table && m_mode != Mode::Latex) || busy(m_mode))
         return;
     m_workflowError.clear();
@@ -1351,7 +1511,8 @@ void ScreenshotRecognitionSessionController::activate(Mode mode) {
         return;
     const auto transition = ++m_transitionGeneration;
     m_uiPublicationEnabled = true;
-    if (m_active && m_mode == mode && (mode == Mode::Table || mode == Mode::Latex) && busy(mode)) {
+    if (m_active && m_mode == mode &&
+        (mode == Mode::Table || mode == Mode::Latex || mode == Mode::Document) && busy(mode)) {
         if (!ownsContentAttachment()) {
             if (!notify(&ScreenshotRecognitionSessionController::attachContent) || !lifetime ||
                 transition != m_transitionGeneration)
@@ -1370,10 +1531,15 @@ void ScreenshotRecognitionSessionController::activate(Mode mode) {
                     !notifyUiCallback(m_actions.setActiveMode, static_cast<int>(mode)))
                     return;
 #if SNOW_SHOT_ENABLE_LATEX_RECOGNITION
-                if (mode == Mode::Latex && m_latexStream && m_latexStream->document) {
+                if (mode == Mode::Latex && m_latexStream) {
                     const auto stream = m_latexStream;
-                    view->showLatexEditor(
-                        stream->document, [stream] { return stream->source; }, true);
+                    if (stream->document) {
+                        view->showLatexEditor(
+                            stream->document, [stream] { return stream->source; }, true);
+                        if (!attached())
+                            return;
+                    }
+                    view->setModelThinking(stream->reasoningActive);
                     if (!attached())
                         return;
                 }
@@ -1381,6 +1547,9 @@ void ScreenshotRecognitionSessionController::activate(Mode mode) {
 #if SNOW_SHOT_ENABLE_TABLE_RECOGNITION
                 if (mode == Mode::Table && m_tableConversion && m_tableConversion->busy()) {
                     view->showTablePreview(m_tableConversion->preview());
+                    if (!attached())
+                        return;
+                    view->setModelThinking(m_tableConversion->reasoningActive());
                     if (!attached())
                         return;
                 } else if (mode == Mode::Table && m_tableSession) {
@@ -1425,7 +1594,10 @@ void ScreenshotRecognitionSessionController::activate(Mode mode) {
         return;
     if (!lifetime || transition != m_transitionGeneration)
         return;
-    if (mode != Mode::Text && m_textRenderRequestToken != 0) {
+    const bool renderBackground = mode == Mode::Text && shouldRenderTextBackground();
+    if (!lifetime || transition != m_transitionGeneration)
+        return;
+    if (!renderBackground && m_textRenderRequestToken != 0) {
         if (m_recognition != nullptr) {
             m_recognition->cancel(m_textRenderRequestToken);
         }
@@ -1489,12 +1661,6 @@ void ScreenshotRecognitionSessionController::activate(Mode mode) {
                 if (!notify(&ScreenshotRecognitionSessionController::startTextRender))
                     return;
             }
-            // Independent hosts may start translation from the ready notification.
-            // Establish text editing first, as the fresh-result path does, so restoring
-            // OCR cannot subsequently replace the translation editor or restart its request.
-            if (m_independentEditing &&
-                !notify(&ScreenshotRecognitionSessionController::beginTextEditing))
-                return;
             if (!notify(&ScreenshotRecognitionSessionController::textResultChanged, true))
                 return;
             if (!m_independentEditing && cached->editing) {
@@ -1529,6 +1695,16 @@ void ScreenshotRecognitionSessionController::activate(Mode mode) {
             return;
         if (!notify(&ScreenshotRecognitionSessionController::activateModelResult))
             return;
+    } else if (mode == Mode::Document) {
+        if (!notify(&ScreenshotRecognitionSessionController::setPendingTextRecognitionRendering,
+                    false))
+            return;
+        if (cachedDocument(m_target.key))
+            applyDocument();
+        else
+            startDocumentRecognition();
+        if (!lifetime || transition != m_transitionGeneration)
+            return;
     } else if (mode == Mode::Qr) {
 #if SNOW_SHOT_ENABLE_QR_RECOGNITION
         if (!notify(&ScreenshotRecognitionSessionController::setPendingTextRecognitionRendering,
@@ -1548,6 +1724,9 @@ void ScreenshotRecognitionSessionController::activate(Mode mode) {
 #if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
         if (!notify(&ScreenshotRecognitionSessionController::setPendingTextRecognitionRendering,
                     false))
+            return;
+        if (m_actions.setRecognitionModelState &&
+            !notify(&ScreenshotRecognitionSessionController::loadRecognitionModels, false))
             return;
         m_conversion->activate(m_target.key, m_target.image,
                                mode == Mode::Markdown ? SnowShotImageConversionFormat::Markdown
@@ -1573,7 +1752,9 @@ void ScreenshotRecognitionSessionController::deactivate() {
         return;
     cancelModelRecognition(Mode::Table);
     cancelModelRecognition(Mode::Latex);
-#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
+    cancelModelRecognition(Mode::Document);
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION ||                    \
+    SNOW_SHOT_ENABLE_IMAGE_CONVERSION
     if (m_tableRecognition && m_recognitionModelsToken)
         m_tableRecognition->cancel(m_recognitionModelsToken);
     m_recognitionModelsToken = 0;
@@ -1671,6 +1852,11 @@ void ScreenshotRecognitionSessionController::invalidate() {
     m_textCache.clear();
 #if SNOW_SHOT_ENABLE_TABLE_RECOGNITION
     m_tableCache.clear();
+#endif
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    m_documents.clear();
+    m_documentPreview.reset();
+    m_documentPreviewKey.clear();
 #endif
 #if SNOW_SHOT_ENABLE_QR_RECOGNITION
     m_qrCache.clear();
@@ -1786,16 +1972,18 @@ bool ScreenshotRecognitionSessionController::active() const {
 
 bool ScreenshotRecognitionSessionController::busy() const {
 #if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
-    return busy(Mode::Latex) || busy(Mode::Text) || busy(Mode::Table) || busy(Mode::Qr) ||
-           m_conversion->busy();
+    return busy(Mode::Document) || busy(Mode::Latex) || busy(Mode::Text) || busy(Mode::Table) ||
+           busy(Mode::Qr) || m_conversion->busy();
 #else
-    return busy(Mode::Latex) || busy(Mode::Text) || busy(Mode::Table) || busy(Mode::Qr) ||
-           busy(Mode::Markdown) || busy(Mode::Html);
+    return busy(Mode::Document) || busy(Mode::Latex) || busy(Mode::Text) || busy(Mode::Table) ||
+           busy(Mode::Qr) || busy(Mode::Markdown) || busy(Mode::Html);
 #endif
 }
 
 bool ScreenshotRecognitionSessionController::busy(Mode mode) const {
     switch (mode) {
+    case Mode::Document:
+        return m_documentRequestToken != 0 || m_documentParsing || m_openingDocument;
     case Mode::Text:
         return m_textRequestToken != 0 || m_textRenderRequestToken != 0;
     case Mode::Table:
@@ -1849,25 +2037,20 @@ bool ScreenshotRecognitionSessionController::conversionModeActive() const {
            (m_mode == Mode::Markdown || m_mode == Mode::Html);
 }
 
-void ScreenshotRecognitionSessionController::openImageConversionSettings() {
-#if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
-    const QPointer<ScreenshotRecognitionSessionController> lifetime(this);
-    const auto ownerCallback = m_actions.translationSettingsOwner;
-    QWidget* owner = ownerCallback ? ownerCallback() : content();
-    if (!lifetime)
-        return;
-    m_conversion->openSettings(owner);
-#endif
-}
-
 bool ScreenshotRecognitionSessionController::updateConversionState() const {
 #if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
     if (!notify(&ScreenshotRecognitionSessionController::workflowStateChanged))
         return false;
-    if (conversionModeActive() && m_conversion->active() && content() != nullptr) {
-        content()->showImageConversion(m_conversion->format(), m_conversion->source(),
-                                       m_conversion->busy(), m_conversion->error());
-    }
+    if (conversionModeActive() && m_conversion->active() && !updateRecognitionModels())
+        return false;
+    if (conversionModeActive() && m_conversion->active() && content() && !notifyCallback([this] {
+            content()->showImageConversion(m_conversion->format(), m_conversion->source(),
+                                           m_conversion->busy(), m_conversion->error());
+        }))
+        return false;
+    if (conversionModeActive())
+        if (auto* view = content())
+            view->setModelThinking(m_conversion->reasoningActive());
     if (m_actions.setConversionState) {
         if (!notifyUiCallback(m_actions.setConversionState, conversionModeActive(),
                               m_conversion->busy(), m_conversion->format()))
@@ -2060,11 +2243,12 @@ void ScreenshotRecognitionSessionController::beginTextTranslation() {
     if (!m_active || m_mode != Mode::Text || !hasTextResult() || m_translating) {
         return;
     }
+    const snow_shot::storage::ScreenshotTranslationSettings settings;
     const auto cached = m_textCache.constFind(m_target.key);
     if (cached != m_textCache.cend() && cached->overlayTranslation.captured &&
+        (!m_independentEditing || settings.originalImageTranslationEnabled()) &&
         (!cached->hasTranslationConfiguration ||
-         cached->translationConfiguration ==
-             snow_shot::storage::ScreenshotTranslationSettings().configuration()) &&
+         cached->translationConfiguration == settings.configuration()) &&
         activateCachedTextTranslation()) {
         return;
     }
@@ -2077,10 +2261,8 @@ void ScreenshotRecognitionSessionController::beginTextTranslation() {
         return;
     }
     it->editing = false;
-    const snow_shot::storage::ScreenshotTranslationSettings settings;
-    const bool originalImage = !m_independentEditing &&
-                               settings.originalImageTranslationEnabled() && !it->formatted &&
-                               it->presentation != nullptr;
+    const bool originalImage =
+        settings.originalImageTranslationEnabled() && !it->formatted && it->presentation != nullptr;
     if (originalImage != m_translationInImage) {
         if (!cancelTranslationRequests())
             return;
@@ -2091,26 +2273,14 @@ void ScreenshotRecognitionSessionController::beginTextTranslation() {
         it->translationConfiguration != settings.configuration()) {
         if (!notify(&ScreenshotRecognitionSessionController::invalidateCurrentTranslation, false))
             return;
+        it = m_textCache.find(m_editingKey);
+        if (it == m_textCache.end())
+            return;
     }
     prepareIndependentTranslation(*it, m_editingKey);
     if (originalImage) {
-        prepareOverlayTranslation(*it);
         m_textDocument = nullptr;
-        if (!notify(&ScreenshotRecognitionSessionController::applyPresentation,
-                    it->overlayTranslation.presentation, QImage{}, QRectF{}))
-            return;
-        if (!notify(&ScreenshotRecognitionSessionController::startTextRender))
-            return;
-        if (!notify(&ScreenshotRecognitionSessionController::textEditingChanged, false))
-            return;
-        if (!updateTextState())
-            return;
-        if (!notify(&ScreenshotRecognitionSessionController::reportOverlayTranslationFailure))
-            return;
-        if (it->overlayTranslation.status == TextCacheEntry::TranslationStatus::Absent ||
-            it->overlayTranslation.status == TextCacheEntry::TranslationStatus::Failed) {
-            startTranslation();
-        }
+        showOverlayTranslation();
         return;
     }
     if (it->translationSession == nullptr) {
@@ -2146,7 +2316,7 @@ void ScreenshotRecognitionSessionController::beginTextTranslation() {
 
 bool ScreenshotRecognitionSessionController::activateCachedTextTranslation() {
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
-    if (!m_active || m_mode != Mode::Text || m_independentEditing) {
+    if (!m_active || m_mode != Mode::Text) {
         return false;
     }
     auto entry = m_textCache.find(m_target.key);
@@ -2180,6 +2350,8 @@ bool ScreenshotRecognitionSessionController::activateCachedTextTranslation() {
 }
 
 void ScreenshotRecognitionSessionController::synchronizeUiState() const {
+    if (!updateBusyState())
+        return;
     if (!updateRecognitionModels())
         return;
     if (m_actions.setShowOriginalImage) {
@@ -2431,26 +2603,19 @@ void ScreenshotRecognitionSessionController::startTranslation() {
     }
     auto* job = it->translationJob.data();
     disconnect(job, nullptr, this, nullptr);
-    connect(
-        job, &TranslationJob::unitChanged, this, [this, job, key, generation, inImage](int index) {
-            if (generation != m_translationGeneration || key != m_translationKey)
-                return;
-            auto entry = m_textCache.find(key);
-            if (entry == m_textCache.end())
-                return;
-            const auto& text = job->units().at(index).text;
-            if (!inImage) {
-                entry->translationText = text;
-                if (entry->translationSession != nullptr)
-                    if (!invokeOwned(entry->translationSession,
-                                     &ScreenshotOcrTextEditingSession::replaceTextWithoutHistory,
-                                     text))
-                        return;
-                return;
-            }
-            updateOverlayTranslationLine(key, *entry->overlayTranslation.presentation, index, text,
-                                         true);
-        });
+    connect(job, &TranslationJob::unitChanged, this,
+            [this, job, key, generation, inImage](int index) {
+                if (generation != m_translationGeneration || key != m_translationKey)
+                    return;
+                auto entry = m_textCache.find(key);
+                if (entry == m_textCache.end())
+                    return;
+                if (!inImage)
+                    entry->translationText = job->units().at(index).text;
+                m_pendingTranslationUnits.insert(index);
+                if (!m_translationUpdateTimer->isActive())
+                    m_translationUpdateTimer->start();
+            });
     connect(job, &TranslationJob::stateChanged, this, [this, job, key, generation, inImage] {
         if (generation != m_translationGeneration)
             return;
@@ -2467,7 +2632,9 @@ void ScreenshotRecognitionSessionController::startTranslation() {
             entry->translationStatus = status;
         if (job->state() != TranslationJob::State::WaitingForModels)
             entry->translationConfiguration.modelId = job->preferences().modelId;
-        if (inImage && !finishOverlayTranslationLines(*entry, key))
+        if (inImage && !finishOverlayTranslationLines(job))
+            return;
+        if (!job->busy() && !flushTranslationUpdates())
             return;
         if (content() != nullptr && m_translating && !inImage)
             content()->setTextEditorStreaming(job->busy());
@@ -2488,29 +2655,138 @@ void ScreenshotRecognitionSessionController::startTranslation() {
 #endif
 }
 
-void ScreenshotRecognitionSessionController::prepareOverlayTranslation(TextCacheEntry& entry) {
+bool ScreenshotRecognitionSessionController::showOverlayTranslation() {
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
-    auto& overlay = entry.overlayTranslation;
-    if (overlay.presentation != nullptr || entry.presentation == nullptr) {
-        return;
+    const auto generation = m_translationGeneration;
+    const QString key = m_translationKey;
+    auto entry = m_textCache.find(key);
+    if (entry == m_textCache.end() || !entry->presentation)
+        return true;
+    const auto configuration = snow_shot::storage::ScreenshotTranslationSettings().configuration();
+    const QFont font = QApplication::font();
+    if (entry->overlayLayoutFont != font) {
+        entry->overlayLayouts.clear();
+        entry->overlayLayoutFont = font;
     }
-    overlay.presentation = std::make_shared<ScreenshotOcrPresentation>();
-    overlay.presentation->selection = entry.presentation->selection;
-    QVector<QVector<int>> sourceIndices;
-    if (snow_shot::storage::ScreenshotTranslationSettings().layoutProcessing() ==
-        QStringLiteral("original")) {
-        overlay.presentation->lines = entry.presentation->lines;
-        for (int index = 0; index < entry.presentation->lines.size(); ++index)
-            sourceIndices.push_back({index});
-    } else {
-        overlay.presentation->lines = snow_shot::presentation::mergeOcrLayout(
-            entry.presentation->lines, entry.presentation->selection.topLeft(), &sourceIndices);
+    const auto source = entry->presentation;
+    const auto publish = [this, generation, key, source] {
+        const auto entry = m_textCache.constFind(key);
+        if (generation != m_translationGeneration || key != m_translationKey ||
+            entry == m_textCache.cend() || entry->presentation != source)
+            return false;
+        const auto presentation = entry->overlayTranslation.presentation;
+        const auto status = entry->overlayTranslation.status;
+        if (m_active && m_mode == Mode::Text && originalImageTranslationActive() &&
+            m_editingKey == key) {
+            if (!notify(&ScreenshotRecognitionSessionController::applyPresentation, presentation,
+                        QImage{}, QRectF{}) ||
+                generation != m_translationGeneration || m_presentation != presentation)
+                return false;
+            if (!notify(&ScreenshotRecognitionSessionController::startTextRender) ||
+                generation != m_translationGeneration ||
+                !notify(&ScreenshotRecognitionSessionController::textEditingChanged, false) ||
+                generation != m_translationGeneration || !updateTextState() ||
+                generation != m_translationGeneration ||
+                !notify(&ScreenshotRecognitionSessionController::reportOverlayTranslationFailure) ||
+                generation != m_translationGeneration)
+                return false;
+        }
+        if (status == TextCacheEntry::TranslationStatus::Absent ||
+            status == TextCacheEntry::TranslationStatus::Failed)
+            return notify(&ScreenshotRecognitionSessionController::startTranslation);
+        return true;
+    };
+    if (entry->overlayTranslation.presentation)
+        return publish();
+
+    const QString layout = configuration.layoutProcessing;
+    const bool merge = layout != QStringLiteral("original");
+    if (const auto cached = entry->overlayLayouts.value(layout)) {
+        entry->overlayTranslation.presentation =
+            std::make_shared<ScreenshotOcrPresentation>(*cached);
+        return publish();
     }
-    setScreenshotOcrTranslationFontCaps(overlay.presentation->lines, entry.presentation->lines,
-                                        sourceIndices, QApplication::font());
-    overlay.presentation->prepareForRendering();
+
+    // Small overlays can appear immediately. Dense OCR is prepared from a worker snapshot.
+    constexpr qsizetype synchronousLines = 8;
+    constexpr qsizetype synchronousCharacters = 512;
+    qsizetype characters = 0;
+    if (source->lines.size() <= synchronousLines)
+        for (const auto& line : std::as_const(source->lines))
+            characters += line.text.size();
+    if (!m_translationService)
+        return notify(&ScreenshotRecognitionSessionController::startTranslation);
+    if (source->lines.size() <= synchronousLines && characters <= synchronousCharacters) {
+        const auto prepared = prepareOverlayLayout(*source, merge, font);
+        entry->overlayLayouts.insert(layout, prepared);
+        entry->overlayTranslation.presentation =
+            std::make_shared<ScreenshotOcrPresentation>(*prepared);
+        return publish();
+    }
+
+    const bool preparing = static_cast<bool>(m_overlayPreparation);
+    if (!preparing) {
+        entry->translationConfiguration = configuration;
+        entry->hasTranslationConfiguration = true;
+        entry->overlayTranslation.status = TextCacheEntry::TranslationStatus::Streaming;
+        m_overlayPreparation = std::make_shared<std::atomic_bool>(false);
+    }
+    const auto cancelled = m_overlayPreparation;
+    const auto* window = content();
+    if (m_active && m_mode == Mode::Text && originalImageTranslationActive() &&
+        m_editingKey == key && (m_presentation != source || (window && !window->showsOcrLayer()))) {
+        if (!notify(&ScreenshotRecognitionSessionController::applyPresentation, source, QImage{},
+                    QRectF{}) ||
+            generation != m_translationGeneration ||
+            !notify(&ScreenshotRecognitionSessionController::startTextRender) ||
+            generation != m_translationGeneration ||
+            !notify(&ScreenshotRecognitionSessionController::textEditingChanged, false) ||
+            generation != m_translationGeneration)
+            return false;
+    }
+    if (preparing)
+        return updateTextState();
+    ScreenshotOcrPresentation snapshot;
+    snapshot.selection = source->selection;
+    snapshot.lines = source->lines;
+    const QPointer<ScreenshotRecognitionSessionController> guard(this);
+    QThreadPool::globalInstance()->start(snow_shot::runtime::trackRuntimeWork(
+        [guard, cancelled, generation, key, snapshot = std::move(snapshot), font, merge, layout,
+         publish]() {
+            if (cancelled->load(std::memory_order_relaxed))
+                return;
+            snow_shot::platform::applyApplicationQoSToCurrentThread();
+            auto prepared = prepareOverlayLayout(snapshot, merge, font);
+            if (cancelled->load(std::memory_order_relaxed))
+                return;
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                snow_shot::runtime::trackRuntimeWork([guard, cancelled, generation, key, layout,
+                                                      font, prepared = std::move(prepared),
+                                                      publish] {
+                    if (!guard || cancelled->load(std::memory_order_relaxed) ||
+                        guard->m_overlayPreparation != cancelled ||
+                        guard->m_translationGeneration != generation)
+                        return;
+                    guard->m_overlayPreparation.reset();
+                    auto entry = guard->m_textCache.find(key);
+                    if (entry == guard->m_textCache.end() || key != guard->m_translationKey)
+                        return;
+                    entry->overlayTranslation.status = TextCacheEntry::TranslationStatus::Absent;
+                    if (QApplication::font() != font) {
+                        guard->showOverlayTranslation();
+                        return;
+                    }
+                    entry->overlayLayouts.insert(layout, prepared);
+                    entry->overlayTranslation.presentation =
+                        std::make_shared<ScreenshotOcrPresentation>(*prepared);
+                    publish();
+                }),
+                Qt::QueuedConnection);
+        }));
+    return updateTextState();
 #else
-    Q_UNUSED(entry)
+    return true;
 #endif
 }
 
@@ -2562,48 +2838,96 @@ void ScreenshotRecognitionSessionController::failTranslationPreparation(const QS
 }
 
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
-bool ScreenshotRecognitionSessionController::updateOverlayTranslationLine(
-    const QString& key, ScreenshotOcrPresentation& presentation, int index, const QString& text,
-    bool streaming) {
-    presentation.setLineText(index, text, streaming);
+bool ScreenshotRecognitionSessionController::publishOverlayUpdates(
+    const QString& key, ScreenshotOcrPresentation& presentation,
+    const QVector<ScreenshotOcrTextUpdate>& updates) {
+    if (updates.isEmpty())
+        return true;
+    for (const auto& update : updates)
+        presentation.setLineText(update.index, update.text, update.streaming);
     if (m_active && m_mode == Mode::Text && originalImageTranslationActive() &&
         key == m_editingKey) {
-        if (m_actions.updateOcrText)
-            return notifyUiCallback(m_actions.updateOcrText, index, text, streaming);
-        if (content())
-            return notifyCallback([this, index, text, streaming] {
-                content()->updateOcrText(index, text, streaming);
-            });
+        if (m_actions.updateOcrTexts)
+            return notifyUiCallback(m_actions.updateOcrTexts, std::cref(updates));
+        if (auto* window = content())
+            return notifyCallback([window, &updates] { window->updateOcrTexts(updates); });
     }
     return true;
 }
 
-bool ScreenshotRecognitionSessionController::finishOverlayTranslationLines(
-    const TextCacheEntry& entry, const QString& key) {
-    const auto presentation = entry.overlayTranslation.presentation;
-    const auto job = entry.translationJob;
-    if (!presentation || !job || !entry.jobInImage)
+bool ScreenshotRecognitionSessionController::finishOverlayTranslationLines(TranslationJob* job) {
+    auto entry = m_textCache.find(m_translationKey);
+    if (entry == m_textCache.end() || !entry->jobInImage || !job)
         return true;
-    const auto generation = m_translationGeneration;
-    for (int index = 0; index < presentation->lines.size(); ++index) {
-        const auto& line = presentation->lines.at(index);
-        if (line.translationStreaming &&
-            job->units().at(index).state != TranslationJob::State::Streaming) {
-            if (!updateOverlayTranslationLine(key, *presentation, index, line.text, false) ||
-                generation != m_translationGeneration || !job)
-                return false;
+    auto& streaming = entry->overlayTranslation.streamingLines;
+    bool finishedLine = false;
+    for (auto it = streaming.begin(); it != streaming.end();) {
+        if (job->units().at(*it).state == TranslationJob::State::Streaming) {
+            ++it;
+            continue;
         }
+        m_pendingTranslationUnits.insert(*it);
+        it = streaming.erase(it);
+        finishedLine = true;
     }
-    return true;
+    return !finishedLine || flushTranslationUpdates();
 }
 #endif
 
+bool ScreenshotRecognitionSessionController::flushTranslationUpdates() {
+#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+    m_translationUpdateTimer->stop();
+    auto pending = std::exchange(m_pendingTranslationUnits, {});
+    const QString key = m_translationKey;
+    auto entry = m_textCache.find(key);
+    if (pending.isEmpty() || entry == m_textCache.end() || !entry->translationJob)
+        return true;
+    const auto generation = m_translationGeneration;
+    if (!entry->jobInImage) {
+        return (!entry->translationSession ||
+                invokeOwned(entry->translationSession,
+                            &ScreenshotOcrTextEditingSession::appendStreamedText,
+                            entry->translationText)) &&
+               generation == m_translationGeneration;
+    }
+
+    const auto presentation = entry->overlayTranslation.presentation;
+    if (!presentation)
+        return true;
+    const auto& units = entry->translationJob->units();
+    QVector<ScreenshotOcrTextUpdate> updates;
+    updates.reserve(pending.size());
+    for (const int index : std::as_const(pending)) {
+        const auto& unit = units.at(index);
+        const auto& line = presentation->lines.at(index);
+        const bool streaming = unit.state == TranslationJob::State::Streaming;
+        if (streaming)
+            entry->overlayTranslation.streamingLines.insert(index);
+        if (line.text != unit.text || line.translationStreaming != streaming) {
+            // An invalidated job clears its payload. Retain any text already presented.
+            updates.push_back({index, unit.text.isEmpty() ? line.text : unit.text, streaming});
+        }
+    }
+    return publishOverlayUpdates(key, *presentation, updates) &&
+           m_translationGeneration == generation;
+#else
+    return true;
+#endif
+}
+
 bool ScreenshotRecognitionSessionController::cancelTranslationRequests() {
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+    if (m_overlayPreparation) {
+        m_overlayPreparation->store(true, std::memory_order_relaxed);
+        m_overlayPreparation.reset();
+    }
     ++m_translationGeneration;
     auto it = m_textCache.find(m_translationKey);
-    if (it == m_textCache.end())
+    if (it == m_textCache.end()) {
+        m_translationUpdateTimer->stop();
+        m_pendingTranslationUnits.clear();
         return true;
+    }
     if (it->translationJob != nullptr) {
         disconnect(it->translationJob, nullptr, this, nullptr);
         it->translationJob->cancel();
@@ -2612,7 +2936,7 @@ bool ScreenshotRecognitionSessionController::cancelTranslationRequests() {
         it->translationStatus = TextCacheEntry::TranslationStatus::Absent;
     if (it->overlayTranslation.status == TextCacheEntry::TranslationStatus::Streaming)
         it->overlayTranslation.status = TextCacheEntry::TranslationStatus::Failed;
-    return finishOverlayTranslationLines(*it, m_translationKey);
+    return finishOverlayTranslationLines(it->translationJob) && flushTranslationUpdates();
 #else
     return true;
 #endif
@@ -2659,18 +2983,20 @@ void ScreenshotRecognitionSessionController::handleTranslationFinished(
 
 void ScreenshotRecognitionSessionController::invalidateCurrentTranslation(bool restartIfVisible) {
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
-    auto it = m_textCache.find(m_translationKey.isEmpty() ? m_textCacheKey : m_translationKey);
+    const QString key = m_translationKey.isEmpty() ? m_textCacheKey : m_translationKey;
+    auto it = m_textCache.find(key);
     if (it == m_textCache.end()) {
         return;
     }
     if (!cancelTranslationRequests())
         return;
-#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+    it = m_textCache.find(key);
+    if (it == m_textCache.end())
+        return;
     if (it->translationJob != nullptr) {
         it->translationJob->deleteLater();
         it->translationJob = nullptr;
     }
-#endif
 
     it->translationStatus = TextCacheEntry::TranslationStatus::Absent;
     it->translationText.clear();
@@ -2683,19 +3009,22 @@ void ScreenshotRecognitionSessionController::invalidateCurrentTranslation(bool r
                          QString()))
             return;
     }
-    if (originalImageTranslationActive()) {
-        prepareOverlayTranslation(*it);
-        if (!notify(&ScreenshotRecognitionSessionController::applyPresentation,
-                    it->overlayTranslation.presentation, QImage{}, QRectF{}))
+    const bool inImage = originalImageTranslationActive();
+    if (inImage) {
+        if (restartIfVisible) {
+            if (!showOverlayTranslation())
+                return;
+        } else if (!notify(&ScreenshotRecognitionSessionController::applyPresentation,
+                           it->presentation, QImage{}, QRectF{}) ||
+                   !notify(&ScreenshotRecognitionSessionController::startTextRender)) {
             return;
-        if (!notify(&ScreenshotRecognitionSessionController::startTextRender))
-            return;
+        }
     }
     if (!updateTextState())
         return;
     if (!notify(&ScreenshotRecognitionSessionController::recognitionResultsChanged))
         return;
-    if (restartIfVisible) {
+    if (restartIfVisible && !inImage) {
         startTranslation();
     }
 #else
@@ -2778,8 +3107,6 @@ bool ScreenshotRecognitionSessionController::originalImageTranslationActive() co
 }
 
 void ScreenshotRecognitionSessionController::setShowOriginalImage(bool show) {
-    if (m_independentEditing)
-        show = false;
     show = show && m_active;
     if (m_showOriginalImage == show) {
         return;
@@ -2808,8 +3135,23 @@ QString ScreenshotRecognitionSessionController::textDraft() const {
     const auto entry = m_textCache.value(key);
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
     if (originalImageTranslationActive() && entry.overlayTranslation.presentation != nullptr) {
-        return snow_shot::presentation::originalOcrText(*entry.overlayTranslation.presentation);
+        const auto& presentation = *entry.overlayTranslation.presentation;
+        if (m_pendingTranslationUnits.isEmpty() || key != m_translationKey ||
+            !entry.translationJob || !entry.jobInImage)
+            return snow_shot::presentation::originalOcrText(presentation);
+        QStringList texts;
+        texts.reserve(presentation.lines.size());
+        for (int index = 0; index < presentation.lines.size(); ++index) {
+            const auto& pending = entry.translationJob->units().at(index).text;
+            texts.append(m_pendingTranslationUnits.contains(index) && !pending.isEmpty()
+                             ? pending
+                             : presentation.lines.at(index).text);
+        }
+        return texts.join(u'\n');
     }
+    if (m_translating && !entry.jobInImage && key == m_translationKey &&
+        m_pendingTranslationUnits.contains(0))
+        return entry.translationText;
 #endif
     const auto session = currentEditingSession(entry);
     return session != nullptr ? session->text() : QString{};
@@ -2844,6 +3186,14 @@ ScreenshotRecognitionSessionController::fileExportSnapshot() {
     if (!m_active)
         return std::nullopt;
     switch (m_mode) {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    case Mode::Document: {
+        ScreenshotRecognitionFileSnapshot snapshot;
+        snapshot.kind = ScreenshotRecognitionFileKind::DocumentWord;
+        snapshot.document = cachedDocument(m_target.key);
+        return snapshot.hasContent() ? std::optional(snapshot) : std::nullopt;
+    }
+#endif
 #if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
     case Mode::Html:
         return ScreenshotRecognitionFileSnapshot{ScreenshotRecognitionFileKind::Html,
@@ -2888,11 +3238,55 @@ ScreenshotRecognitionSessionController::fileExportSnapshot() {
 #endif
 }
 
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+ScreenshotDocumentCopyRequest ScreenshotRecognitionSessionController::documentCopyRequest() const {
+    if (!m_active || m_mode != Mode::Document || (m_attachmentToken && !ownsContentAttachment()))
+        return {};
+    auto document = cachedDocument(m_target.key);
+    if (!document)
+        return {};
+    if (snow_shot::storage::ScreenshotSettings().copyImageFileToClipboard())
+        return {std::move(document), {}, true};
+    return {std::move(document), content() ? content()->documentSelectionHtml() : QString{}};
+}
+
+bool ScreenshotRecognitionSessionController::copyDocumentPreview(QString selection) {
+    if (!m_active || m_mode != Mode::Document || !ownsContentAttachment())
+        return false;
+    auto document = cachedDocument(m_target.key);
+    if (!document)
+        return false;
+    m_documentCopyJob.cancel();
+    m_documentClipboardCommit.cancel();
+    const auto attachment = m_attachmentToken;
+    const auto generation = m_documentGeneration;
+    const auto publication = ScreenshotClipboardService::reservePublication();
+    m_documentCopyPublication = publication;
+    m_documentCopyJob =
+        ScreenshotDocumentCopyRequest{std::move(document), std::move(selection)}.start(
+            this, [this, attachment, generation, publication](auto mime, const QString& error) {
+                if (m_documentCopyPublication != publication || m_attachmentToken != attachment ||
+                    m_documentGeneration != generation || !ownsContentAttachment())
+                    return;
+                m_documentCopyJob = {};
+                if (!mime) {
+                    static_cast<void>(showStatus(error, true));
+                    return;
+                }
+                m_documentClipboardCommit = ScreenshotClipboardService::commitMimeData(
+                    QApplication::clipboard(), this, mime.release(), publication, [](auto) {});
+            });
+    return m_documentCopyJob.isValid();
+}
+#endif
+
 std::unique_ptr<QMimeData> ScreenshotRecognitionSessionController::recognitionClipboardMimeData(
-    const ScreenshotOcrPresentation* displayedPresentation) const {
+    const ScreenshotOcrPresentation* displayedPresentation) {
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
     const QPointer<const ScreenshotRecognitionSessionController> lifetime(this);
     const auto transition = m_transitionGeneration;
+    if (!flushTranslationUpdates() || !lifetime || transition != m_transitionGeneration)
+        return {};
 #endif
     if (m_attachmentToken && !ownsContentAttachment())
         return {};
@@ -2901,6 +3295,10 @@ std::unique_ptr<QMimeData> ScreenshotRecognitionSessionController::recognitionCl
         return snow_shot::presentation::imageConversionClipboardMimeData(m_conversion->format(),
                                                                          m_conversion->source());
     }
+#endif
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (m_mode == Mode::Document)
+        return documentCopyRequest().mimeData();
 #endif
     // Result widgets own their text and table selections. Resolve those before falling
     // back to complete cached results; conversion Copy above intentionally exports source.
@@ -2944,7 +3342,9 @@ std::unique_ptr<QMimeData> ScreenshotRecognitionSessionController::recognitionCl
             return {};
         const auto* presentation = displayedPresentation != nullptr
                                        ? displayedPresentation
-                                       : entry->overlayTranslation.presentation.get();
+                                       : (entry->overlayTranslation.presentation
+                                              ? entry->overlayTranslation.presentation.get()
+                                              : entry->presentation.get());
         if (originalImageTranslationActive() && presentation && presentation->hasTextSelection()) {
             mimeData->setText(presentation->selectedText());
             return mimeData;
@@ -2966,7 +3366,9 @@ std::unique_ptr<QMimeData> ScreenshotRecognitionSessionController::recognitionCl
         const auto entry = m_textCache.value(m_translationKey);
         const auto* presentation = displayedPresentation != nullptr
                                        ? displayedPresentation
-                                       : entry.overlayTranslation.presentation.get();
+                                       : (entry.overlayTranslation.presentation
+                                              ? entry.overlayTranslation.presentation.get()
+                                              : entry.presentation.get());
         resultAvailable = presentation != nullptr;
         if (presentation != nullptr) {
             text = presentation->hasTextSelection()
@@ -3059,6 +3461,7 @@ void ScreenshotRecognitionSessionController::startTextRecognition(
     request.priority = priority;
     request.renderFilteredImage =
         m_active && m_mode == Mode::Text && shouldRenderRecognitionInWorker();
+    request.backgroundFill = request.renderFilteredImage && backgroundFillEnabled();
     if (!lifetime)
         return;
     if (request.renderFilteredImage && m_actions.ocrBackgroundColor) {
@@ -3110,11 +3513,12 @@ void ScreenshotRecognitionSessionController::renderTextBackground() {
 }
 
 void ScreenshotRecognitionSessionController::startTextRender() {
-    if (m_independentEditing)
+    if (!shouldRenderTextBackground())
         return;
     const QPointer<ScreenshotRecognitionSessionController> lifetime(this);
     if (!m_active || m_mode != Mode::Text || !hasTarget() || m_recognition == nullptr ||
-        m_presentation == nullptr || !m_actions.applyOcrBackgroundImage) {
+        editing() || m_presentation == nullptr ||
+        (!m_actions.applyOcrBackgroundImage && !m_actions.applyOcrPresentation && !content())) {
         return;
     }
     if (m_textRenderRequestToken != 0) {
@@ -3123,11 +3527,15 @@ void ScreenshotRecognitionSessionController::startTextRender() {
     }
     const quint64 generation = ++m_textRenderGeneration;
     const QString key = m_target.key;
+    const auto presentation = m_presentation;
     ScreenshotOcrRequest request;
     request.image = m_target.image;
     request.canvasRect = m_target.canvasRect;
     request.priority = ScreenshotOcrRequestPriority::Interactive;
-    request.presentation = m_presentation;
+    request.presentation = presentation;
+    request.renderFilteredImage = static_cast<bool>(m_actions.applyOcrBackgroundImage);
+    request.prepareVisualColors = true;
+    request.backgroundFill = backgroundFillEnabled();
     const auto backgroundColor = m_actions.ocrBackgroundColor;
     request.backgroundColor = backgroundColor ? backgroundColor() : QColor();
     if (!lifetime)
@@ -3138,24 +3546,50 @@ void ScreenshotRecognitionSessionController::startTextRender() {
         if (!lifetime)
             return;
     }
-    // Streaming text is mutable on the GUI thread; background workers own a snapshot.
-    if (request.presentation != nullptr) {
-        request.presentation = std::make_shared<ScreenshotOcrPresentation>(*request.presentation);
+    if (generation != m_textRenderGeneration || presentation != m_presentation || !m_recognition)
+        return;
+    // Streaming text and selection stay on the GUI thread. A transformed host still samples
+    // colors in the original image's pixel space.
+    if (request.presentation != presentation ||
+        request.image.cacheKey() != m_target.image.cacheKey() ||
+        request.canvasRect != m_target.canvasRect) {
+        request.colorSource =
+            ScreenshotOcrColorSource{m_target.image, m_target.canvasRect,
+                                     std::make_shared<ScreenshotOcrPresentation>(*presentation)};
     }
+    if (request.presentation)
+        request.presentation = std::make_shared<ScreenshotOcrPresentation>(*request.presentation);
     const auto callbackCompleted = std::make_shared<bool>(false);
     const auto token = m_recognition->render(
         std::move(request), this,
-        [this, generation, key, callbackCompleted](ScreenshotOcrRecognitionResult output) {
+        [this, generation, key, presentation,
+         callbackCompleted](ScreenshotOcrRecognitionResult output) {
             *callbackCompleted = true;
             if (generation == m_textRenderGeneration) {
                 m_textRenderRequestToken = 0;
             }
+            const QPointer<ScreenshotRecognitionSessionController> guard(this);
             const bool current = generation == m_textRenderGeneration && key == m_target.key &&
-                                 m_active && m_mode == Mode::Text;
-            if (!current) {
+                                 m_presentation == presentation && m_active &&
+                                 m_mode == Mode::Text && !editing();
+            if (!current || !shouldRenderTextBackground() || !guard ||
+                generation != m_textRenderGeneration || m_presentation != presentation) {
+                if (!guard)
+                    return;
                 if (!updateBusyState())
                     return;
                 return;
+            }
+            if (output.presentation && presentation->applyPreparedColors(*output.presentation)) {
+                if (m_actions.applyOcrColors) {
+                    if (!notifyUiCallback(m_actions.applyOcrColors, std::cref(*presentation)))
+                        return;
+                } else if (auto* window = content()) {
+                    window->updateOcrColors();
+                }
+                if (!guard || generation != m_textRenderGeneration ||
+                    m_presentation != presentation)
+                    return;
             }
             if (!output.error.isEmpty() || output.filteredImage.isNull()) {
                 if (!updateBusyState())
@@ -3183,6 +3617,366 @@ void ScreenshotRecognitionSessionController::startTextRender() {
     if (!updateBusyState())
         return;
     notify(&ScreenshotRecognitionSessionController::recognitionResultsChanged);
+}
+
+void ScreenshotRecognitionSessionController::startDocumentRecognition() {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (!hasTarget() || busy(Mode::Document))
+        return;
+    if (!m_tableRecognition) {
+        static_cast<void>(showStatus(tr("Document recognition service is unavailable"), true));
+        return;
+    }
+    const auto generation = ++m_documentGeneration;
+    const auto cancellation = std::make_shared<std::atomic_bool>(false);
+    m_documentCancellation = cancellation;
+    const auto key = m_target.key;
+    const auto original = m_target.image;
+    const QPointer<ScreenshotRecognitionSessionController> guard(this);
+    if (!showRecognitionMessage() || !guard)
+        return;
+    m_documentRequestToken = m_tableRecognition->extractDocument(
+        original, this,
+        [this, generation, key, original, cancellation](SnowShotDocumentResult result) {
+            if (generation != m_documentGeneration || key != m_target.key)
+                return;
+            m_documentRequestToken = 0;
+            if (!result.succeeded()) {
+                m_documentCancellation.reset();
+                m_workflowError = result.error;
+                if (!hideRecognitionMessage() || !updateBusyState())
+                    return;
+                static_cast<void>(showStatus(result.error, true));
+                return;
+            }
+            m_documentParsing = true;
+            const QPointer<ScreenshotRecognitionSessionController> lifetime(this);
+            auto* application = QCoreApplication::instance();
+            auto* uiThread = thread();
+            QThreadPool::globalInstance()->start(snow_shot::runtime::trackRuntimeWork(
+                [application, uiThread, lifetime, generation, key, original, cancellation,
+                 raw = std::move(result.raw)] {
+                    const auto cancelled = [&] {
+                        return cancellation->load(std::memory_order_relaxed);
+                    };
+                    if (cancelled())
+                        return;
+                    QString error;
+                    auto document =
+                        ScreenshotRecognizedDocument::parse(raw, original, &error, cancelled);
+                    if (cancelled())
+                        return;
+                    auto preview = document ? prepareDocumentPreview(*document, uiThread,
+                                                                     FormulaFallback::Placeholder)
+                                            : nullptr;
+                    if (!cancelled())
+                        QMetaObject::invokeMethod(
+                            application,
+                            [lifetime, generation, key, document, preview, error] {
+                                if (!lifetime || generation != lifetime->m_documentGeneration ||
+                                    key != lifetime->m_target.key)
+                                    return;
+                                if (!document) {
+                                    lifetime->m_documentCancellation.reset();
+                                    lifetime->m_documentParsing = false;
+                                    lifetime->m_workflowError = error;
+                                    if (!lifetime->hideRecognitionMessage() || !lifetime ||
+                                        !lifetime->updateBusyState() || !lifetime)
+                                        return;
+                                    static_cast<void>(lifetime->showStatus(error, true));
+                                    return;
+                                }
+                                lifetime->prepareDocument(generation, key, document, preview);
+                            },
+                            Qt::QueuedConnection);
+                }));
+        });
+    static_cast<void>(updateBusyState());
+#endif
+}
+
+void ScreenshotRecognitionSessionController::prepareDocument(
+    quint64 generation, const QString& key, std::shared_ptr<ScreenshotRecognizedDocument> document,
+    std::shared_ptr<QTextDocument> preview) {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    const QPointer<ScreenshotRecognitionSessionController> guard(this);
+    const auto current = [guard, generation, key] {
+        return guard && guard->m_documentGeneration == generation && guard->m_target.key == key;
+    };
+    if (preview && content()) {
+        auto firstFrame = std::make_shared<ScreenshotRecognizedDocument>(*document);
+        if (!notify(&ScreenshotRecognitionSessionController::hideRecognitionMessage) || !current())
+            return;
+        if (auto* view = content())
+            view->showDocument(std::move(firstFrame), preview);
+        if (!current())
+            return;
+        updateOriginalImagePreview();
+        if (!current())
+            return;
+    }
+    if (document->formulas.isEmpty()) {
+        finishDocumentPreparation(generation, key, std::move(document), std::move(preview));
+        return;
+    }
+    auto batch = std::make_shared<DocumentFormulaBatch>();
+    for (const auto& image : std::as_const(document->images))
+        batch->imageBytes += image.sizeInBytes();
+    for (const auto& formula : document->formulas) {
+        auto& ids = batch->idsBySource[formula.source];
+        if (ids.isEmpty())
+            batch->sources.append(formula.source);
+        ids.append(formula.id);
+    }
+    auto* renderer = new ScreenshotLatexRenderer(this);
+    m_documentPreparation = renderer;
+    const auto requestNext = [renderer, batch] {
+        static_cast<void>(
+            renderer->request(batch->sources[batch->next], QSize(1200, 800), 2, Qt::black));
+    };
+    connect(renderer, &ScreenshotLatexRenderer::rendered, this,
+            [this, renderer, generation, key, document, preview, current, batch,
+             requestNext](quint64, const QImage& image, ScreenshotLatexRenderer::Error) {
+                if (!current())
+                    return;
+                const auto& ids = batch->idsBySource[batch->sources[batch->next]];
+                const auto bytes = image.sizeInBytes() * ids.size();
+                if (!image.isNull() &&
+                    bytes <= ScreenshotRecognizedDocument::maximumImageBytes - batch->imageBytes) {
+                    for (const auto& id : ids)
+                        document->images.insert(id, image);
+                    batch->imageBytes += bytes;
+                }
+                if (++batch->next < batch->sources.size()) {
+                    requestNext();
+                    return;
+                }
+                m_documentPreparation = nullptr;
+                renderer->deleteLater();
+                finishDocumentPreparation(generation, key, document, preview);
+            });
+    requestNext();
+#else
+    Q_UNUSED(generation)
+    Q_UNUSED(key)
+    Q_UNUSED(document)
+    Q_UNUSED(preview)
+#endif
+}
+
+void ScreenshotRecognitionSessionController::finishDocumentPreparation(
+    quint64 generation, const QString& key, std::shared_ptr<ScreenshotRecognizedDocument> document,
+    std::shared_ptr<QTextDocument> preview) {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    const QPointer<ScreenshotRecognitionSessionController> guard(this);
+    const auto cancellation = m_documentCancellation;
+    auto* application = QCoreApplication::instance();
+    QThreadPool::globalInstance()->start(snow_shot::runtime::trackRuntimeWork(
+        [application, guard, generation, key, document = std::move(document),
+         preview = std::move(preview), cancellation] {
+            const auto cancelled = [&] { return cancellation->load(std::memory_order_relaxed); };
+            if (cancelled())
+                return;
+            document->preparedClipboard = document->clipboardContent(cancelled);
+            if (cancelled())
+                return;
+            QMetaObject::invokeMethod(
+                application,
+                [guard, generation, key, document, preview] {
+                    if (!guard || generation != guard->m_documentGeneration ||
+                        key != guard->m_target.key)
+                        return;
+                    guard->m_documentCancellation.reset();
+                    guard->m_documentParsing = false;
+                    if (preview && !document->formulas.isEmpty()) {
+                        // Keep the same preview document and selection while adding the images.
+                        preview->setLayoutEnabled(false);
+                        document->updateTextDocumentImages(*preview, FormulaFallback::Source);
+                        preview->setLayoutEnabled(true);
+                        if (!guard || generation != guard->m_documentGeneration)
+                            return;
+                    }
+                    guard->cacheDocument(key, document);
+                    guard->m_documentPreview = preview;
+                    guard->m_documentPreviewKey = key;
+                    if (!guard || generation != guard->m_documentGeneration ||
+                        !guard->hideRecognitionMessage() || !guard ||
+                        generation != guard->m_documentGeneration)
+                        return;
+                    if (guard->m_active && guard->m_mode == Mode::Document)
+                        guard->applyDocument();
+                    if (guard && generation == guard->m_documentGeneration &&
+                        guard->notify(
+                            &ScreenshotRecognitionSessionController::recognitionResultsChanged))
+                        static_cast<void>(guard->updateBusyState());
+                },
+                Qt::QueuedConnection);
+        }));
+#else
+    Q_UNUSED(generation)
+    Q_UNUSED(key)
+    Q_UNUSED(document)
+    Q_UNUSED(preview)
+#endif
+}
+
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+void ScreenshotRecognitionSessionController::cacheDocument(
+    const QString& key, std::shared_ptr<const ScreenshotRecognizedDocument> document) {
+    const auto cost = document->retainedBytes();
+    if (key == m_documentPreviewKey && cachedDocument(key) != document) {
+        m_documentPreview.reset();
+        m_documentPreviewKey.clear();
+    }
+    m_documents.remove(key);
+    m_documents.insert(key,
+                       new std::shared_ptr<const ScreenshotRecognizedDocument>(std::move(document)),
+                       static_cast<qsizetype>(cost));
+}
+
+std::shared_ptr<const ScreenshotRecognizedDocument>
+ScreenshotRecognitionSessionController::cachedDocument(const QString& key) const {
+    const auto* cached = m_documents.object(key);
+    return cached ? *cached : nullptr;
+}
+#else
+void ScreenshotRecognitionSessionController::cacheDocument(
+    const QString&, std::shared_ptr<const ScreenshotRecognizedDocument>) {}
+
+std::shared_ptr<const ScreenshotRecognizedDocument>
+ScreenshotRecognitionSessionController::cachedDocument(const QString&) const {
+    return {};
+}
+#endif
+
+void ScreenshotRecognitionSessionController::applyDocument() {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    const auto document = cachedDocument(m_target.key);
+    if (!document || !notify(&ScreenshotRecognitionSessionController::ensureContent))
+        return;
+    const QPointer<ScreenshotRecognitionSessionController> guard(this);
+    if (content())
+        showDocumentPreview(document);
+    if (guard)
+        updateOriginalImagePreview();
+#endif
+}
+
+void ScreenshotRecognitionSessionController::showDocumentPreview(
+    std::shared_ptr<const ScreenshotRecognizedDocument> document) {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (m_documentPreview && m_documentPreviewKey == m_target.key) {
+        content()->showDocument(std::move(document), m_documentPreview);
+        return;
+    }
+    // Small cached results can be shown immediately. Import large cached results on a worker.
+    if (document->html.size() <= 32 * 1024 && document->images.size() <= 8) {
+        m_documentPreview = document->createTextDocument(false, FormulaFallback::Source);
+        m_documentPreviewKey = m_target.key;
+        content()->showDocument(std::move(document), m_documentPreview);
+        return;
+    }
+    if (m_documentParsing)
+        return;
+    m_documentParsing = true;
+    const auto cancellation = std::make_shared<std::atomic_bool>(false);
+    m_documentCancellation = cancellation;
+    const auto key = m_target.key;
+    const auto generation = m_documentGeneration;
+    const QPointer<ScreenshotRecognitionSessionController> guard(this);
+    auto* application = QCoreApplication::instance();
+    auto* uiThread = thread();
+    QThreadPool::globalInstance()->start(
+        snow_shot::runtime::trackRuntimeWork([application, uiThread, guard, generation, key,
+                                              cancellation, document = std::move(document)] {
+            if (cancellation->load(std::memory_order_relaxed))
+                return;
+            auto preview = prepareDocumentPreview(*document, uiThread, FormulaFallback::Source);
+            if (cancellation->load(std::memory_order_relaxed))
+                return;
+            QMetaObject::invokeMethod(
+                application,
+                [guard, generation, key, document, preview] {
+                    if (!guard || generation != guard->m_documentGeneration ||
+                        guard->m_target.key != key)
+                        return;
+                    guard->m_documentParsing = false;
+                    guard->m_documentCancellation.reset();
+                    if (guard->cachedDocument(key) != document) {
+                        static_cast<void>(guard->updateBusyState());
+                        return;
+                    }
+                    guard->m_documentPreviewKey = key;
+                    guard->m_documentPreview = preview;
+                    if (preview && guard->m_active && guard->m_mode == Mode::Document)
+                        guard->applyDocument();
+                    if (guard && generation == guard->m_documentGeneration)
+                        static_cast<void>(guard->updateBusyState());
+                },
+                Qt::QueuedConnection);
+        }));
+#else
+    Q_UNUSED(document)
+#endif
+}
+
+bool ScreenshotRecognitionSessionController::openDocumentFile(std::function<void()> opened) {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (!m_active || m_mode != Mode::Document || busy(Mode::Document) || m_openingDocument)
+        return false;
+    auto snapshot = fileExportSnapshot();
+    if (!snapshot || !snapshot->hasContent())
+        return false;
+    const QPointer<ScreenshotRecognitionSessionController> guard(this);
+    const auto key = m_target.key;
+    const auto generation = m_documentGeneration;
+    m_openingDocument = true;
+    if (!updateBusyState())
+        return false;
+    QThreadPool::globalInstance()->start([guard, key, generation, snapshot = *snapshot,
+                                          opened = std::move(opened)] {
+        auto directory = std::make_shared<QTemporaryDir>(
+            QDir::tempPath() + QStringLiteral("/SnowShot-document-XXXXXX"));
+        const auto result =
+            directory->isValid()
+                ? ScreenshotRecognitionFileExport::saveToPath(
+                      snapshot, directory->filePath(QStringLiteral("Document.docx")))
+                : ScreenshotRecognitionFileSaveResult{
+                      {},
+                      QCoreApplication::translate("ScreenshotRecognitionFileExport",
+                                                  "The temporary directory could not be created")};
+        if (!guard)
+            return;
+        QMetaObject::invokeMethod(
+            guard,
+            [guard, key, generation, directory, result, opened] {
+                if (!guard || generation != guard->m_documentGeneration)
+                    return;
+                guard->m_openingDocument = false;
+                if (!guard->updateBusyState() || !guard->m_active ||
+                    guard->m_mode != Mode::Document || guard->m_target.key != key)
+                    return;
+                if (!result.succeeded()) {
+                    static_cast<void>(guard->showStatus(result.error, true));
+                    return;
+                }
+                if (!QDesktopServices::openUrl(QUrl::fromLocalFile(result.path))) {
+                    if (guard)
+                        static_cast<void>(
+                            guard->showStatus(tr("The document file could not be opened"), true));
+                    return;
+                }
+                directory->setAutoRemove(false);
+                if (guard && opened)
+                    opened();
+            },
+            Qt::QueuedConnection);
+    });
+    return true;
+#else
+    Q_UNUSED(opened)
+    return false;
+#endif
 }
 
 void ScreenshotRecognitionSessionController::startTableRecognition() {
@@ -3230,9 +4024,23 @@ void ScreenshotRecognitionSessionController::startTableRecognition() {
                         return;
                     updateBusyState();
                 });
+        connect(m_tableConversion, &ScreenshotTableConversionController::reasoningChanged, this,
+                [this, generation, key](bool active) {
+                    if (generation != m_tableGeneration ||
+                        key != recognitionCacheKey(Mode::Table) || !m_active ||
+                        m_mode != Mode::Table)
+                        return;
+                    if (auto* view = content())
+                        view->setModelThinking(active);
+                });
         connect(m_tableConversion, &ScreenshotTableConversionController::completed, this,
                 [this, generation, key](ScreenshotTableDocument document, const QString& error) {
                     if (generation != m_tableGeneration || key != recognitionCacheKey(Mode::Table))
+                        return;
+                    const QPointer<ScreenshotRecognitionSessionController> guard(this);
+                    if (auto* view = content())
+                        view->setModelThinking(false);
+                    if (!guard)
                         return;
                     SnowShotTableResult result;
                     result.error = error;
@@ -3301,19 +4109,28 @@ void ScreenshotRecognitionSessionController::startLatexRecognition() {
         m_latexStream->key = key;
         m_latexStream->generation = generation;
     }
+    const auto acceptsProgress = [this, generation, key] {
+        return m_latexStream && generation == m_latexGeneration &&
+               key == recognitionCacheKey(Mode::Latex) && m_active && m_mode == Mode::Latex;
+    };
+    const auto delta = [this, acceptsProgress](const QString& chunk) {
+        if (!acceptsProgress())
+            return;
+        m_latexStream->rawSource += chunk;
+        if (!m_latexStreamTimer->isActive())
+            m_latexStreamTimer->start();
+    };
+    const auto reasoning = [this, acceptsProgress](bool active) {
+        if (!acceptsProgress())
+            return;
+        m_latexStream->reasoningActive = active;
+        if (auto* view = content())
+            view->setModelThinking(active);
+    };
     const auto token = model == screenshotDedicatedRecognitionModelId()
                            ? m_tableRecognition->extractLatex(m_target.image, this, completion)
-                           : m_tableRecognition->extractLatexVision(
-                                 m_target.image, model, this, completion,
-                                 [this, generation, key](const QString& chunk) {
-                                     if (!m_latexStream || generation != m_latexGeneration ||
-                                         key != recognitionCacheKey(Mode::Latex) || !m_active ||
-                                         m_mode != Mode::Latex)
-                                         return;
-                                     m_latexStream->rawSource += chunk;
-                                     if (!m_latexStreamTimer->isActive())
-                                         m_latexStreamTimer->start();
-                                 });
+                           : m_tableRecognition->extractLatexVision(m_target.image, model, this,
+                                                                    completion, delta, reasoning);
     if (!lifetime)
         return;
     m_latexRequestToken = token;
@@ -3331,7 +4148,10 @@ void ScreenshotRecognitionSessionController::startLatexRecognition() {
 #if SNOW_SHOT_ENABLE_LATEX_RECOGNITION
 void ScreenshotRecognitionSessionController::clearLatexStream() {
     m_latexStreamTimer->stop();
-    m_latexStream.reset();
+    const auto stream = std::exchange(m_latexStream, {});
+    if (stream && stream->reasoningActive && m_mode == Mode::Latex)
+        if (auto* view = content())
+            view->setModelThinking(false);
 }
 
 void ScreenshotRecognitionSessionController::flushLatexStream() {
@@ -3453,8 +4273,8 @@ void ScreenshotRecognitionSessionController::handleTextOutput(
     connect(editingSession->document(), &QTextDocument::contentsChanged, this,
             [this, key]() { handleTextDocumentChanged(key); });
     QImage filteredImage = std::move(output.filteredImage);
-    if (backgroundFillEnabled()) {
-        // An already-running blur may complete after the fill preference changes.
+    if (backgroundFillEnabled() != output.presentation->solidBackgroundFill) {
+        // An already-running render may complete after the fill preference changes.
         filteredImage = {};
     }
     QRectF filteredImageCanvasRect = output.filteredImageCanvasRect;
@@ -3473,9 +4293,6 @@ void ScreenshotRecognitionSessionController::handleTextOutput(
             if (!notify(&ScreenshotRecognitionSessionController::startTextRender))
                 return;
         }
-        if (m_independentEditing &&
-            !notify(&ScreenshotRecognitionSessionController::beginTextEditing))
-            return;
         if (!notify(&ScreenshotRecognitionSessionController::textResultChanged, true))
             return;
     }
@@ -3821,6 +4638,15 @@ void ScreenshotRecognitionSessionController::attachContent() {
                        if (!mime && session)
                            session->showStatus(tr("Unable to copy translation results"), true);
                        return mime;
+                   },
+                   [session](QString selection) {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+                       return session && session->copyDocumentPreview(std::move(selection));
+#else
+                       Q_UNUSED(session)
+                       Q_UNUSED(selection)
+                       return false;
+#endif
                    }});
         const auto token = m_attachmentToken;
         m_recognitionRetryConnection =
@@ -3870,6 +4696,7 @@ void ScreenshotRecognitionSessionController::clearContent(bool retainTableEditor
             view->ownsAttachment(session, token))
             (view.data()->*method)(arguments...);
     };
+    clear(&ScreenshotRecognitionWindow::setModelThinking, false);
     clear(&ScreenshotRecognitionWindow::clearRecognitionError);
     clear(&ScreenshotRecognitionWindow::clearOcrPresentation);
     clear(&ScreenshotRecognitionWindow::clearFormattedText);
@@ -3884,12 +4711,16 @@ void ScreenshotRecognitionSessionController::clearContent(bool retainTableEditor
 void ScreenshotRecognitionSessionController::applyPresentation(
     const std::shared_ptr<ScreenshotOcrPresentation>& presentation, QImage filteredImage,
     QRectF filteredImageCanvasRect) {
+    const QPointer<ScreenshotRecognitionSessionController> lifetime(this);
     m_presentation = presentation;
     if (!notify(&ScreenshotRecognitionSessionController::ensureContent))
         return;
-    if (presentation != nullptr) {
-        prepareScreenshotOcrFillColors(*presentation, m_target.image, m_target.canvasRect,
-                                       backgroundFillEnabled());
+    const bool renderBackground = shouldRenderTextBackground();
+    if (!lifetime)
+        return;
+    if (renderBackground && presentation && presentation->solidBackgroundFill &&
+        !backgroundFillEnabled()) {
+        prepareScreenshotOcrFillColors(*presentation, {}, {}, false);
     }
     if (content() != nullptr) {
         content()->setOcrCopyDefaultsEnabled(!originalImageTranslationActive());
@@ -3900,6 +4731,8 @@ void ScreenshotRecognitionSessionController::applyPresentation(
     } else if (content() != nullptr) {
         content()->setOcrPresentation(presentation);
     }
+    if (!shouldRenderTextBackground())
+        return;
     if (m_actions.applyOcrBackground) {
         if (!notifyUiCallback(m_actions.applyOcrBackground, presentation))
             return;
@@ -3961,10 +4794,18 @@ void ScreenshotRecognitionSessionController::handleTextDocumentChanged(const QSt
         return;
 }
 
+bool ScreenshotRecognitionSessionController::shouldRenderTextBackground() const {
+    const QPointer<const ScreenshotRecognitionSessionController> lifetime(this);
+    const auto shouldRender = m_actions.shouldRenderTextBackground;
+    const bool enabled = !shouldRender || shouldRender();
+    return lifetime && enabled;
+}
+
 bool ScreenshotRecognitionSessionController::shouldRenderRecognitionInWorker() const {
+    if (!shouldRenderTextBackground())
+        return false;
     const auto renderInWorker = m_actions.renderRecognitionInWorker;
-    return m_actions.applyOcrBackgroundImage && !backgroundFillEnabled() &&
-           (!renderInWorker || renderInWorker());
+    return m_actions.applyOcrBackgroundImage && (!renderInWorker || renderInWorker());
 }
 
 void ScreenshotRecognitionSessionController::setPendingTextRecognitionRendering(bool enabled) {
@@ -3981,7 +4822,8 @@ void ScreenshotRecognitionSessionController::setPendingTextRecognitionRendering(
     if (!lifetime)
         return;
     static_cast<void>(
-        m_recognition->setRenderFilteredImage(m_textRequestToken, shouldRender, backgroundColor));
+        m_recognition->setRenderFilteredImage(m_textRequestToken, shouldRender, backgroundColor,
+                                              shouldRender && backgroundFillEnabled()));
 }
 
 void ScreenshotRecognitionSessionController::pollTextModelDownload(quint64 generation) {
@@ -4070,6 +4912,17 @@ void ScreenshotRecognitionSessionController::handleTableCommandState(
 }
 
 bool ScreenshotRecognitionSessionController::updateBusyState() const {
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (m_actions.setRecognitionModelState) {
+        ScreenshotRecognitionModelState state;
+        state.selection = screenshotDedicatedRecognitionModelId();
+        state.loading = busy(Mode::Document);
+        state.effectiveModel =
+            m_documents.contains(m_target.key) ? QStringLiteral("glm-ocr") : QString{};
+        if (!notifyUiCallback(m_actions.setRecognitionModelState, int(Mode::Document), state))
+            return false;
+    }
+#endif
     if (!notify(&ScreenshotRecognitionSessionController::workflowStateChanged))
         return false;
     if (m_actions.setBusyState) {
@@ -4163,11 +5016,12 @@ void ScreenshotRecognitionSessionController::updateOriginalImagePreview() const 
             view->ownsAttachment(session, token))
             (view.data()->*method)(arguments...);
     };
-    const bool textActive = m_active && m_mode == Mode::Text;
-    const QImage source = textActive ? m_target.image : QImage{};
-    const QRectF canvasRect = textActive ? m_target.canvasRect : QRectF{};
+    const bool showSource =
+        m_active && (m_mode == Mode::Text || m_mode == Mode::Table || m_mode == Mode::Document);
+    const QImage source = showSource ? m_target.image : QImage{};
+    const QRectF canvasRect = showSource ? m_target.canvasRect : QRectF{};
     const bool originalPreview =
-        textActive && !m_independentEditing &&
+        showSource && !m_independentEditing &&
         snow_shot::storage::TextRecognitionSettings().showOriginalImagePreview();
 #if SNOW_SHOT_ENABLE_LATEX_RECOGNITION
     const bool latexPreview = !m_independentEditing && m_active && m_mode == Mode::Latex &&
@@ -4175,15 +5029,16 @@ void ScreenshotRecognitionSessionController::updateOriginalImagePreview() const 
                                m_latexCache.contains(recognitionCacheKey(Mode::Latex)));
     publish(&ScreenshotRecognitionWindow::setLatexPreviewEnabled, latexPreview);
 #endif
-    if (!textActive) {
-        publish(&ScreenshotRecognitionWindow::setOriginalImagePreviewEnabled, false);
+    if (!showSource) {
+        publish(&ScreenshotRecognitionWindow::setOriginalImagePreviewEnabled, false, false);
         publish(&ScreenshotRecognitionWindow::setOriginalImagePreviewSource, source, canvasRect);
         return;
     }
     // The default image describes the screenshot selection. Embedded hosts can
     // provide their displayed image and viewport mapping without replacing it.
     publish(&ScreenshotRecognitionWindow::setOriginalImagePreviewSource, source, canvasRect);
-    publish(&ScreenshotRecognitionWindow::setOriginalImagePreviewEnabled, originalPreview);
+    publish(&ScreenshotRecognitionWindow::setOriginalImagePreviewEnabled, originalPreview,
+            m_mode == Mode::Table);
 }
 
 void ScreenshotRecognitionSessionController::updateTableState(
@@ -4250,7 +5105,8 @@ void ScreenshotRecognitionSessionController::hideModelDownloadMessage() {
 bool ScreenshotRecognitionSessionController::showRecognitionMessage() const {
     if (m_destroying)
         return true;
-    const QString message = m_mode == Mode::Table      ? tr("Recognizing table")
+    const QString message = m_mode == Mode::Document   ? tr("Recognizing document")
+                            : m_mode == Mode::Table    ? tr("Recognizing table")
                             : m_mode == Mode::Latex    ? tr("Recognizing LaTeX formula")
                             : m_mode == Mode::Qr       ? tr("Recognizing barcode")
                             : m_mode == Mode::Markdown ? tr("Converting to Markdown")
@@ -4291,6 +5147,7 @@ void ScreenshotRecognitionSessionController::cancelOutstandingRequests() {
         return;
     cancelModelRecognition(Mode::Table);
     cancelModelRecognition(Mode::Latex);
+    cancelModelRecognition(Mode::Document);
 #if SNOW_SHOT_ENABLE_LATEX_RECOGNITION
     if (m_tableRecognition && m_latexRequestToken)
         m_tableRecognition->cancel(m_latexRequestToken);
@@ -4377,6 +5234,9 @@ void ScreenshotRecognitionSessionController::handleRecognitionProviderDestroyed(
         m_tableParsingCancellation.reset();
         m_tableParsing = false;
         ++m_tableGeneration;
+        if (m_mode == Mode::Table)
+            if (auto* view = content())
+                view->setModelThinking(false);
 #endif
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
         ++m_translationGeneration;
@@ -4409,6 +5269,8 @@ void ScreenshotRecognitionSessionController::handleRecognitionProviderDestroyed(
         clearLatexStream();
 #endif
         break;
+    case Mode::Document:
+        return;
     case Mode::Qr:
 #if SNOW_SHOT_ENABLE_QR_RECOGNITION
         requestWasPending = m_qrRequestToken != 0;
@@ -4452,9 +5314,10 @@ QJsonObject ScreenshotRecognitionSessionController::workflowState() const {
 #else
     constexpr bool translating = false;
 #endif
-    const QStringList modes{QStringLiteral("text"), QStringLiteral("table"),
-                            QStringLiteral("qr"),   QStringLiteral("markdown"),
-                            QStringLiteral("html"), QStringLiteral("latex")};
+    const QStringList modes{QStringLiteral("text"),    QStringLiteral("table"),
+                            QStringLiteral("qr"),      QStringLiteral("markdown"),
+                            QStringLiteral("html"),    QStringLiteral("latex"),
+                            QStringLiteral("document")};
 #if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
     const QString error = conversionModeActive() ? m_conversion->error() : m_workflowError;
 #else
@@ -4480,6 +5343,16 @@ QJsonObject ScreenshotRecognitionSessionController::workflowResult() const {
 #if SNOW_SHOT_ENABLE_TABLE_RECOGNITION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION
     if ((m_mode == Mode::Table || m_mode == Mode::Latex) && m_recognitionAwaitingModel)
         return result;
+#endif
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (m_mode == Mode::Document) {
+        if (const auto document = cachedDocument(m_target.key)) {
+            const auto content = document->clipboardContent();
+            return {{QStringLiteral("kind"), QStringLiteral("document")},
+                    {QStringLiteral("html"), content.html},
+                    {QStringLiteral("text"), content.text}};
+        }
+    }
 #endif
     if (m_mode == Mode::Text && hasTextResult()) {
         result.insert(QStringLiteral("kind"), QStringLiteral("text"));

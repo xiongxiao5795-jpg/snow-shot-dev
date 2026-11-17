@@ -15,6 +15,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -31,8 +32,9 @@ void settingsExcludeRemovedFeatures() {
     const auto& registry = settings::builtInSettingsRegistry();
     const auto& catalog = registry.catalog();
     require(catalog.validationErrors().isEmpty(), "Mini settings catalog must validate");
-    for (const QString& page : {QStringLiteral("translation"), QStringLiteral("api-configuration"),
-                                QStringLiteral("extended-features")}) {
+    for (const QString& page :
+         {QStringLiteral("account"), QStringLiteral("translation"),
+          QStringLiteral("api-configuration"), QStringLiteral("extended-features")}) {
         require(catalog.page(page) == nullptr, "removed settings pages must be unavailable");
     }
     require(
@@ -55,10 +57,17 @@ void settingsExcludeRemovedFeatures() {
     const settings::SettingsSearchIndex index(registry);
 #ifdef Q_OS_WIN
     const auto* other = catalog.section(QStringLiteral("global-hotkeys"), QStringLiteral("other"));
+    require(other, "Mini exposes the other global shortcut actions");
+    const auto topmost =
+        std::find_if(other->items.cbegin(), other->items.cend(), [](const auto& item) {
+            return item.id == QStringLiteral("quick.toggle-window-under-cursor-always-on-top");
+        });
+    const auto toggles =
+        std::find_if(other->items.cbegin(), other->items.cend(), [](const auto& item) {
+            return item.id == QStringLiteral("quick.toggle-global-hotkeys");
+        });
     require(
-        other &&
-            other->items.at(10).id ==
-                QStringLiteral("quick.toggle-window-under-cursor-always-on-top") &&
+        topmost != other->items.cend() && toggles != other->items.cend() && topmost < toggles &&
             catalog.itemForShortcut(
                 snow_shot::presentation::GlobalShortcutAction::ToggleWindowUnderCursorAlwaysOnTop),
         "Mini exposes window-under-cursor topmost before the hotkey toggles without translation");
@@ -101,9 +110,10 @@ void toolbarDefaultsAndImports() {
                 "explicit OCR visibility must survive normalization");
         storage::ScreenshotToolbarLayout imported;
         imported.positions = {
-            {QStringLiteral("table-recognition"), QStringLiteral("barcode-recognition"),
-             QStringLiteral("latex-recognition"), QStringLiteral("convert-to-markdown"),
-             QStringLiteral("convert-to-html"), QStringLiteral("text-translation")},
+            {QStringLiteral("table-recognition"), QStringLiteral("document-recognition"),
+             QStringLiteral("barcode-recognition"), QStringLiteral("latex-recognition"),
+             QStringLiteral("convert-to-markdown"), QStringLiteral("convert-to-html"),
+             QStringLiteral("text-translation")},
             {QStringLiteral("save-as-file")}};
         const auto normalized = layout::normalizedLayout(imported, kind);
         for (const auto& position : normalized.positions)

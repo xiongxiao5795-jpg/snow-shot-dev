@@ -236,6 +236,8 @@ class ShortcutSettings final {
     setToggleWindowUnderCursorAlwaysOnTop(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList toggleGlobalShortcuts() const;
     bool setToggleGlobalShortcuts(const shortcuts::ShortcutBindingList& bindings) const;
+    [[nodiscard]] shortcuts::ShortcutBindingList toggleGlobalMouse() const;
+    bool setToggleGlobalMouse(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList toggleDisableOnFocusedFullscreenWindow() const;
     bool
     setToggleDisableOnFocusedFullscreenWindow(const shortcuts::ShortcutBindingList& bindings) const;
@@ -247,6 +249,8 @@ class GlobalShortcutSettings final {
     bool setDisableOnFocusedFullscreenWindow(bool disabled) const;
     [[nodiscard]] QString fullscreenWindowFilter() const;
     bool setFullscreenWindowFilter(const QString& filter) const;
+    [[nodiscard]] QStringList fullscreenDisableScope() const;
+    bool setFullscreenDisableScope(const QStringList& scope) const;
 };
 
 class ScreenshotSettings final {
@@ -511,6 +515,8 @@ class ScreenshotUiSettings final {
     bool setScreenshotAreaTypeHintEnabled(bool enabled) const;
     [[nodiscard]] bool showGuidesByDefault() const;
     bool setShowGuidesByDefault(bool enabled) const;
+    [[nodiscard]] bool adaptiveGuideColors() const;
+    bool setAdaptiveGuideColors(bool enabled) const;
     [[nodiscard]] QColor cursorGuideLineColor() const;
     bool setCursorGuideLineColor(const QColor& color) const;
     [[nodiscard]] QColor selectionCenterGuideLineColor() const;
@@ -567,6 +573,12 @@ class RecordingSettings final {
     bool setMouseTrailColor(const QColor& color) const;
     [[nodiscard]] QColor mouseClickColor() const;
     bool setMouseClickColor(const QColor& color) const;
+    [[nodiscard]] bool followMouse() const;
+    bool setFollowMouse(bool enabled) const;
+    [[nodiscard]] bool followMouseSmoothMovement() const;
+    bool setFollowMouseSmoothMovement(bool enabled) const;
+    [[nodiscard]] bool followMouseReduceJitter() const;
+    bool setFollowMouseReduceJitter(bool enabled) const;
     [[nodiscard]] bool webcamEnabled() const;
     bool setWebcamEnabled(bool enabled) const;
     [[nodiscard]] int webcamSize() const;

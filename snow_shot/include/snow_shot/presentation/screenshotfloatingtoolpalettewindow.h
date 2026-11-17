@@ -33,7 +33,8 @@ class ScreenshotFloatingToolPaletteWindow : public QWidget {
 
   public:
     explicit ScreenshotFloatingToolPaletteWindow(const ScreenshotToolPalette::Options& options,
-                                                 QWidget* parent = nullptr);
+                                                 QWidget* parent = nullptr,
+                                                 bool attachToMacOwner = true);
     ~ScreenshotFloatingToolPaletteWindow() override;
 
     ScreenshotToolPalette* palette() const;
@@ -126,7 +127,7 @@ class ScreenshotFloatingToolPaletteWindow : public QWidget {
     void moveContentDuringDrag(const QPoint& position);
     void applyContentGeometry(const QPoint& position, const QSize& windowSize);
     void finishPaletteDrag(bool emitFinished);
-    bool handleToolbarWheel(QWheelEvent* event);
+    bool handleToolbarWheel(QWheelEvent* event, const QWidget* receiver);
     void applyWindowAttributes();
     void updateWindowMask();
     void registerMaterializedScope(QWidget* scope);

@@ -30,7 +30,6 @@ class SnowCanvasWidget;
 struct ScreenshotCaptureState;
 struct ScreenshotSelectionParams;
 enum class ScreenshotActiveTool;
-enum class ScreenshotIntelligentSelectionTarget;
 
 // Only a border resize retains the recognition window that owns the pointer gesture.
 enum class ScreenshotToolActivationReason { Command, SelectionResize, Reselection };
@@ -117,8 +116,6 @@ struct ScreenshotOverlayInputActions {
 
     // Keep new actions at the end so positional test and application initializers remain valid.
     std::function<bool()> physicalCursorMovementAvailable = []() { return false; };
-    std::function<void(ScreenshotIntelligentSelectionTarget)> persistSelectionTarget =
-        [](ScreenshotIntelligentSelectionTarget) {};
     std::function<bool()> recaptureAvailable = []() { return false; };
     std::function<bool()> cancelCaptureViaShortcut = []() { return false; };
     std::function<void(const QPoint&, quint32)> requestUiSelectorHitTestOnDisplay;
@@ -212,7 +209,7 @@ class ScreenshotOverlayInputHandler final {
     bool cycleRegionType(bool reverse);
     bool removeRegionVertex();
     bool customRegionInputActive() const;
-    void handleUnhandledMiddleClick();
+    void handleUnhandledMiddleClick(ScreenshotOverlayWindow* overlay, const QPointF& localPosition);
     [[nodiscard]] bool handleWheel(ScreenshotOverlayWindow* overlay, const QWheelEvent& event);
     [[nodiscard]] bool shouldBlockUnhandledKeyInput() const;
     [[nodiscard]] bool activateMoveEntireSelectionShortcut();
@@ -244,7 +241,8 @@ class ScreenshotOverlayInputHandler final {
     void finishEffectDrag(ScreenshotOverlayWindow* overlay, const QPointF& localPosition);
     QPointer<QWidget> m_effectMouseGrab;
     bool m_consumeEffectRelease = false;
-    void executeConfiguredCompletionAction(const QString& action);
+    void executeConfiguredCompletionAction(const QString& action,
+                                           std::optional<QPointF> middleClickPosition);
     void beginSelectionDrag(ScreenshotOverlayWindow* overlay, const QPointF& virtualPosition,
                             ScreenshotSelectionDragMode dragMode,
                             const std::optional<QPointF>& latestEnd = std::nullopt);

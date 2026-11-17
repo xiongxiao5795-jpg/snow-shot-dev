@@ -2,6 +2,344 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="zh_CN" sourcelanguage="en_US">
     <context>
+        <name>AccountPageWidget</name>
+        <message>
+            <source>3–32 letters, numbers, _, . or -</source>
+            <translation>3–32 个字母、数字、_、. 或 -</translation>
+        </message>
+        <message>
+            <source>8–16 characters</source>
+            <translation>8–16 个字符</translation>
+        </message>
+        <message>
+            <source>Account</source>
+            <translation>账号</translation>
+        </message>
+        <message>
+            <source>Account linked</source>
+            <translation>账号已绑定</translation>
+        </message>
+        <message>
+            <source>Account transactions</source>
+            <translation>账号明细</translation>
+        </message>
+        <message>
+            <source>Activate %1</source>
+            <translation>激活 %1</translation>
+        </message>
+        <message>
+            <source>Already have an account? Sign in</source>
+            <translation>已有账号？登录</translation>
+        </message>
+        <message>
+            <source>Available credits</source>
+            <translation>可用积分</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>取消</translation>
+        </message>
+        <message>
+            <source>Cancel payment</source>
+            <translation>取消支付</translation>
+        </message>
+        <message>
+            <source>Code valid for %1:%2 · Valid until %3</source>
+            <translation>二维码剩余有效时间 %1:%2 · 有效至 %3</translation>
+        </message>
+        <message>
+            <source>Completed</source>
+            <translation>已完成</translation>
+        </message>
+        <message>
+            <source>Confirm password</source>
+            <translation>确认密码</translation>
+        </message>
+        <message>
+            <source>Confirming payment</source>
+            <translation>正在确认支付结果</translation>
+        </message>
+        <message>
+            <source>Continue</source>
+            <translation>继续</translation>
+        </message>
+        <message>
+            <source>Create an account</source>
+            <translation>注册账号</translation>
+        </message>
+        <message>
+            <source>Create your account</source>
+            <translation>注册 Snow Shot 账号</translation>
+        </message>
+        <message>
+            <source>Credits</source>
+            <translation>积分</translation>
+        </message>
+        <message>
+            <source>Date</source>
+            <translation>日期</translation>
+        </message>
+        <message>
+            <source>Dismiss</source>
+            <translation>关闭</translation>
+        </message>
+        <message>
+            <source>Failed</source>
+            <translation>失败</translation>
+        </message>
+        <message>
+            <source>I have read and agree to the %1 and %2</source>
+            <translation>我已阅读并同意%1和%2</translation>
+        </message>
+        <message>
+            <source>I've paid</source>
+            <translation>我已支付</translation>
+        </message>
+        <message>
+            <source>Image code</source>
+            <translation>图形验证码</translation>
+        </message>
+        <message>
+            <source>Load more</source>
+            <translation>加载更多</translation>
+        </message>
+        <message>
+            <source>Manage and view account data</source>
+            <translation>管理、查看账号数据</translation>
+        </message>
+        <message>
+            <source>No transactions yet</source>
+            <translation>暂无账号明细</translation>
+        </message>
+        <message>
+            <source>Order ID: %1</source>
+            <translation>订单号：%1</translation>
+        </message>
+        <message>
+            <source>Outstanding balance: %1</source>
+            <translation>待偿还欠款：%1</translation>
+        </message>
+        <message>
+            <source>Paid calls are paused. Your free allowance remains available. New purchases pay this balance first</source>
+            <translation>付费调用已暂停，免费额度仍可使用。后续充值将优先抵扣欠款</translation>
+        </message>
+        <message>
+            <source>Password</source>
+            <translation>密码</translation>
+        </message>
+        <message>
+            <source>Payment confirmation continues after the code's original expiry</source>
+            <translation>二维码原有效期结束后，仍会继续确认支付结果</translation>
+        </message>
+        <message>
+            <source>Payment failed or the order was closed</source>
+            <translation>支付失败或订单已关闭</translation>
+        </message>
+        <message>
+            <source>Payment received</source>
+            <translation>已确认到账</translation>
+        </message>
+        <message>
+            <source>Payment refunded</source>
+            <translation>款项已退回</translation>
+        </message>
+        <message>
+            <source>Payment status unavailable</source>
+            <translation>暂时无法查询支付状态</translation>
+        </message>
+        <message>
+            <source>Pending</source>
+            <translation>待处理</translation>
+        </message>
+        <message>
+            <source>Previous registration orders</source>
+            <translation>以前的注册订单</translation>
+        </message>
+        <message>
+            <source>Privacy policy</source>
+            <translation>隐私政策</translation>
+        </message>
+        <message>
+            <source>Processing</source>
+            <translation>处理中</translation>
+        </message>
+        <message>
+            <source>Purchase credits</source>
+            <translation>充值积分</translation>
+        </message>
+        <message>
+            <source>Purchase credits for %1</source>
+            <translation>为 %1 充值积分</translation>
+        </message>
+        <message>
+            <source>Purchases are currently unavailable. Your account and transaction records are still available</source>
+            <translation>充值暂不可用，账号信息和明细仍可查看</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>刷新</translation>
+        </message>
+        <message>
+            <source>Refresh code</source>
+            <translation>换一张</translation>
+        </message>
+        <message>
+            <source>Refund</source>
+            <translation>退款</translation>
+        </message>
+        <message>
+            <source>Register and continue</source>
+            <translation>注册并继续</translation>
+        </message>
+        <message>
+            <source>Registration image code</source>
+            <translation>注册图形验证码</translation>
+        </message>
+        <message>
+            <source>Return to registration and generate a new code. Your previous order records are retained</source>
+            <translation>请返回注册页面生成新二维码。原订单记录仍会保留</translation>
+        </message>
+        <message>
+            <source>Scan this Mini Program code with WeChat</source>
+            <translation>请用微信扫描此小程序码</translation>
+        </message>
+        <message>
+            <source>Scan with your own WeChat account. An existing temporary account will be linked and signed in automatically using these desktop credentials. Otherwise, select a package and confirm your order. The WeChat link cannot be changed</source>
+            <translation>请使用本人的微信扫码。已有临时账号将使用在电脑端填写的用户名和密码完成绑定并自动登录；否则，请选择套餐并确认购买。微信绑定后无法更换</translation>
+        </message>
+        <message>
+            <source>Sign in</source>
+            <translation>登录</translation>
+        </message>
+        <message>
+            <source>Sign in to Snow Shot</source>
+            <translation>登录 Snow Shot</translation>
+        </message>
+        <message>
+            <source>Sign in to an existing account</source>
+            <translation>登录已有账号</translation>
+        </message>
+        <message>
+            <source>Sign out</source>
+            <translation>退出登录</translation>
+        </message>
+        <message>
+            <source>Status</source>
+            <translation>状态</translation>
+        </message>
+        <message>
+            <source>The account service is unavailable</source>
+            <translation>账号服务暂不可用</translation>
+        </message>
+        <message>
+            <source>The payment result is still being checked</source>
+            <translation>仍在核实支付结果</translation>
+        </message>
+        <message>
+            <source>This purchase code has expired</source>
+            <translation>此充值二维码已过期</translation>
+        </message>
+        <message>
+            <source>Top-up</source>
+            <translation>充值</translation>
+        </message>
+        <message>
+            <source>Top-ups, usage charges, and refunds</source>
+            <translation>查看充值、使用扣费和退款记录</translation>
+        </message>
+        <message>
+            <source>Top-ups, usage charges, and refunds appear here</source>
+            <translation>充值、消费和退款记录会显示在这里</translation>
+        </message>
+        <message>
+            <source>Total top-ups: %1</source>
+            <translation>累计充值：%1</translation>
+        </message>
+        <message>
+            <source>Transaction</source>
+            <translation>交易类型</translation>
+        </message>
+        <message>
+            <source>Usage</source>
+            <translation>消费</translation>
+        </message>
+        <message>
+            <source>User agreement</source>
+            <translation>用户协议</translation>
+        </message>
+        <message>
+            <source>Username</source>
+            <translation>用户名</translation>
+        </message>
+        <message>
+            <source>View account benefits</source>
+            <translation>查看账号权益</translation>
+        </message>
+        <message>
+            <source>View your balance in the Mini Program with the WeChat account used to pay.</source>
+            <translation>请使用付款时的微信账号，在小程序中查看余额。</translation>
+        </message>
+        <message>
+            <source>Waiting for payment</source>
+            <translation>等待支付</translation>
+        </message>
+    </context>
+    <context>
+        <name>AccountSessionService</name>
+        <message>
+            <source>Complete your first payment to activate this account</source>
+            <translation>请完成首次支付以激活此账号</translation>
+        </message>
+        <message>
+            <source>Payment has not been confirmed. We will keep checking</source>
+            <translation>尚未确认到账，将继续查询支付结果</translation>
+        </message>
+        <message>
+            <source>Purchases are currently unavailable. Please try again later</source>
+            <translation>充值暂不可用，请稍后重试</translation>
+        </message>
+        <message>
+            <source>The image code is incorrect or expired. Refresh it and try again</source>
+            <translation>图形验证码错误或已过期，请更换后重试</translation>
+        </message>
+        <message>
+            <source>The passwords do not match</source>
+            <translation>两次输入的密码不一致</translation>
+        </message>
+        <message>
+            <source>The payment result needs confirmation. Your request remains reserved</source>
+            <translation>支付结果仍需核实，您的申请将继续保留</translation>
+        </message>
+        <message>
+            <source>The username or password is incorrect</source>
+            <translation>用户名或密码错误</translation>
+        </message>
+        <message>
+            <source>This purchase code has expired. Generate a new code to continue</source>
+            <translation>此充值二维码已过期，请生成新二维码后继续</translation>
+        </message>
+        <message>
+            <source>This purchase must use the WeChat account linked to your Snow Shot account</source>
+            <translation>请使用与此 Snow Shot 账号绑定的微信账号支付</translation>
+        </message>
+        <message>
+            <source>This username is already taken or temporarily reserved</source>
+            <translation>此用户名已被使用或暂时保留</translation>
+        </message>
+        <message>
+            <source>Too many requests. Wait a moment and try again</source>
+            <translation>请求过于频繁，请稍后重试</translation>
+        </message>
+        <message>
+            <source>Unable to complete the request. Check your connection and try again</source>
+            <translation>无法完成请求，请检查网络连接后重试</translation>
+        </message>
+        <message>
+            <source>Your session has expired. Sign in again</source>
+            <translation>登录状态已过期，请重新登录</translation>
+        </message>
+    </context>
+    <context>
         <name>AdministratorLaunch</name>
         <message>
             <source> Recovery failed: %1</source>
@@ -724,10 +1062,6 @@
     <context>
         <name>LoginItemService</name>
         <message>
-            <source>%1 needs a valid code signature to use launch at login. Reinstall the signed app</source>
-            <translation>%1 需要有效的代码签名才能在登录时启动。请重新安装已签名的应用</translation>
-        </message>
-        <message>
             <source>A launch-at-login change is already in progress</source>
             <translation>正在更改登录时启动设置</translation>
         </message>
@@ -740,24 +1074,8 @@
             <translation>无法更改登录时启动设置：%1</translation>
         </message>
         <message>
-            <source>Could not save launch-at-login initialization. Registration was not changed</source>
-            <translation>无法保存登录时启动初始化状态。注册状态未更改</translation>
-        </message>
-        <message>
             <source>Could not save the launch-at-login preference. The displayed macOS status is still current</source>
             <translation>无法保存登录时启动偏好设置。显示的 macOS 状态仍为当前状态</translation>
-        </message>
-        <message>
-            <source>Move the signed %1 app to /Applications or ~/Applications to use launch at login</source>
-            <translation>请将已签名的 %1 应用移至 /Applications 或 ~/Applications，以便在登录时启动</translation>
-        </message>
-        <message>
-            <source>Move the signed Snow Shot app to /Applications or ~/Applications to use launch at login</source>
-            <translation>请将已签名的 Snow Shot 应用移至 /Applications 或 ~/Applications，以使用登录时启动功能</translation>
-        </message>
-        <message>
-            <source>Snow Shot needs a valid code signature to use launch at login. Reinstall the signed app</source>
-            <translation>Snow Shot 需要有效的代码签名才能使用登录时启动功能。请重新安装已签名的应用</translation>
         </message>
         <message>
             <source>macOS did not apply the launch-at-login change. Check Login Items in System Settings</source>
@@ -1014,6 +1332,10 @@
             <translation>转换为 Markdown</translation>
         </message>
         <message>
+            <source>Document recognition</source>
+            <translation>文档识别</translation>
+        </message>
+        <message>
             <source>Drag tools here to hide them from the screenshot toolbar</source>
             <translation>将工具拖到此处，即可在截图工具栏中隐藏它们</translation>
         </message>
@@ -1224,6 +1546,10 @@
             <translation>辅助功能</translation>
         </message>
         <message>
+            <source>Account</source>
+            <translation>账号</translation>
+        </message>
+        <message>
             <source>Accuracy first</source>
             <translation>准确优先</translation>
         </message>
@@ -1234,6 +1560,10 @@
         <message>
             <source>Active window</source>
             <translation>活动窗口</translation>
+        </message>
+        <message>
+            <source>Adaptive guide colors</source>
+            <translation>自适应辅助线颜色</translation>
         </message>
         <message>
             <source>Add a mask to highlight text recognition results</source>
@@ -1464,6 +1794,10 @@
             <translation>自动禁用</translation>
         </message>
         <message>
+            <source>Automatic disabling in fullscreen windows</source>
+            <translation>全屏窗口自动禁用</translation>
+        </message>
+        <message>
             <source>Automatic text recognition</source>
             <translation>自动文本识别</translation>
         </message>
@@ -1486,6 +1820,10 @@
         <message>
             <source>Automatically select newly created elements</source>
             <translation>自动选中新创建的元素</translation>
+        </message>
+        <message>
+            <source>Automatically start Snow Shot in the background when you log in to your Mac</source>
+            <translation>登录 Mac 时自动在后台启动 Snow Shot</translation>
         </message>
         <message>
             <source>Autostart</source>
@@ -1672,10 +2010,6 @@
             <translation>自动检查</translation>
         </message>
         <message>
-            <source>Check for new versions on GitHub and Gitee</source>
-            <translation>在 GitHub 和 Gitee 上检查新版本</translation>
-        </message>
-        <message>
             <source>Child elements</source>
             <translation>子元素</translation>
         </message>
@@ -1840,6 +2174,10 @@
             <translation>选择文本识别完成后自动执行的操作</translation>
         </message>
         <message>
+            <source>Choose what happens when content is dropped on the floating toolbar</source>
+            <translation>选择将内容拖放到悬浮工具栏时执行的操作</translation>
+        </message>
+        <message>
             <source>Choose what happens when the clipboard content or selected file is already pinned</source>
             <translation>选择剪贴板内容或所选文件已固定到屏幕时的操作</translation>
         </message>
@@ -1868,8 +2206,12 @@
             <translation>选择执行哪些操作时，同时以所选图像格式保存到指定目录</translation>
         </message>
         <message>
-            <source>Choose which fullscreen windows automatically disable global shortcuts</source>
-            <translation>选择哪些全屏窗口会自动禁用全局快捷键</translation>
+            <source>Choose which fullscreen windows trigger automatic disabling</source>
+            <translation>选择哪些全屏窗口会触发自动禁用</translation>
+        </message>
+        <message>
+            <source>Choose which inputs to disable</source>
+            <translation>选择要禁用的输入功能</translation>
         </message>
         <message>
             <source>Clear</source>
@@ -2312,12 +2654,20 @@
             <translation>诊断</translation>
         </message>
         <message>
+            <source>Disable global mouse</source>
+            <translation>禁用全局鼠标</translation>
+        </message>
+        <message>
             <source>Disable global shortcuts</source>
             <translation>禁用全局快捷键</translation>
         </message>
         <message>
-            <source>Disable shortcuts in fullscreen windows</source>
-            <translation>在全屏窗口中禁用快捷键</translation>
+            <source>Disable scope</source>
+            <translation>禁用范围</translation>
+        </message>
+        <message>
+            <source>Disable/enable global mouse</source>
+            <translation>禁用/启用全局鼠标</translation>
         </message>
         <message>
             <source>Disable/enable global shortcuts</source>
@@ -2632,6 +2982,10 @@
             <translation>全屏画布（开启/关闭鼠标穿透）</translation>
         </message>
         <message>
+            <source>Fullscreen input settings</source>
+            <translation>全屏输入设置</translation>
+        </message>
+        <message>
             <source>Fullscreen suppression</source>
             <translation>全屏抑制</translation>
         </message>
@@ -2682,10 +3036,6 @@
         <message>
             <source>Global mouse gestures</source>
             <translation>全局鼠标手势</translation>
-        </message>
-        <message>
-            <source>Global shortcut activation behavior</source>
-            <translation>全局快捷键启用行为</translation>
         </message>
         <message>
             <source>Global shortcuts</source>
@@ -2788,12 +3138,12 @@
             <translation>图标</translation>
         </message>
         <message>
-            <source>Ignore global shortcuts while a matching focused window occupies an entire monitor</source>
-            <translation>符合筛选条件的焦点窗口占满整个显示器时忽略全局快捷键</translation>
-        </message>
-        <message>
             <source>Image and document files</source>
             <translation>图像和文档文件</translation>
+        </message>
+        <message>
+            <source>Image editing</source>
+            <translation>图像编辑</translation>
         </message>
         <message>
             <source>Image export</source>
@@ -2830,6 +3180,14 @@
         <message>
             <source>Image size</source>
             <translation>图像大小</translation>
+        </message>
+        <message>
+            <source>Image splitting</source>
+            <translation>图像分割</translation>
+        </message>
+        <message>
+            <source>Image stitching</source>
+            <translation>图像拼接</translation>
         </message>
         <message>
             <source>Import</source>
@@ -2890,6 +3248,10 @@
         <message>
             <source>Interface settings</source>
             <translation>界面设置</translation>
+        </message>
+        <message>
+            <source>Invert guide colors that are similar to their sampled background color</source>
+            <translation>辅助线颜色与采样的背景颜色相近时反转辅助线颜色</translation>
         </message>
         <message>
             <source>JPEG</source>
@@ -3076,10 +3438,6 @@
             <translation>保持选区宽高比</translation>
         </message>
         <message>
-            <source>Manage Snow Shot's login permission in macOS System Settings</source>
-            <translation>在 macOS 系统设置中管理 Snow Shot 的登录权限</translation>
-        </message>
-        <message>
             <source>Manage macOS permissions for Snow Shot</source>
             <translation>管理 Snow Shot 的 macOS 权限</translation>
         </message>
@@ -3126,6 +3484,10 @@
         <message>
             <source>Medium V6</source>
             <translation>中型 V6</translation>
+        </message>
+        <message>
+            <source>Membership, credits and transactions</source>
+            <translation>会员、余额和账号明细</translation>
         </message>
         <message>
             <source>Memory optimization policy</source>
@@ -3284,16 +3646,12 @@
             <translation>仅在显示时</translation>
         </message>
         <message>
-            <source>Open</source>
-            <translation>打开</translation>
-        </message>
-        <message>
-            <source>Open Login Items settings</source>
-            <translation>打开登录项设置</translation>
-        </message>
-        <message>
             <source>Open a canvas on the current display or toggle click-through</source>
             <translation>在当前显示器上打开画布或切换鼠标穿透</translation>
+        </message>
+        <message>
+            <source>Open at login</source>
+            <translation>登录时打开</translation>
         </message>
         <message>
             <source>Open image editing for each selected image file, or an empty window if no images are selected</source>
@@ -3378,6 +3736,14 @@
         <message>
             <source>Pages</source>
             <translation>页面</translation>
+        </message>
+        <message>
+            <source>Pause or resume configured global mouse gestures</source>
+            <translation>暂停或恢复已配置的全局鼠标手势</translation>
+        </message>
+        <message>
+            <source>Pause the selected inputs while a matching focused window occupies an entire monitor</source>
+            <translation>当前焦点窗口符合筛选条件且占据整个显示器时，暂停所选的输入功能</translation>
         </message>
         <message>
             <source>Permanently remove all saved screenshots</source>
@@ -4732,6 +5098,10 @@
             <translation>切换鼠标所在窗口的置顶状态</translation>
         </message>
         <message>
+            <source>Toggle automatic disabling of the selected inputs in fullscreen windows. This shortcut stays active while automatic disabling is enabled</source>
+            <translation>切换全屏时自动禁用所选输入功能。启用自动禁用后，此快捷键仍然有效</translation>
+        </message>
+        <message>
             <source>Toggle cursor visibility</source>
             <translation>切换光标显示</translation>
         </message>
@@ -4758,6 +5128,10 @@
         <message>
             <source>Tool selected when quick annotation starts</source>
             <translation>进入快速标注时选用的工具</translation>
+        </message>
+        <message>
+            <source>Toolbar drop behavior</source>
+            <translation>工具栏拖放行为</translation>
         </message>
         <message>
             <source>Toolbar opacity</source>
@@ -4874,10 +5248,6 @@
         <message>
             <source>Turn every global shortcut off or back on; this shortcut stays active while global shortcuts are disabled</source>
             <translation>关闭或重新开启所有全局快捷键；即使全局快捷键已被禁用，此快捷键仍然有效</translation>
-        </message>
-        <message>
-            <source>Turn off or back on the suppression of global shortcuts while the focused window is fullscreen; this shortcut stays active while fullscreen suppression is enabled</source>
-            <translation>关闭或重新开启焦点窗口全屏时对全局快捷键的抑制；即使全屏抑制已生效，此快捷键仍然有效</translation>
         </message>
         <message>
             <source>UIA</source>
@@ -5731,6 +6101,49 @@ Unavailable: %2</source>
         <message>
             <source>Youdao</source>
             <translation>有道</translation>
+        </message>
+    </context>
+    <context>
+        <name>snow_shot::app::AccountSessionService</name>
+        <message>
+            <source>%1 credits</source>
+            <translation>%1 积分</translation>
+        </message>
+        <message>
+            <source>Confirm your password</source>
+            <translation>请确认密码</translation>
+        </message>
+        <message>
+            <source>Enter the image code</source>
+            <translation>请输入图形验证码</translation>
+        </message>
+        <message>
+            <source>Enter your password</source>
+            <translation>请输入密码</translation>
+        </message>
+        <message>
+            <source>Enter your username</source>
+            <translation>请输入用户名</translation>
+        </message>
+        <message>
+            <source>This payment is already being processed. We will keep checking its result</source>
+            <translation>这笔支付正在处理中，我们将继续查询支付结果</translation>
+        </message>
+        <message>
+            <source>Use 3–32 letters, numbers, underscores, dots, or hyphens for your username</source>
+            <translation>用户名须为 3–32 个字母、数字、下划线、点或连字符</translation>
+        </message>
+        <message>
+            <source>Use a password between 8 and 16 characters</source>
+            <translation>密码长度须为 8–16 个字符</translation>
+        </message>
+        <message>
+            <source>Your account is activated. Sign in with your username and password if automatic sign-in does not complete</source>
+            <translation>账号已激活。如果未能自动登录，请使用用户名和密码登录</translation>
+        </message>
+        <message>
+            <source>Your session could not be saved securely. Keep this app open until payment is confirmed; you may need to sign in again after restarting</source>
+            <translation>无法安全保存登录信息。请保持应用开启，直到支付结果确认；重启后可能需要重新登录</translation>
         </message>
     </context>
     <context>

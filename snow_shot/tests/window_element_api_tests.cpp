@@ -243,6 +243,49 @@ void smartSelectionModesPersistAndDisablePendingLookup(const QString& configurat
             "restore default mode");
 }
 
+void sessionModeChangesRetargetLookupWithoutRefreshing() {
+    using snow_shot::SmartSelectionMode;
+    auto& app = storage::ApplicationStorage::instance();
+    require(app.requestSmartSelectionMode(SmartSelectionMode::Window),
+            "failed to configure window-only smart selection");
+    auto sessionMode = app.smartSelectionMode();
+    automaticReply = false;
+    submissions.clear();
+    ScreenshotSelectorCoordinator coordinator(
+        nullptr, {}, [&app] { return app.smartSelectionMode(); },
+        [&sessionMode] { return sessionMode; });
+    int results = 0;
+    QObject::connect(&coordinator, &ScreenshotSelectorCoordinator::initialResultReady, &coordinator,
+                     [&results] { ++results; });
+    require(coordinator.startRefresh({}), "session selector refresh failed");
+    QCoreApplication::sendPostedEvents();
+    const int refreshes = refreshed;
+    const QPoint cursor(10, 20);
+    require(coordinator.requestHitTest(cursor, ScreenshotSelectorHitTestMode::Window) &&
+                submissions.size() == 1 &&
+                submissions.last().query.mode == SNOW_UI_SELECTOR_HIT_TEST_MODE_WINDOW,
+            "the session must initially dispatch a window lookup");
+
+    sessionMode = SmartSelectionMode::WindowSubElement;
+    require(coordinator.requestHitTest(cursor, ScreenshotSelectorHitTestMode::WindowSubElement),
+            "switching the session mode must accept a lookup at the same position");
+    deliver(submissions.first(), SNOW_UI_SELECTOR_INITIAL, SNOW_UI_SELECTOR_COMPLETE);
+    QCoreApplication::sendPostedEvents();
+    require(results == 0 && submissions.size() == 2 &&
+                submissions.last().query.mode == SNOW_UI_SELECTOR_HIT_TEST_MODE_UI_ELEMENT,
+            "switching modes must discard the old result and dispatch an element lookup");
+    deliver(submissions.last(), SNOW_UI_SELECTOR_INITIAL, SNOW_UI_SELECTOR_COMPLETE);
+    QCoreApplication::sendPostedEvents();
+    require(results == 1 && refreshed == refreshes &&
+                app.smartSelectionMode() == SmartSelectionMode::Window,
+            "the element lookup must reuse the selector snapshot and preserve the saved mode");
+
+    coordinator.releaseCache();
+    automaticReply = true;
+    require(app.requestSmartSelectionMode(SmartSelectionMode::WindowSubElement),
+            "failed to restore the default smart selection setting");
+}
+
 void settingsPersistAndResetToUia(const QString& configurationPath) {
     snow_shot::presentation::GlobalShortcutManager shortcuts;
     settings::BuiltInSettingsBackend backend(shortcuts);
@@ -545,11 +588,22 @@ void toolbarLayoutSectionResetsRemainIndependent() {
             "Drawing reset must restore only the drawing toolbar layout");
 }
 
-void screenshotGuideSettingsPersistAndReset() {
+void screenshotGuideSettingsPersistAndReset(const QString& configurationPath) {
     snow_shot::presentation::GlobalShortcutManager shortcuts;
     settings::BuiltInSettingsBackend backend(shortcuts);
     const storage::ScreenshotUiSettings ui;
     const storage::ScreenshotShortcutSettings shortcutSettings;
+    constexpr auto adaptiveColors = settings::SettingsSwitchBinding::AdaptiveGuideColors;
+    require(backend.switchValue(adaptiveColors) && ui.adaptiveGuideColors() &&
+                backend.applySwitchValue(adaptiveColors, false) &&
+                !backend.switchValue(adaptiveColors) && !ui.adaptiveGuideColors(),
+            "adaptive guide colors must default to enabled and save the user's choice");
+    require(storage::ApplicationStorage::instance().configuration().flushNow().success,
+            "guide preferences must be flushable");
+    const storage::ConfigurationStore reloaded(configurationPath, true, true, 60000);
+    require(reloaded.value(QStringLiteral("screenshot_ui/adaptive_guide_colors")) ==
+                QJsonValue(false),
+            "disabled adaptive guide colors must survive a configuration reload");
     require(ui.setShowGuidesByDefault(true) && ui.setCursorGuideLineColor(QColor(12, 34, 56, 78)) &&
                 ui.setSelectionCenterGuideLineColor(QColor(22, 33, 44, 55)) &&
                 ui.setMonitorCenterGuideLineColor(QColor(90, 80, 70, 60)) &&
@@ -564,7 +618,8 @@ void screenshotGuideSettingsPersistAndReset() {
             "saved guide preferences and shortcut must remain intact before reset");
 
     require(backend.resetSection(settings::SettingsSectionReset::ScreenshotInterfaceSettings) &&
-                !ui.showGuidesByDefault() && ui.cursorGuideLineColor() == QColor(0, 0, 0) &&
+                backend.switchValue(adaptiveColors) && !ui.showGuidesByDefault() &&
+                ui.cursorGuideLineColor() == QColor(0, 0, 0) &&
                 ui.selectionCenterGuideLineColor() == QColor(0x40, 0x96, 0xff) &&
                 ui.monitorCenterGuideLineColor() == QColor(255, 0, 0) &&
                 shortcutSettings.toggleGuides().first().portableText == QStringLiteral("Ctrl+G"),
@@ -1133,6 +1188,7 @@ int main(int argc, char** argv) {
     if (application.arguments().contains(QStringLiteral("--smart-selection-only"))) {
         smartSelectionModesPersistAndDisablePendingLookup(
             temporary.filePath(QStringLiteral("data/config.json")));
+        sessionModeChangesRetargetLookupWithoutRefreshing();
         applicationStorage.shutdown();
         return 0;
     }
@@ -1142,7 +1198,8 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (application.arguments().contains(QStringLiteral("--guide-settings-only"))) {
-        screenshotGuideSettingsPersistAndReset();
+        screenshotGuideSettingsPersistAndReset(
+            temporary.filePath(QStringLiteral("data/config.json")));
         applicationStorage.shutdown();
         return 0;
     }
@@ -1171,6 +1228,7 @@ int main(int argc, char** argv) {
     if (!selectorOnly) {
         smartSelectionModesPersistAndDisablePendingLookup(
             temporary.filePath(QStringLiteral("data/config.json")));
+        sessionModeChangesRetargetLookupWithoutRefreshing();
         recordingApiModePersistsAndResets(temporary.filePath(QStringLiteral("data/config.json")));
         settingsPersistAndResetToUia(temporary.filePath(QStringLiteral("data/config.json")));
         shutterSoundSettingsPersistAndReset(temporary.filePath(QStringLiteral("data/config.json")));
@@ -1182,7 +1240,8 @@ int main(int argc, char** argv) {
             temporary.filePath(QStringLiteral("data/config.json")));
         ownUiCapturePreferencesPersistAndReset();
         toolbarLayoutSectionResetsRemainIndependent();
-        screenshotGuideSettingsPersistAndReset();
+        screenshotGuideSettingsPersistAndReset(
+            temporary.filePath(QStringLiteral("data/config.json")));
     }
 #ifndef Q_OS_MACOS
     changedApiRefreshesServiceAndRejectsOldResults();

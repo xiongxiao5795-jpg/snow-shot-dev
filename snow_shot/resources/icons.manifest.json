@@ -495,6 +495,14 @@
     },
     {
       "variant": "outlined",
+      "symbol": "CreditsCoin",
+      "name": "credits-coin",
+      "source": "../src/presentation/components/icons/resources/credits-coin.svg",
+      "colorModel": "monochrome",
+      "fit": "contain"
+    },
+    {
+      "variant": "outlined",
       "symbol": "CropHorizontal",
       "name": "crop-horizontal",
       "source": "../src/presentation/components/icons/resources/crop-horizontal.svg",
@@ -634,6 +642,14 @@
       "symbol": "DistributeVertical",
       "name": "distribute-vertical",
       "source": "../src/presentation/components/icons/resources/distribute-vertical.svg",
+      "colorModel": "monochrome",
+      "fit": "contain"
+    },
+    {
+      "variant": "outlined",
+      "symbol": "DocumentRecognition",
+      "name": "document-recognition",
+      "source": "../src/presentation/components/icons/resources/document-recognition.svg",
       "colorModel": "monochrome",
       "fit": "contain"
     },
@@ -951,6 +967,14 @@
     },
     {
       "variant": "outlined",
+      "symbol": "OpenDocumentFile",
+      "name": "open-document-file",
+      "source": "../src/presentation/components/icons/resources/open-document-file.svg",
+      "colorModel": "monochrome",
+      "fit": "contain"
+    },
+    {
+      "variant": "outlined",
       "symbol": "OpenSpreadsheetFile",
       "name": "open-spreadsheet-file",
       "source": "../src/presentation/components/icons/resources/open-spreadsheet-file.svg",
@@ -1066,6 +1090,14 @@
       "symbol": "RecordingFolder",
       "name": "recording-folder",
       "source": "../src/presentation/components/icons/resources/recording-folder.svg",
+      "colorModel": "monochrome",
+      "fit": "contain"
+    },
+    {
+      "variant": "outlined",
+      "symbol": "RecordingFollowMouse",
+      "name": "recording-follow-mouse",
+      "source": "../src/presentation/components/icons/resources/recording-follow-mouse.svg",
       "colorModel": "monochrome",
       "fit": "contain"
     },

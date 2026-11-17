@@ -260,6 +260,36 @@ class SplitSelectedFilesBackend final : public snow_shot::platform::SelectedFile
     }
 };
 
+void toolbarDropsOpenIndependentWindows() {
+    QTemporaryDir directory;
+    const auto first = directory.filePath(QStringLiteral("first.png"));
+    const auto second = directory.filePath(QStringLiteral("second.png"));
+    require(image({42, 31}).save(first) && image({36, 24}, Qt::green).save(second),
+            "write two dropped images");
+    ImageSplitWindowCoordinator coordinator;
+    coordinator.presentFiles({first, second});
+    ScreenshotClipboardContentSnapshot snapshot;
+    snapshot.detachedImage = image({30, 20}, Qt::blue);
+    coordinator.presentDroppedImage(std::move(snapshot), reserveImageStitchingImport(0));
+    const auto windows = coordinator.windows();
+    require(windows.size() == 3, "splitting opens one window per file or inline image");
+    for (auto* window : windows)
+        loaded(*window);
+    require(windows[0]->document()->image().size() == QSize(42, 31) &&
+                windows[1]->document()->image().size() == QSize(36, 24) &&
+                windows[2]->document()->image().size() == QSize(30, 20),
+            "split windows retain the dropped images in order");
+
+    ScreenshotClipboardContentSnapshot corrupt;
+    corrupt.encodedImages.append({QByteArrayLiteral("corrupt PNG"), QStringLiteral("image/png")});
+    coordinator.presentDroppedImage(std::move(corrupt), reserveImageStitchingImport(0));
+    require(coordinator.windows().size() == 4, "supported image data is sent to the split loader");
+    auto* failed = coordinator.windows().last();
+    waitUntil([&] { return !failed->loading(); }, "corrupt image import finishes");
+    require(failed->document()->image().isNull() && !failed->lastError().isEmpty(),
+            "corrupt image data follows the existing load error path");
+}
+
 void selectedFilesOpenIndependentWindows() {
     QTemporaryDir directory;
     require(directory.isValid(), "selected-image fixture directory exists");
@@ -395,7 +425,6 @@ void selectedFileQueriesCancelWithWindowLifecycle() {
 
 void savedPinsOpenIndependentSplitWindows(const QString& directory, bool styledText) {
     auto& repository = snow_shot::storage::ApplicationStorage::instance().pinnedWindows();
-    const auto originalCount = repository.summaries().size();
     const auto setGeometry = [](snow_shot::storage::PinnedWindowRecord& record, QSize size) {
         record.nativeGeometry = QRect(QPoint(), size);
         record.canvasSourceRect = QRectF(record.nativeGeometry);
@@ -407,6 +436,7 @@ void savedPinsOpenIndependentSplitWindows(const QString& directory, bool styledT
     pixels.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     pixels.image = image({540, 270}, Qt::cyan);
     pixels.createdUtc = QDateTime::fromString(QStringLiteral("2026-10-14T00:00:00Z"), Qt::ISODate);
+    pixels.lastClosedUtc = QDateTime::currentDateTimeUtc();
     pixels.ignored = true;
     setGeometry(pixels, pixels.image.size());
     pixels.thumbnailMode = true;
@@ -449,6 +479,12 @@ void savedPinsOpenIndependentSplitWindows(const QString& directory, bool styledT
                 repository.setRecordsHidden({file.id}, true).success &&
                 repository.flush().success && QFile::remove(file.originalFilePath),
             "persist split inputs and remove the original file");
+    const auto savedCount = repository.summaries().size();
+    const auto savedPixels = repository.loadRecord(pixels.id);
+    const auto savedFile = repository.loadRecord(file.id);
+    require(savedPixels && savedPixels->ignored && savedPixels->scalePercent == 50 &&
+                savedPixels->opacityPercent == 55 && savedFile && savedFile->hidden,
+            "saved fixtures include a scaled translucent thumbnail and a hidden file pin");
     ScreenshotClipboardOriginalContent original;
     original.html = text.originalHtml;
     original.text = text.originalText;
@@ -461,12 +497,9 @@ void savedPinsOpenIndependentSplitWindows(const QString& directory, bool styledT
     require(!styledText || (legacyRendered && legacyRendered->image != rendered->image),
             "styled split fixture must differ from legacy text rendering");
     const auto preparation = captureScreenshotPinnedRenderPreparation();
-    const auto expectedPixels = renderScreenshotPinnedImageRecord(pixels, preparation);
-    const auto expectedText = renderScreenshotPinnedImageRecord(text, preparation);
-    require(expectedPixels.succeeded() && expectedText.succeeded() &&
-                expectedPixels.image.size() == QSize(270, 135) &&
-                expectedPixels.image.pixelColor(0, 0).alpha() < 255,
-            "saved thumbnail reference uses expansion zoom and opacity");
+    const auto expectedText = renderScreenshotPinnedImageRecord(
+        text, preparation, {}, {}, ScreenshotPinnedRenderMode::SourceResolution);
+    require(expectedText.succeeded(), "render the saved text pin at source resolution");
 
     ImageSplitWindowCoordinator coordinator;
     for (const auto& id : {pixels.id, file.id, text.id})
@@ -482,10 +515,10 @@ void savedPinsOpenIndependentSplitWindows(const QString& directory, bool styledT
                std::equal(expected.constBits(), expected.constBits() + expected.sizeInBytes(),
                           rgba.constBits());
     };
-    require(samePixels(windows[0]->document()->image(), expectedPixels.image) &&
+    require(samePixels(windows[0]->document()->image(), pixels.image) &&
                 samePixels(windows[1]->document()->image(), file.image) &&
                 samePixels(windows[2]->document()->image(), expectedText.image),
-            "saved image, file, and text pins split their shared rendered pixels");
+            "saved image, file, and text pins split at source resolution and opacity");
     require(windows[0]->imageName() == QStringLiteral("Screenshot_%1")
                                            .arg(pixels.createdUtc.toLocalTime().toString(
                                                QStringLiteral("yyyyMMdd-HHmmss"))) &&
@@ -497,10 +530,13 @@ void savedPinsOpenIndependentSplitWindows(const QString& directory, bool styledT
             "saved pin split edits remain independent");
     const auto retainedPixels = repository.loadRecord(pixels.id);
     const auto retainedFile = repository.loadRecord(file.id);
-    require(repository.summaries().size() == originalCount + 3 && retainedPixels && retainedFile &&
-                retainedPixels->ignored && retainedPixels->canvasSession == pixels.canvasSession &&
-                retainedFile->hidden,
-            "splitting preserves saved pins, their canvas data, and their lifecycle state");
+    require(repository.summaries().size() == savedCount && retainedPixels && retainedFile,
+            "splitting retains the saved pins");
+    require(retainedPixels->scalePercent == savedPixels->scalePercent &&
+                retainedPixels->opacityPercent == savedPixels->opacityPercent &&
+                retainedPixels->canvasSession == savedPixels->canvasSession &&
+                retainedPixels->ignored && retainedFile->hidden,
+            "splitting preserves the saved pins' display settings, canvas data and lifecycle");
     coordinator.presentPinnedRecord(QStringLiteral("missing-split-pin"));
     auto* missing = coordinator.windows().last();
     waitUntil([&] { return !missing->loading(); }, "missing saved pin load completes");
@@ -1517,6 +1553,7 @@ int main(int argc, char** argv) {
     const auto arguments = application.arguments();
     const auto preview = arguments.indexOf(QStringLiteral("--preview"));
     if (arguments.contains(QStringLiteral("--selected-files-only"))) {
+        toolbarDropsOpenIndependentWindows();
         selectedFilesOpenIndependentWindows();
         emptyAndFailedSelectionsRemainUsable();
         selectedFileQueriesCancelWithWindowLifecycle();
@@ -1557,6 +1594,7 @@ int main(int argc, char** argv) {
         windowPinStartsEnabledAndPreservesEdits();
         replacementAndCancellation();
         independentHistoryAndSourceWindows();
+        toolbarDropsOpenIndependentWindows();
         selectedFilesOpenIndependentWindows();
         emptyAndFailedSelectionsRemainUsable();
         selectedFileQueriesCancelWithWindowLifecycle();

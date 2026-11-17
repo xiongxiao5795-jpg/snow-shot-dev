@@ -74,6 +74,7 @@ constexpr std::array ALL_ACTIONS{
     GlobalShortcutAction::RestoreLastClosedWindows,
     GlobalShortcutAction::HideShowAllWindows,
     GlobalShortcutAction::ToggleGlobalShortcuts,
+    GlobalShortcutAction::ToggleGlobalMouse,
     GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow,
 };
 

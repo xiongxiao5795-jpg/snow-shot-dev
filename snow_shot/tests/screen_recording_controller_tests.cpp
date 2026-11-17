@@ -78,6 +78,8 @@
 #include <QScreen>
 #include <QPointer>
 #include <QScopeGuard>
+#include <qpa/qplatformscreen.h>
+#include <qpa/qwindowsysteminterface.h>
 #include <QTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -134,6 +136,7 @@ struct SnowRecordingClipFrameImpl {
 };
 struct SnowRecordingClipExportImpl {};
 struct SnowRecordingSessionImpl {
+    SnowRecordingCaptureViewport viewport{};
     QString stagingFile;
     QString temporaryDirectory;
     QString outputFile;
@@ -153,6 +156,7 @@ struct SnowWebcam {
 };
 namespace {
 std::atomic<int> webcamCreates = 0, webcamConfigures = 0, webcamDestroys = 0;
+std::atomic<SnowWebcam*> lastCreatedWebcam = nullptr;
 bool failWebcamCreation = false;
 QByteArray webcamError;
 std::vector<std::weak_ptr<RecordingEffectTestState>> effectSources;
@@ -226,6 +230,11 @@ std::shared_future<void> sessionDestroyGate;
 std::atomic<bool> sessionDestroyEntered = false;
 std::shared_future<void> sessionCreateGate;
 std::atomic<bool> sessionCreateEntered = false;
+std::atomic<bool> observeFollowAreaVisibility = false;
+std::atomic<bool> observedFollowAreaVisible = false;
+std::atomic<bool> observedFollowAreaTransparent = false;
+std::atomic<int> followAreaVisibleAtNativeCreate = -1;
+std::atomic<bool> followAreaTransparentAtNativeCreate = false;
 bool recordingFileFixture = false;
 int windowNameLookups = 0;
 QPointF windowNameLookupPoint;
@@ -3492,7 +3501,9 @@ SnowWebcam* snow_webcam_create(uint32_t size, uint32_t fps) {
     ++webcamCreates;
     if (failWebcamCreation)
         return nullptr;
-    return new SnowWebcam{size, fps, false};
+    auto* camera = new SnowWebcam{size, fps, false};
+    lastCreatedWebcam = camera;
+    return camera;
 }
 uint8_t snow_webcam_configure(const SnowWebcam* source, uint32_t size, uint32_t fps) {
     auto* camera = const_cast<SnowWebcam*>(source);
@@ -3507,6 +3518,8 @@ void snow_webcam_set_active(const SnowWebcam* source, uint8_t active) {
 }
 void snow_webcam_retry(const SnowWebcam*) {}
 void snow_webcam_destroy(SnowWebcam* source) {
+    auto* expected = source;
+    lastCreatedWebcam.compare_exchange_strong(expected, nullptr);
     delete source;
     ++webcamDestroys;
 }
@@ -3523,6 +3536,10 @@ snow_recording_session_create_direct(const SnowCaptureDirectRecordingConfig* con
     // thread by controllerPreviewTransitions instead.
     require(audioMonitorsActive == 0,
             "recording native initialization follows audio preview retirement");
+    if (observeFollowAreaVisibility && config->follow_mouse != 0) {
+        followAreaVisibleAtNativeCreate = static_cast<int>(observedFollowAreaVisible.load());
+        followAreaTransparentAtNativeCreate = observedFollowAreaTransparent.load();
+    }
     if (const auto gate = sessionCreateGate; gate.valid()) {
         sessionCreateEntered = true;
         gate.wait();
@@ -3828,6 +3845,13 @@ uint8_t snow_recording_session_take_audio_levels(const SnowRecordingSession*,
     ++audioLevelReads;
     *levels = {{0.42f, 0, SNOW_RECORDING_AUDIO_READY, 0},
                {0.25f, 0, SNOW_RECORDING_AUDIO_READY, 0}};
+    return 1;
+}
+uint8_t snow_recording_session_capture_viewport(const SnowRecordingSession* session,
+                                                SnowRecordingCaptureViewport* viewport) {
+    if (!session || !viewport || !session->viewport.revision)
+        return 0;
+    *viewport = session->viewport;
     return 1;
 }
 uint8_t snow_recording_session_request_exclusions(SnowRecordingSession*,
@@ -4335,7 +4359,13 @@ void recordingWebcamAutomationOptionsStayIsolated() {
                  {QStringLiteral("screen_recording/webcam_orientation"), 3},
                  {QStringLiteral("screen_recording/webcam_shape"), QStringLiteral("square")}}),
             "save manual preferences while automation owns recording");
-    const auto saved = configuration.snapshot();
+    const auto preferences = [&configuration] {
+        auto snapshot = configuration.snapshot();
+        // Successful capture appends session history independently of saved recording options.
+        snapshot.remove(QStringLiteral("screen_recording/area_history"));
+        return snapshot;
+    };
+    const auto saved = preferences();
     require(controller.controlAutomation(QStringLiteral("stop"), {}, &error),
             "stop the automated recording");
     waitForIdle(controller);
@@ -4358,7 +4388,7 @@ void recordingWebcamAutomationOptionsStayIsolated() {
     require(lastDirectConfig.webcam_source && lastDirectConfig.webcam_size == 300 &&
                 lastDirectConfig.webcam_shape == 0 && lastDirectConfig.webcam_offset_left == 80 &&
                 lastDirectConfig.webcam_offset_bottom == 60 &&
-                lastDirectConfig.webcam_orientation == 3 && configuration.snapshot() == saved,
+                lastDirectConfig.webcam_orientation == 3 && preferences() == saved,
             "manual startup restores current saved options without overwriting preferences");
     palette()->recordingCloseRequested();
     waitForIdle(controller);
@@ -4772,20 +4802,23 @@ void recordingActionToolbarPreferenceUpdatesOpenWindow() {
     require(toolbarSettings.setLayout(kind, original), "restore the recording action preferences");
 }
 
-void recordingErrorDialogs() {
+void recordingErrorDialogs(bool followMouse) {
     using namespace adqt::widgets;
     const snow_shot::storage::RecordingSettings settings;
     const bool previousPostProcessing = settings.postProcessingEnabled();
     const int previousDelay = settings.startDelaySeconds();
+    const bool previousFollowMouse = settings.followMouse();
     const auto restore = qScopeGuard([&] {
         failStart = false;
         failStartOperation = false;
         failExport = false;
         require(settings.setPostProcessingEnabled(previousPostProcessing) &&
-                    settings.setStartDelaySeconds(previousDelay),
+                    settings.setStartDelaySeconds(previousDelay) &&
+                    settings.setFollowMouse(previousFollowMouse),
                 "restore recording error dialog preferences");
     });
     require(settings.setStartDelaySeconds(0), "disable the error dialog fixture countdown");
+    require(settings.setFollowMouse(followMouse), "select the error dialog follow mode");
     enum class Failure { Create, Start, Export, DetachedExport };
     for (bool deferred : {false, true}) {
         require(settings.setPostProcessingEnabled(deferred), "select the error dialog pipeline");
@@ -4881,8 +4914,14 @@ void recordingErrorDialogs() {
     }
 }
 
-void recordingModalStacking() {
+void recordingModalStacking(bool followMouse) {
     using namespace adqt::widgets;
+    const snow_shot::storage::RecordingSettings preferences;
+    const bool previousFollowMouse = preferences.followMouse();
+    const auto restore = qScopeGuard([&] { preferences.setFollowMouse(previousFollowMouse); });
+    require(preferences.setFollowMouse(followMouse), "select the modal stacking follow mode");
+    renderState = SNOW_RECORDING_RENDER_STATE_RUNNING;
+    renderPercent = 0;
     const auto wait = [](const std::function<bool()>& condition, const char* message) {
         QElapsedTimer timer;
         timer.start();
@@ -4931,12 +4970,20 @@ void recordingModalStacking() {
                 "the visible recording modal must block recording controls");
         requireModalCenteredOnArea(modal, anchor, screen);
     };
+    const QPointer<AdModal> settingsGuard(settings);
+    require(preferences.setFollowMouse(!followMouse) && settingsGuard && settingsGuard->isOpen(),
+            "changing the saved follow mode leaves the recording settings open");
+    require(preferences.setFollowMouse(followMouse) && settingsGuard && settingsGuard->isOpen(),
+            "restoring the saved follow mode keeps the same recording settings open");
     verify(settings);
     settings->accept();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     controls->recordingPostProcessingEnabledChanged(true);
     controller.startRecording();
     waitForRecording(controller);
+    require(area->isVisible() && area->windowOpacity() == 1.0 && toolbar->windowOpacity() == 1.0 &&
+                toolbar->windowHandle()->transientParent() == area->windowHandle(),
+            "following keeps the area visible while retaining toolbar ownership");
     controls->recordingStopRequested();
     QPointer<AdModal> modal;
     wait(
@@ -4977,6 +5024,70 @@ void recordingModalStacking() {
     renderPercent = 100;
     waitForIdle(controller);
     require(!modal || !modal->isOpen(), "successful rendering must close the detached modal");
+}
+
+void recordingTemplateModalPlacement() {
+    using namespace adqt::widgets;
+    const snow_shot::storage::WatermarkTemplateSettings templates;
+    const auto previousTemplates = templates.templates();
+    const auto restore = qScopeGuard([&] { templates.setTemplates(previousTemplates); });
+    require(templates.setTemplates({{QStringLiteral("Recording"), QStringLiteral("{text}")}}),
+            "prepare a recording watermark template");
+    ScreenRecordingController controller(testEffectsSource);
+    controller.open(QRect(80, 80, 320, 240));
+    auto* area = recordingAreaWindow();
+    auto* controls = palette();
+    require(controls->activateDrawingShortcut(QStringLiteral("watermark")),
+            "open recording watermark controls");
+    auto* select =
+        controls->findChild<AdSelect*>(QStringLiteral("screenshotWatermarkTemplateSelect"));
+    require(select, "recording watermark controls expose their template library");
+    select->showPopup();
+    QCoreApplication::processEvents();
+    auto* add = select->view()->window()->findChild<AdButton*>(
+        QStringLiteral("screenshotWatermarkTemplateAddButton"));
+    require(add, "recording watermark templates expose an add action");
+    add->click();
+    QCoreApplication::processEvents();
+    auto* creation =
+        controls->findChild<AdModal*>(QStringLiteral("screenshotWatermarkTemplateCreateModal"));
+    require(creation && creation->isOpen() && creation->ownerWindow() == area,
+            "recording template modals must use the area as their owner");
+    requireModalCenteredOnArea(creation, area->frameGeometry(), area->screen());
+    creation->reject();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    select->showPopup();
+    QCoreApplication::processEvents();
+    auto* view = select->view();
+    QModelIndex option;
+    for (int row = 0; row < view->model()->rowCount(); ++row) {
+        const auto candidate = view->model()->index(row, 0);
+        if (candidate.data(Qt::UserRole).toString() == QStringLiteral("watermark-template:0")) {
+            option = candidate;
+            break;
+        }
+    }
+    require(option.isValid(), "the recording template has a popup row");
+    const QRect row = view->visualRect(option);
+    const QPoint action(row.right() - 15, row.center().y());
+    for (const auto type :
+         {QEvent::MouseMove, QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+        QMouseEvent event(type, QPointF(action), QPointF(view->viewport()->mapToGlobal(action)),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                          type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(view->viewport(), &event);
+    }
+    QCoreApplication::processEvents();
+    auto* confirmation =
+        controls->findChild<AdModal*>(QStringLiteral("screenshotWatermarkTemplateDeleteModal"));
+    require(confirmation && confirmation->isOpen() && confirmation->ownerWindow() == area &&
+                confirmation->preset() == AdModal::Preset::Confirm,
+            "recording template confirmations must use the area as their owner");
+    requireModalCenteredOnArea(confirmation, area->frameGeometry(), area->screen());
+    confirmation->reject();
+    controls->recordingCloseRequested();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
 void recordingRenderLayout() {
@@ -7899,6 +8010,837 @@ void recordingKeyboardFiltersPropagate() {
     }
 }
 
+void recordingFollowAreaExclusionTests() {
+    const snow_shot::storage::RecordingSettings settings;
+    const bool savedFollow = settings.followMouse();
+    const bool savedToolbar = settings.captureToolbarInRecording();
+    const auto restore = qScopeGuard([&] {
+        settings.setFollowMouse(savedFollow);
+        settings.setCaptureToolbarInRecording(savedToolbar);
+    });
+    require(settings.setFollowMouse(true) && settings.setStartDelaySeconds(0),
+            "prepare area capture exclusion fixtures");
+    for (const bool captureToolbar : {false, true}) {
+        require(settings.setCaptureToolbarInRecording(captureToolbar),
+                "select toolbar policy independently of the area");
+        for (const bool excludeSucceeds : {false, true}) {
+            QVector<QWidget*> excluded;
+            QVector<QWidget*> restored;
+            ScreenRecordingController controller(testEffectsSource);
+            controller.setCaptureExclusionSetterForTests([&](QWidget* window, bool enabled) {
+                (enabled ? excluded : restored).push_back(window);
+                return !enabled || excludeSucceeds;
+            });
+            controller.open({40, 40, 320, 240});
+            auto* area = recordingAreaWindow();
+            auto* toolbar = palette()->window();
+            controller.startRecording();
+            waitForRecording(controller);
+            require(excluded.contains(area) && excluded.contains(toolbar) == !captureToolbar,
+                    "area exclusion is attempted independently of toolbar capture");
+            require(area->isVisible() && area->windowOpacity() == 1.0 && restored.isEmpty(),
+                    "success and failure preserve the visible overlay and its active lease");
+            const qsizetype attempts = excluded.count(area);
+            area->captureSurfaceChanged();
+            QCoreApplication::processEvents();
+            require(excluded.count(area) > attempts && area->isVisible(),
+                    "a replaced native area surface revalidates exclusion without hiding");
+            palette()->recordingStopRequested();
+            waitForIdle(controller);
+            require(restored.contains(area) == excludeSucceeds &&
+                        restored.contains(toolbar) == (excludeSucceeds && !captureToolbar) &&
+                        area->isVisible() && area->captureViewport() == QRectF(40, 40, 320, 240),
+                    "completion restores exactly the successful leases and original area");
+            palette()->recordingCloseRequested();
+        }
+    }
+}
+
+void recordingFollowMouseTests() {
+    using snow_shot::storage::RecordingSettings;
+    const RecordingSettings settings;
+    const bool savedKeyboard = settings.showKeyboard();
+    const bool savedCursor = settings.showCursor();
+    const QColor savedTrail = settings.mouseTrailColor();
+    const auto restoreEffects = qScopeGuard([&] {
+        settings.setShowKeyboard(savedKeyboard);
+        settings.setShowCursor(savedCursor);
+        settings.setMouseTrailColor(savedTrail);
+    });
+    require(settings.setFollowMouse(false) && settings.setStartDelaySeconds(0) &&
+                settings.setWebcamEnabled(false) && settings.setAutoHideToolbar(false) &&
+                settings.setShowKeyboard(true) && settings.setShowCursor(true) &&
+                settings.setMouseTrailColor(Qt::red),
+            "prepare deterministic follow mouse preferences");
+    require(snow_shot::storage::ScreenRecordingShortcutSettings().setShortcuts(
+                QStringLiteral("toggle_recording"), {QStringLiteral("F8")}),
+            "follow fixture uses a deterministic recording shortcut");
+    const auto wait = [](auto ready, const char* message) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!ready() && timer.elapsed() < 3000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(1);
+        }
+        require(ready(), message);
+    };
+    const auto previewTileVisible = [](ScreenRecordingAreaWindow& area,
+                                       const RecordingEffectTestState& source) {
+        if (source.output.isEmpty())
+            return false;
+        const auto transform =
+            recordingEffectsOutputTransform(source.capture, area.recordingRegion(),
+                                            area.selectionRect(), area.canvasGeometry().topLeft(),
+#ifdef Q_OS_MACOS
+                                            1.0,
+#else
+                                            area.devicePixelRatioF(),
+#endif
+                                            source.output);
+        const QPoint point = transform.map(QPointF(26, 26)).toPoint();
+        const QImage painted = previewImage(*area.canvas());
+        if (!painted.rect().contains(point))
+            return false;
+        const QColor pixel = painted.pixelColor(point);
+        return pixel.red() > 220 && pixel.green() < 40 && pixel.blue() < 40 && pixel.alpha() >= 100;
+    };
+    class FollowAreaVisibilityObserver final : public QObject {
+      public:
+        explicit FollowAreaVisibilityObserver(QWidget& area) {
+            observedFollowAreaVisible = area.isVisible();
+            observedFollowAreaTransparent = qFuzzyIsNull(area.windowOpacity());
+            QObject::connect(
+                area.windowHandle(), &QWindow::opacityChanged, this,
+                [](qreal opacity) { observedFollowAreaTransparent = qFuzzyIsNull(opacity); });
+            area.installEventFilter(this);
+            observeFollowAreaVisibility = true;
+        }
+        ~FollowAreaVisibilityObserver() override {
+            observeFollowAreaVisibility = false;
+        }
+
+      protected:
+        bool eventFilter(QObject*, QEvent* event) override {
+            if (event->type() == QEvent::Show)
+                observedFollowAreaVisible = true;
+            else if (event->type() == QEvent::Hide)
+                observedFollowAreaVisible = false;
+            return false;
+        }
+    };
+    {
+        ScreenRecordingController controller(testEffectsSource);
+        const QRect selected(40, 40, 320, 240);
+        QPoint cursor(350, 260);
+        controller.setFollowPointerReaderForTests([&] { return cursor; });
+        controller.open(selected);
+        auto* area = recordingAreaWindow();
+        FollowAreaVisibilityObserver visibilityObserver(*area);
+        auto* tools = palette();
+        const auto preview = effectSources.back().lock();
+        require(preview != nullptr, "the follow fixture retains its effect preview source");
+        wait([&] { return preview->active && previewTileVisible(*area, *preview); },
+             "idle preparation paints the configured effect preview");
+        require(preview->showKeyboard && preview->trail == 0xff0000ff,
+                "the follow fixture enables keyboard and mouse-trail preview effects");
+        auto* toolbar = qobject_cast<ScreenRecordingToolbarWindow*>(tools->window());
+        auto* follow = tools->findChild<adqt::widgets::AdButton*>(
+            QStringLiteral("screenRecordingFollowMouse"));
+        auto* webcam =
+            tools->findChild<adqt::widgets::AdButton*>(QStringLiteral("screenRecordingWebcam"));
+        require(follow && webcam && follow->isCheckable() && !follow->isChecked() &&
+                    !tools->recordingFollowMouseEnabled(),
+                "follow mouse exposes an unchecked toggle by default");
+        auto* exportSettings = tools->findChild<adqt::widgets::AdButton*>(
+            QStringLiteral("screenRecordingExportSettings"));
+        require(exportSettings, "recording export settings exist");
+        if (!tools->recordingExportSettingsVisible())
+            exportSettings->click();
+        QCoreApplication::processEvents();
+        require(follow->parentWidget()->layout()->indexOf(follow) + 1 ==
+                    webcam->parentWidget()->layout()->indexOf(webcam),
+                "follow mouse is immediately before Record webcam");
+        auto* canvas = area->canvas();
+        require(tools->activateDrawingShortcut(QStringLiteral("shape")), "prepare a drawing");
+        const auto mouse = [canvas](QEvent::Type type, QPointF position, Qt::MouseButton button,
+                                    Qt::MouseButtons buttons) {
+            QMouseEvent event(type, position, position, position, button, buttons, Qt::NoModifier);
+            QCoreApplication::sendEvent(canvas, &event);
+        };
+        mouse(QEvent::MouseButtonPress, {30, 30}, Qt::LeftButton, Qt::LeftButton);
+        mouse(QEvent::MouseMove, {100, 80}, Qt::NoButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, {100, 80}, Qt::LeftButton, Qt::NoButton);
+        require(canvas->canvasHistoryState().canUndo, "the retained canvas has an annotation");
+        require(tools->activateDrawingShortcut(QStringLiteral("text")), "prepare a text draft");
+        mouse(QEvent::MouseButtonPress, {180, 140}, Qt::LeftButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, {180, 140}, Qt::LeftButton, Qt::NoButton);
+        QKeyEvent text(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("Follow text"));
+        QApplication::sendEvent(canvas, &text);
+        canvas->beginTextStylePopupInteraction();
+        if (!tools->recordingExportSettingsVisible())
+            exportSettings->click();
+        require(canvas->hasActiveTextEditing(), "a popup retains the draft before following");
+        auto* followOptions = tools->recordingFollowMousePopover();
+        const auto showFollowOptions = [&] {
+            toolbar->activateWindow();
+            QCoreApplication::processEvents();
+            followOptions->show();
+            QCoreApplication::processEvents();
+            require(followOptions->isVisible() && followOptions->surfaceWidget()->isVisible(),
+                    "follow options are visible before toggling");
+        };
+        const auto clickFollow = [&] {
+            const QPoint local = follow->rect().center();
+            const QPoint global = follow->mapToGlobal(local);
+            QMouseEvent press(QEvent::MouseButtonPress, local, global, Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(follow, &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, local, global, Qt::LeftButton,
+                                Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(follow, &release);
+            QCoreApplication::processEvents();
+        };
+        auto* moveHandle =
+            area->findChild<QWidget*>(QStringLiteral("screenRecordingRegionDragHandle"));
+        require(moveHandle && moveHandle->isVisible(), "the preparation area has a move handle");
+        showFollowOptions();
+        const QPointer<QWidget> optionsContent = followOptions->contentWidget();
+        const int previewStartsBeforeFollow = preview->starts;
+        const int previewStopsBeforeFollow = preview->stops;
+        clickFollow();
+        require(settings.followMouse() && follow->isChecked() && area->isVisible() &&
+                    toolbar->isVisible() && controller.isOpen() && moveHandle->isVisible() &&
+                    area->canRestoreRecordingRegion() &&
+                    !tools->activateDrawingShortcut(QStringLiteral("shape")) &&
+                    !canvas->hasActiveTextEditing() &&
+                    !canvas->testAttribute(Qt::WA_InputMethodEnabled) &&
+                    canvas->canvasHistoryState().canUndo && area->recordingRegion() == selected,
+                "follow preparation keeps the move handle and retains the canvas");
+        require(followOptions->isVisible() && optionsContent &&
+                    followOptions->contentWidget() == optionsContent,
+                "enabling follow keeps the same options content open");
+        require(toolbar->windowHandle()->transientParent() == area->windowHandle(),
+                "preparing follow mode retains the visible area as toolbar owner");
+        pumpPreview();
+        require(preview->active && previewTileVisible(*area, *preview) &&
+                    preview->starts == previewStartsBeforeFollow &&
+                    preview->stops == previewStopsBeforeFollow &&
+                    area->inputMode() == ScreenRecordingAreaWindow::InputMode::RegionEditing,
+                "selecting follow preserves the painted effect preview without restarting its "
+                "source while the region is editable");
+        require(settings.setWebcamEnabled(true), "enable the idle follow webcam preference");
+        wait([&] { return lastCreatedWebcam.load() && tools->recordingWebcamEnabled(); },
+             "configure the follow-selected idle camera");
+        auto* camera = lastCreatedWebcam.load();
+        wait(
+            [&] {
+                return camera->active && preview->active && preview->webcam == camera &&
+                       previewTileVisible(*area, *preview);
+            },
+            "follow preparation activates its webcam and paints the composite effect preview");
+        auto* webcamControl =
+            area->findChild<QWidget*>(QStringLiteral("screenRecordingWebcamControl"));
+        require(webcamControl && webcamControl->isVisible(),
+                "the webcam layout remains editable before following starts");
+        followOptions->hide();
+        {
+            QWidget trimPanel;
+            tools->setRecordingTrimPanel(&trimPanel, false);
+            tools->setRecordingTrimPanel(nullptr, false);
+            bool foundShape = false;
+            for (auto* button : tools->findChildren<adqt::widgets::AdButton*>()) {
+                if (button->property("screenshotToolbarItemId").toString() ==
+                    QStringLiteral("shape")) {
+                    foundShape = true;
+                    require(!button->isEnabled(),
+                            "leaving trim keeps follow-mode drawing buttons disabled");
+                }
+            }
+            require(foundShape, "follow drawing fixture includes its shape button");
+        }
+        showFollowOptions();
+        const QPointer<QWidget> reopenedOptionsContent = followOptions->contentWidget();
+        const int previewStartsBeforeRetoggle = preview->starts;
+        const int previewStopsBeforeRetoggle = preview->stops;
+        clickFollow();
+        require(followOptions->isVisible() && reopenedOptionsContent &&
+                    followOptions->contentWidget() == reopenedOptionsContent,
+                "disabling follow keeps the same options content open");
+        pumpPreview();
+        require(!settings.followMouse() && area->isVisible() && !area->drawingBlocked() &&
+                    area->inputMode() == ScreenRecordingAreaWindow::InputMode::RegionEditing &&
+                    area->canRestoreRecordingRegion() && canvas->canvasHistoryState().canUndo &&
+                    toolbar->windowHandle()->transientParent() == area->windowHandle() &&
+                    preview->active && previewTileVisible(*area, *preview) &&
+                    preview->starts == previewStartsBeforeRetoggle &&
+                    preview->stops == previewStopsBeforeRetoggle,
+                "disabling retains region editing and annotations without restarting preview");
+        followOptions->hide();
+        require(canvas->undo() && canvas->canvasHistoryState().canUndo && canvas->redo(),
+                "following commits the draft and preserves both text and the original annotation");
+        follow->click();
+        pumpPreview();
+        require(preview->active && preview->webcam == camera && camera->active &&
+                    previewTileVisible(*area, *preview) &&
+                    preview->starts == previewStartsBeforeRetoggle &&
+                    preview->stops == previewStopsBeforeRetoggle &&
+                    effectSources.back().lock() == preview,
+                "toggling follow reuses the same live composite preview source");
+        const QPoint origin = moveHandle->mapToGlobal(moveHandle->rect().center());
+        const QPoint delta(-16, -12);
+        const auto sendHandleMouse = [moveHandle](QEvent::Type type, QPoint global,
+                                                  Qt::MouseButton button,
+                                                  Qt::MouseButtons buttons) {
+            QMouseEvent event(type, moveHandle->mapFromGlobal(global), global, button, buttons,
+                              Qt::NoModifier);
+            QApplication::sendEvent(moveHandle, &event);
+        };
+        sendHandleMouse(QEvent::MouseButtonPress, origin, Qt::LeftButton, Qt::LeftButton);
+        sendHandleMouse(QEvent::MouseMove, origin + delta, Qt::NoButton, Qt::LeftButton);
+        sendHandleMouse(QEvent::MouseButtonRelease, origin + delta, Qt::LeftButton, Qt::NoButton);
+        require(area->recordingRegion() == selected.translated(delta),
+                "the move handle changes the nominal region before following starts");
+        auto& configuration = snow_shot::storage::ApplicationStorage::instance().configuration();
+        const auto historyKey = QStringLiteral("screen_recording/area_history");
+        const auto savedHistory = configuration.value(historyKey);
+        require(
+            configuration.setValue(
+                historyKey, QJsonArray{snow_shot::storage::recordingAreaToJson(
+                                {selected, snow_shot::storage::recordingAreaCoordinateSpace()})}),
+            "seed a recent area while follow is selected");
+        PhysicalKeyEvent previousPress(QEvent::KeyPress, Qt::Key_R, Qt::NoModifier);
+        PhysicalKeyEvent previousRelease(QEvent::KeyRelease, Qt::Key_R, Qt::NoModifier);
+        QApplication::sendEvent(area, &previousPress);
+        QApplication::sendEvent(area, &previousRelease);
+        require(area->recordingRegion() == selected &&
+                    configuration.setValue(historyKey, savedHistory),
+                "the area history shortcut restores the selected region in follow preparation");
+        tools->recordingFollowMouseSmoothMovementChanged(false);
+        require(!settings.followMouseSmoothMovement() && settings.followMouseReduceJitter(),
+                "editing smoothing through the palette persists only that option");
+        tools->recordingStartDelaySecondsChanged(1);
+        std::promise<void> releaseStart;
+        sessionCreateEntered = false;
+        sessionCreateGate = releaseStart.get_future().share();
+        followAreaVisibleAtNativeCreate = -1;
+        followAreaTransparentAtNativeCreate = false;
+        PhysicalKeyEvent startPress(QEvent::KeyPress, Qt::Key_F8, Qt::NoModifier);
+        QApplication::sendEvent(toolbar, &startPress);
+        PhysicalKeyEvent startRelease(QEvent::KeyRelease, Qt::Key_F8, Qt::NoModifier);
+        QApplication::sendEvent(toolbar, &startRelease);
+        QWidget* countdown = nullptr;
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (widget->objectName() == QStringLiteral("screenRecordingFollowMouseCountdown"))
+                countdown = widget;
+        }
+        require(countdown && countdown->isVisible() && area->isVisible() &&
+                    area->windowOpacity() == 1.0 && !follow->isEnabled() &&
+                    toolbar->windowHandle()->transientParent() == area->windowHandle() &&
+                    !sessionCreateEntered && !preview->active &&
+                    !previewTileVisible(*area, *preview),
+                "following keeps its area and countdown visible while retiring the preview "
+                "before native startup");
+        require(settings.setFollowMouseReduceJitter(false),
+                "save a different jitter preference for the next start during countdown");
+        wait(
+            [&] {
+                if (tools->recordingBusyOperation() ==
+                    ScreenshotToolPalette::RecordingBusyOperation::CountingDown)
+                    require(area->isVisible() && area->windowOpacity() == 1.0 &&
+                                countdown->isVisible() && !preview->active &&
+                                !previewTileVisible(*area, *preview),
+                            "follow countdown remains visible with its effect preview retired");
+                return sessionCreateEntered.load();
+            },
+            "hold follow startup before native capture");
+        require(followAreaVisibleAtNativeCreate == 1 && !followAreaTransparentAtNativeCreate &&
+                    area->isVisible() && area->windowOpacity() == 1.0 && !moveHandle->isVisible() &&
+                    !webcamControl->isVisible() &&
+                    area->testAttribute(Qt::WA_TransparentForMouseEvents) &&
+                    !area->activateInput() && !countdown->isVisible() &&
+                    toolbar->windowHandle()->transientParent() == area->windowHandle() &&
+                    !preview->active && !previewTileVisible(*area, *preview) &&
+                    tools->recordingBusyOperation() ==
+                        ScreenshotToolPalette::RecordingBusyOperation::Starting,
+                "follow startup keeps its area visible and pass-through before native "
+                "creation while preserving toolbar ownership");
+        releaseStart.set_value();
+        sessionCreateGate = {};
+        wait([&] { return controller.isRecording(); }, "follow countdown starts the recording");
+        require(!countdown->isVisible() && area->isVisible() && area->windowOpacity() == 1.0 &&
+                    !preview->active && lastDirectConfig.follow_mouse == 1 &&
+                    lastDirectConfig.follow_mouse_smooth_movement == 0 &&
+                    lastDirectConfig.follow_mouse_reduce_jitter == 1,
+                "recording preserves both accepted motion flags through countdown");
+        const QRect toolbarBeforeFollow = toolbar->geometry();
+        const QRect canvasBeforeFollow = canvas->geometry();
+        require(lastCreatedSession && area->captureViewport() == QRectF(selected) &&
+                    canvas->isHidden(),
+                "follow waits at the original selection before the first captured viewport");
+        lastCreatedSession->viewport = {1, 50.5, 80.25, 180.5, 110.75};
+        const QRectF initialGuide(190, 140, 320, 240);
+        wait([&] { return area->captureViewport() == initialGuide; },
+             "the first accepted viewport establishes the display for the guide");
+        cursor = {483, 359};
+        area->followPointerMoved(cursor);
+        require(area->captureViewport() == initialGuide,
+                "the session's jitter setting holds the guide inside the central five-sixths");
+        cursor = {420, 360};
+        area->followPointerMoved(cursor);
+        const QRectF movedGuide(260, 240, 320, 240);
+        require(area->captureViewport() == movedGuide,
+                "mouse movement pans the guide without a new capture snapshot");
+        require(area->recordingRegion() == selected && toolbar->geometry() == toolbarBeforeFollow &&
+                    canvas->geometry() == canvasBeforeFollow &&
+                    canvas->canvasHistoryState().canUndo &&
+                    area->testAttribute(Qt::WA_TransparentForMouseEvents) && !area->activateInput(),
+                "viewport movement preserves selection, annotations, toolbar position and input");
+        tools->recordingPauseRequested();
+        cursor = {480, 460};
+        area->followPointerMoved(cursor);
+        QElapsedTimer pausedWait;
+        pausedWait.start();
+        while (pausedWait.elapsed() < 50)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        require(area->captureViewport() == movedGuide,
+                "paused follow retains its last displayed guide despite pointer movement");
+        require(area->isVisible() && area->windowOpacity() == 1.0 && !preview->active &&
+                    tools->recordingSession().state() ==
+                        ScreenshotToolPalette::RecordingState::Paused,
+                "pausing keeps an active follow session's area visible");
+        tools->recordingResumeRequested();
+        const QRectF resumedGuide(320, 340, 320, 240);
+        require(area->captureViewport() == resumedGuide,
+                "resuming samples the cursor across the jitter threshold with the same revision");
+        tools->recordingStopRequested();
+        area->followPointerMoved({520, 400});
+        require(area->isVisible() && area->captureViewport() == resumedGuide,
+                "finalization retains the visible guide despite pointer movement");
+        wait([&] { return !controller.isRecording() && !tools->recordingBusy(); },
+             "stop the follow session and complete finalization");
+        require(area->captureViewport() == QRectF(selected) &&
+                    area->recordingRegion() == selected &&
+                    canvas->geometry() == canvasBeforeFollow && !canvas->isHidden() &&
+                    moveHandle->isVisible(),
+                "finished follow restores the original selection and canvas geometry");
+        require(area->isVisible() && area->windowOpacity() == 1.0 &&
+                    tools->recordingFollowMouseEnabled() &&
+                    toolbar->windowHandle()->transientParent() == area->windowHandle() &&
+                    canvas->canvasHistoryState().canUndo,
+                "stopping restores the visible preparation area while retaining follow selection "
+                "and canvas");
+        wait(
+            [&] {
+                return preview->active && camera->active && preview->webcam == camera &&
+                       previewTileVisible(*area, *preview);
+            },
+            "stopping follow recording restores the painted effect and webcam preview");
+        require(settings.setWebcamEnabled(false) && !tools->recordingWebcamEnabled() &&
+                    !camera->active,
+                "restore the disabled webcam preference after the follow lifecycle check");
+        tools->recordingStartDelaySecondsChanged(0);
+        controller.startRecording();
+        require(area->isVisible(), "a queued restart keeps the preparation area visible");
+        waitForRecording(controller);
+        require(area->captureViewport() == QRectF(selected),
+                "a new session cannot inherit the previous viewport");
+        lastCreatedSession->viewport = {1, 160.0, 100.0, 200.0, 150.0};
+        wait([&] { return area->captureViewport() == resumedGuide; },
+             "a new session accepts a restarted viewport revision");
+        cursor += QPoint(2, 3);
+        area->followPointerMoved(cursor);
+        require(area->captureViewport() == resumedGuide.translated(2, 3),
+                "with both options off even a small pointer event moves the guide immediately");
+        cursor += QPoint(30, 25);
+        wait([&] { return area->captureViewport() == resumedGuide.translated(32, 28); },
+             "the timer follows the cursor without mouse events or capture revisions");
+        require(settings.setFollowMouse(false), "save next recording preference while active");
+        tools->recordingFollowMouseSmoothMovementChanged(true);
+        require(!settings.followMouseSmoothMovement(), "active controls cannot edit smoothing");
+        require(settings.setFollowMouseSmoothMovement(true),
+                "save a different smoothing preference for the next start");
+        require(tools->recordingFollowMouseEnabled() && area->isVisible() &&
+                    area->windowOpacity() == 1.0 && lastDirectConfig.follow_mouse == 1 &&
+                    lastDirectConfig.follow_mouse_smooth_movement == 0 &&
+                    lastDirectConfig.follow_mouse_reduce_jitter == 0,
+                "active recording retains the accepted follow snapshot");
+        PhysicalKeyEvent closePress(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(toolbar, &closePress);
+        PhysicalKeyEvent closeRelease(QEvent::KeyRelease, Qt::Key_Escape, Qt::NoModifier);
+        QApplication::sendEvent(toolbar, &closeRelease);
+        require(!controller.isOpen(), "Escape closes recording when the area follows capture");
+        waitForIdle(controller);
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    {
+        require(settings.setStartDelaySeconds(0) && settings.setFollowMouse(true),
+                "save a follow preference for reopening");
+        ScreenRecordingController controller(testEffectsSource);
+        controller.open({40, 40, 320, 240});
+        auto* area = recordingAreaWindow();
+        const auto preview = effectSources.back().lock();
+        wait([&] { return preview && preview->active && previewTileVisible(*area, *preview); },
+             "saved follow mode restores its painted preparation preview");
+        require(palette()->recordingFollowMouseEnabled() && area->isVisible(),
+                "reopening restores saved follow mode with its preparation area visible");
+        const int startsBeforeCancel = starts.load();
+        palette()->recordingStartDelaySecondsChanged(10);
+        controller.startRecording();
+        QPointer<QWidget> countdown;
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (widget->objectName() == QStringLiteral("screenRecordingFollowMouseCountdown"))
+                countdown = widget;
+        }
+        require(countdown && countdown->isVisible() && area->isVisible() && !preview->active &&
+                    !previewTileVisible(*area, *preview),
+                "a follow countdown remains visible alongside the recording area until canceled");
+        palette()->recordingCloseRequested();
+        require(!countdown->isVisible() && !controller.isOpen() && starts == startsBeforeCancel,
+                "closing during countdown hides its surface and cancels backend startup");
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    {
+        require(settings.setStartDelaySeconds(0), "disable the canceled countdown");
+        ScreenRecordingController controller(testEffectsSource);
+        QString error;
+        require(controller.startAutomation({40, 40, 320, 240},
+                                           {{QStringLiteral("follow_mouse"), false}}, &error),
+                "automation accepts an isolated follow mouse option");
+        waitForRecording(controller);
+        require(!palette()->recordingFollowMouseEnabled() && settings.followMouse() &&
+                    lastDirectConfig.follow_mouse == 0 &&
+                    !controller.automationState()
+                         .value(QStringLiteral("options"))
+                         .toObject()
+                         .value(QStringLiteral("follow_mouse"))
+                         .toBool(),
+                "automation overrides the saved preference without persisting it");
+        palette()->recordingCloseRequested();
+        waitForIdle(controller);
+        controller.open({40, 40, 320, 240});
+        controller.startRecording();
+        waitForRecording(controller);
+        require(palette()->recordingFollowMouseEnabled() && lastDirectConfig.follow_mouse == 1 &&
+                    lastDirectConfig.follow_mouse_smooth_movement == 1 &&
+                    lastDirectConfig.follow_mouse_reduce_jitter == 0,
+                "a manual start after automation restores the saved follow preference");
+        palette()->recordingCloseRequested();
+        waitForIdle(controller);
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    {
+        failStart = true;
+        const auto resetFailure = qScopeGuard([] { failStart = false; });
+        require(settings.setWebcamEnabled(true), "enable webcam for the follow failure fixture");
+        ScreenRecordingController controller(testEffectsSource);
+        QString error;
+        require(controller.startAutomation({40, 40, 320, 240},
+                                           {{QStringLiteral("follow_mouse"), true}}, &error),
+                "accept a follow start that fails asynchronously");
+        wait(
+            [&] {
+                return !controller.automationState()
+                            .value(QStringLiteral("error"))
+                            .toString()
+                            .isEmpty();
+            },
+            "failed follow startup reports its error");
+        require(controller.isOpen() && !controller.isRecording() &&
+                    palette()->recordingFollowMouseEnabled() &&
+                    lastDirectConfig.follow_mouse_smooth_movement == 1 &&
+                    lastDirectConfig.follow_mouse_reduce_jitter == 0,
+                "failed startup leaves usable follow controls");
+        bool visibleArea = false;
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (auto* area = qobject_cast<ScreenRecordingAreaWindow*>(widget)) {
+                require(area->isVisible() && area->windowOpacity() == 1.0,
+                        "failed follow startup restores the preparation area");
+                visibleArea = true;
+                require(palette()->window()->windowHandle()->transientParent() ==
+                            area->windowHandle(),
+                        "failed follow startup restores normal toolbar ownership");
+            }
+        }
+        require(visibleArea, "failed follow startup retains its visible recording area");
+        const auto preview = effectSources.back().lock();
+        auto* area = recordingAreaWindow();
+        wait(
+            [&] {
+                auto* camera = lastCreatedWebcam.load();
+                return preview && preview->active && camera && camera->active &&
+                       preview->webcam == camera && previewTileVisible(*area, *preview);
+            },
+            "failed follow startup restores the painted effect and webcam preview");
+        palette()->recordingCloseRequested();
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    require(settings.setFollowMouse(false) && settings.setFollowMouseSmoothMovement(true) &&
+                settings.setFollowMouseReduceJitter(true) && settings.setStartDelaySeconds(0) &&
+                settings.setWebcamEnabled(false),
+            "restore follow fixture defaults");
+}
+
+void recordingSmoothFollowGuide() {
+    using snow_shot::storage::RecordingSettings;
+    const RecordingSettings settings;
+    require(settings.setFollowMouse(true) && settings.setFollowMouseSmoothMovement(true) &&
+                settings.setFollowMouseReduceJitter(false) && settings.setStartDelaySeconds(0) &&
+                settings.setWebcamEnabled(false) && settings.setAutoHideToolbar(false),
+            "prepare follow recording with smoothing only");
+    QPoint cursor(350, 260);
+    ScreenRecordingController controller(testEffectsSource);
+    controller.setFollowPointerReaderForTests([&] { return cursor; });
+    controller.open({40, 40, 320, 240});
+    auto* area = recordingAreaWindow();
+    auto* tools = palette();
+    controller.startRecording();
+    waitForRecording(controller);
+    auto* toolbar = tools->window();
+    const QRect toolbarGeometry = toolbar->geometry();
+    const QPoint areaOrigin = area->pos();
+    lastCreatedSession->viewport = {1, 50.5, 80.25, 180.5, 110.75};
+    controller.pollCaptureViewportForTests();
+    QCoreApplication::processEvents();
+    const QRectF initial(190, 140, 320, 240);
+    require(area->captureViewport() == initial && area->pos() != areaOrigin,
+            "the initial guide moves the area window to center it on the cursor");
+    require(toolbar->isVisible() && toolbar->geometry() == toolbarGeometry,
+            "the toolbar stays in place when the follow guide first moves");
+
+    cursor += QPoint(24, 20);
+    area->followPointerMoved(cursor);
+    require(area->captureViewport() == initial, "smoothing defers a small pointer movement");
+    tools->recordingPauseRequested();
+    QThread::msleep(100);
+    QCoreApplication::processEvents();
+    require(area->captureViewport() == initial, "pending easing stays frozen while paused");
+
+    tools->recordingResumeRequested();
+    require(area->captureViewport() == initial, "smoothing resumes from the frozen guide");
+    const QRectF target = initial.translated(24, 20);
+    QElapsedTimer deadline;
+    deadline.start();
+    while (area->captureViewport() != target && deadline.elapsed() < 3000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    require(area->captureViewport() == target,
+            "the timer settles the guide without more pointer events or capture revisions");
+    require(toolbar->isVisible() && toolbar->geometry() == toolbarGeometry &&
+                toolbar->windowHandle()->transientParent() == area->windowHandle(),
+            "the toolbar keeps its position and Qt owner while the guide follows the cursor");
+
+    cursor = QPoint(100, 100);
+    area->followPointerMoved(cursor);
+    require(area->captureViewport().topLeft() == cursor,
+            "the guide catches a cursor jump before the next timer tick or capture revision");
+    tools->recordingCloseRequested();
+    waitForIdle(controller);
+}
+
+void recordingFollowGuideResyncsAfterMovementSettles() {
+    using namespace std::chrono_literals;
+    using snow_shot::storage::RecordingSettings;
+    const RecordingSettings settings;
+    require(settings.setFollowMouse(true) && settings.setFollowMouseSmoothMovement(false) &&
+                settings.setFollowMouseReduceJitter(true) && settings.setStartDelaySeconds(0) &&
+                settings.setFrameRate(30) && settings.setWebcamEnabled(false) &&
+                settings.setAutoHideToolbar(false),
+            "prepare follow recording with jitter reduction at 30 fps");
+    const QRectF capture(190, 140, 320, 240);
+    QPoint cursor = capture.center().toPoint();
+    auto now = std::chrono::steady_clock::time_point{};
+    ScreenRecordingController controller(testEffectsSource);
+    controller.setFollowPointerReaderForTests([&] { return cursor; });
+    controller.setFollowClockForTests([&] { return now; });
+    controller.open({40, 40, 320, 240});
+    auto* area = recordingAreaWindow();
+    controller.startRecording();
+    waitForRecording(controller);
+    lastCreatedSession->viewport = {1, capture.x(), capture.y(), capture.width(), capture.height()};
+    controller.pollCaptureViewportForTests();
+    require(area->captureViewport() == capture, "initialize the guide on the accepted crop");
+
+    // Capture misses the short excursion into the margin and keeps its previous crop.
+    cursor = {485, 260};
+    area->followPointerMoved(cursor);
+    const QRectF movedGuide = capture.translated(135, 0);
+    require(area->captureViewport() == movedGuide, "the guide reacts to the excursion immediately");
+    now += 1ms;
+    cursor = {460, 260};
+    area->followPointerMoved(cursor);
+    now += 149ms;
+    controller.pollCaptureViewportForTests();
+    require(area->captureViewport() == movedGuide, "the guide holds before the idle delay");
+    now += 1ms;
+    controller.pollCaptureViewportForTests();
+    require(area->captureViewport() == capture,
+            "a settled pointer reconciles the guide against an unchanged capture revision");
+
+    cursor = {480, 260};
+    area->followPointerMoved(cursor);
+    require(area->captureViewport() == capture, "correction also restores the capture dead zone");
+    now += 150ms;
+    controller.pollCaptureViewportForTests();
+    const QRectF laterCapture = capture.translated(270, 0);
+    lastCreatedSession->viewport = {2, laterCapture.x(), laterCapture.y(), laterCapture.width(),
+                                    laterCapture.height()};
+    controller.pollCaptureViewportForTests();
+    now += 149ms;
+    controller.pollCaptureViewportForTests();
+    require(area->captureViewport() == capture, "a new crop revision restarts the idle delay");
+    now += 1ms;
+    controller.pollCaptureViewportForTests();
+    require(area->captureViewport() == laterCapture,
+            "a later accepted revision can reconcile without another mouse event");
+    now += 16ms;
+    controller.pollCaptureViewportForTests();
+    require(area->captureViewport() == laterCapture,
+            "a duplicate pointer sample cannot undo a correction near the crop margin");
+    palette()->recordingCloseRequested();
+    waitForIdle(controller);
+}
+
+void recordingFollowDisplayHandoff() {
+    using snow_shot::storage::RecordingSettings;
+    const RecordingSettings settings;
+    require(settings.setFollowMouse(true) && settings.setStartDelaySeconds(0) &&
+                settings.setFollowMouseSmoothMovement(false) &&
+                settings.setFollowMouseReduceJitter(false) &&
+                settings.setPostProcessingEnabled(false) && settings.setAutoHideToolbar(false),
+            "prepare a direct follow mouse recording");
+    const auto screens = QGuiApplication::screens();
+    require(screens.size() == 2, "follow handoff requires the two offscreen displays");
+    auto* first = screens.front();
+    auto* second = screens.back();
+    if (first->geometry().x() < second->geometry().x())
+        std::swap(first, second);
+    require(first->devicePixelRatio() != second->devicePixelRatio(),
+            "follow handoff requires different display scales");
+    const auto bounds = [](const QScreen& screen) {
+#ifdef Q_OS_MACOS
+        return screen.geometry();
+#else
+        return ScreenshotGeometryMapper::physicalRectForScreen(screen);
+#endif
+    };
+    const QRect firstBounds = bounds(*first);
+    const QRect secondBounds = bounds(*second);
+    require(secondBounds.x() < firstBounds.x(), "the second display is left of the first");
+
+    std::optional<QPoint> cursor = firstBounds.center();
+    ScreenRecordingController controller(testEffectsSource);
+    controller.setFollowPointerReaderForTests([&] { return cursor; });
+    const QRect selected(firstBounds.topLeft() + QPoint(40, 40), QSize(320, 240));
+    controller.open(selected);
+    auto* area = recordingAreaWindow();
+    auto* tools = palette();
+    auto* toolbar = tools->window();
+    const QRect toolbarGeometry = toolbar->geometry();
+    const auto centeredGuide = [&](const QPoint& point) {
+        return QRectF(point - QPoint(160, 120), selected.size());
+    };
+    controller.startRecording();
+    waitForRecording(controller);
+
+    const auto snapshot = [&](uint64_t revision, const QPoint& center) {
+        lastCreatedSession->viewport = {revision, center.x() - 12.5, center.y() - 10.5, 25, 21};
+        controller.pollCaptureViewportForTests();
+    };
+    area->followPointerMoved(*cursor);
+    require(area->captureViewport() == QRectF(selected),
+            "movement cannot establish a capture display before the first frame");
+    snapshot(1, firstBounds.center());
+    require(area->captureViewport() == centeredGuide(*cursor),
+            "the first snapshot positions the guide around the current cursor");
+
+    {
+        const QRect originalBounds = first->handle()->geometry();
+        const QRect originalAvailable = first->handle()->availableGeometry();
+        const auto resizeDisplay = [first](const QRect& geometry, const QRect& available) {
+            QWindowSystemInterface::handleScreenGeometryChange(first, geometry, available);
+            QWindowSystemInterface::flushWindowSystemEvents();
+        };
+        const auto restoreScreen =
+            qScopeGuard([&] { resizeDisplay(originalBounds, originalAvailable); });
+
+        cursor = QPoint(firstBounds.right(), firstBounds.center().y());
+        area->followPointerMoved(*cursor);
+        const QRectF originalGuide = area->captureViewport();
+        QRect narrowerBounds = originalBounds;
+        narrowerBounds.setWidth(originalBounds.width() * 2 / 3);
+        resizeDisplay(narrowerBounds, narrowerBounds);
+        const QRect resizedBounds = bounds(*first);
+        require(resizedBounds.width() < firstBounds.width() &&
+                    resizedBounds.contains(firstBounds.center()),
+                "the display shrinks around the same accepted capture viewport");
+        controller.pollCaptureViewportForTests();
+        const QRectF resizedGuide = area->captureViewport();
+        require(resizedGuide.left() < originalGuide.left() &&
+                    resizedGuide.right() == resizedBounds.right() + 1 - 3 &&
+                    resizedGuide.size() == originalGuide.size(),
+                "the guide clamps to the smaller display with the same viewport revision");
+    }
+
+    cursor.reset();
+    snapshot(2, secondBounds.center());
+    require(area->captureViewport() == centeredGuide(secondBounds.center()),
+            "an unavailable cursor sample falls back to the confirmed snapshot center");
+    cursor = secondBounds.topLeft();
+    area->followPointerMoved(*cursor);
+    const QRectF edgeGuide(secondBounds.topLeft() + QPoint(3, 3), selected.size());
+    require(area->captureViewport() == edgeGuide,
+            "same-display movement clamps the painted guide inside the display");
+    cursor = firstBounds.center();
+    area->followPointerMoved(*cursor);
+    snapshot(3, secondBounds.center() + QPoint(80, 40));
+    snapshot(4, {firstBounds.right() + 1000, firstBounds.bottom() + 1000});
+    require(area->captureViewport() == edgeGuide,
+            "same-display and unresolved snapshots hold the guide after a cursor crossing");
+
+    snapshot(5, firstBounds.topLeft() + QPoint(100, 100));
+    const QRectF destinationGuide = centeredGuide(*cursor);
+    require(area->captureViewport() == destinationGuide && toolbar->geometry() == toolbarGeometry,
+            "capture confirmation moves the guide to the stationary cursor and keeps the toolbar");
+#ifdef Q_OS_MACOS
+    const qreal scale = 1.0;
+#else
+    const qreal scale = first->devicePixelRatio();
+#endif
+    const QPointF logicalOrigin = QPointF(first->geometry().topLeft()) +
+                                  (destinationGuide.topLeft() - firstBounds.topLeft()) / scale;
+    const QRectF logicalGuide = area->selectionRect().translated(area->mapToGlobal(QPoint()));
+    require(QLineF(logicalGuide.topLeft(), logicalOrigin).length() < 0.001 &&
+                qAbs(logicalGuide.width() * scale - selected.width()) < 0.001,
+            "the destination display supplies the guide's coordinate mapping and DPI");
+
+    snapshot(6, secondBounds.center());
+    const QRectF clampedGuide(
+        QPointF(secondBounds.x() + secondBounds.width() - 3 - selected.width(), cursor->y() - 120),
+        selected.size());
+    require(area->captureViewport() == clampedGuide,
+            "a confirmed switch clamps to its destination when the cursor has already left");
+    const QRectF frozenGuide = area->captureViewport();
+    std::promise<void> release;
+    std::promise<void> entered;
+    auto exportReady = entered.get_future();
+    exportGate = release.get_future().share();
+    exportEntered = &entered;
+    const int previousExports = exports;
+    tools->recordingTrimRequested();
+    require(exportReady.wait_for(std::chrono::seconds(3)) == std::future_status::ready,
+            "hold finalization before opening the trim preview");
+    area->followPointerMoved(secondBounds.center());
+    snapshot(7, firstBounds.center());
+    require(area->captureViewport() == frozenGuide && area->canvas()->isHidden(),
+            "trim preparation leaves the guide frozen while the recording finalizes");
+    joinHeldExport(release, previousExports);
+    waitForIdle(controller);
+    require(area->captureViewport() == QRectF(selected) && area->recordingRegion() == selected,
+            "trim finalization restores the original selection before preview");
+    tools->recordingCloseRequested();
+}
+
 template <typename Application> int runRecordingControllerTests(Application& app) {
     QTemporaryDir temporary;
     require(temporary.isValid(), "temporary storage must exist");
@@ -7917,6 +8859,17 @@ template <typename Application> int runRecordingControllerTests(Application& app
         return 0;
     }
 #ifdef Q_OS_WIN
+    if (app.arguments().contains(QStringLiteral("--follow-area-native-only"))) {
+        ScreenRecordingAreaWindow area;
+        const QRect screen =
+            ScreenshotGeometryMapper::physicalRectForScreen(*QGuiApplication::primaryScreen());
+        const QRect selected(screen.topLeft() + QPoint(100, 100), QSize(320, 240));
+        area.setRecordingRegion(selected);
+        area.setFollowCaptureActive(true);
+        area.setRecordingState(ScreenshotToolPalette::RecordingState::Recording);
+        return verifyFollowAreaCaptureExclusion(
+            area, [&] { area.setCaptureViewport(QRectF(selected.translated(60, 40))); });
+    }
     if (app.arguments().contains(QStringLiteral("--toolbar-exclusion-stacking-only"))) {
         recordingCaptureExclusionPreservesToolbarStacking();
         return 0;
@@ -7976,6 +8929,25 @@ template <typename Application> int runRecordingControllerTests(Application& app
     QApplication::setFont(testFont);
     QFontDatabase::setApplicationFallbackFontFamilies(QChar::Script_Han,
                                                       {QStringLiteral("Snow Recording Test Han")});
+    if (app.arguments().contains(QStringLiteral("--follow-mouse-only"))) {
+        recordingFollowMouseTests();
+        recordingFollowAreaExclusionTests();
+        recordingSmoothFollowGuide();
+        recordingFollowGuideResyncsAfterMovementSettles();
+        return 0;
+    }
+    if (app.arguments().contains(QStringLiteral("--follow-toolbar-only"))) {
+        recordingSmoothFollowGuide();
+        return 0;
+    }
+    if (app.arguments().contains(QStringLiteral("--follow-display-handoff-only"))) {
+        recordingFollowDisplayHandoff();
+        return 0;
+    }
+    if (app.arguments().contains(QStringLiteral("--countdown-only"))) {
+        delayCountdownBlocksTheStartUntilItElapses();
+        return 0;
+    }
     if (app.arguments().contains(QStringLiteral("--area-history-only"))) {
         recordingAreaHistoryTests();
         return 0;
@@ -8189,11 +9161,14 @@ template <typename Application> int runRecordingControllerTests(Application& app
         return 0;
     }
     if (app.arguments().contains(QStringLiteral("--modal-stacking-only"))) {
-        recordingModalStacking();
+        recordingModalStacking(false);
+        recordingModalStacking(true);
+        recordingTemplateModalPlacement();
         return 0;
     }
     if (app.arguments().contains(QStringLiteral("--error-dialogs-only"))) {
-        recordingErrorDialogs();
+        recordingErrorDialogs(false);
+        recordingErrorDialogs(true);
         return 0;
     }
     if (app.arguments().contains(QStringLiteral("--error-recovery-only"))) {

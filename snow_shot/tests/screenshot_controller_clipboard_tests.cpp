@@ -4,10 +4,14 @@
 #include "snow_shot/app/applicationcontroller.h"
 #include "snow_shot/app/shellimagelaunch.h"
 #include "snow_shot/app/mcp/screenshotmcpsession.h"
+#include "snow_shot/network/snowshotapiclient.h"
 #include "snow_shot/presentation/languagemanager.h"
+#include "snow_shot/presentation/mainwindow.h"
 #include "snow_shot/presentation/screenshotoverlaywindow.h"
 #include "snow_shot/presentation/screenshotcontroller.h"
 #include "snow_shot/presentation/screenshotocrrecognitionservice.h"
+#include "snow_shot/presentation/screenshotocrpresentation.h"
+#include "snow_shot/presentation/screenshotrecognitionsessioncontroller.h"
 #include "snow_shot/presentation/screenshotrecognitionwindow.h"
 #include "snow_shot/presentation/screenshotexportartifact.h"
 #include "snow_shot/presentation/screenshotexportcoordinator.h"
@@ -16,7 +20,9 @@
 #include "snow_shot/presentation/screenshotselectionexportuiservices.h"
 #include "snow_shot/presentation/screenshotpinnedwindow.h"
 #include "snow_shot/presentation/styles/thememanager.h"
+#include "snow_shot/presentation/systemtraycontroller.h"
 #include "snow_shot/presentation/collagewindow.h"
+#include "snow_shot/presentation/collagewindowcoordinator.h"
 #include "snow_shot/presentation/imagesplitwindow.h"
 #include "snow_shot/presentation/imageeditingwindow.h"
 #include "snow_shot/presentation/screenshottoolpalette.h"
@@ -27,6 +33,7 @@
 #include "snow_shot/presentation/screenshotinteractionstate.h"
 #include "snow_shot/presentation/screenshotintelligentselectionmodel.h"
 #include "widgets/modal.h"
+#include "widgets/message.h"
 #include "snow_shot/presentation/screenshotsavepreviewcanvas.h"
 #include "snow_shot/presentation/screenshotscrollingsnapshot.h"
 #include "snow_stitch_images.h"
@@ -54,10 +61,12 @@
 #include <QJsonDocument>
 #include <QInputMethodEvent>
 #include <QPainter>
+#include <QPushButton>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QTcpServer>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -74,6 +83,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -121,6 +131,56 @@ QImage fixture() {
     image.setColorSpace(QColorSpace::SRgb);
     return image;
 }
+
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+void documentQuickSaveCancelsOnShutdown(const QString& directory) {
+    const snow_shot::storage::ScreenshotSettings settings;
+    require(settings.setImageSaveDirectory(directory), "configure document output directory");
+    require(settings.setAutoSaveFilenameFormat(QStringLiteral("document-shutdown")),
+            "configure document output filename");
+    QTcpServer server;
+    require(server.listen(QHostAddress::LocalHost), "document test server listens");
+    SnowShotApiClient client(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()));
+    auto controller = std::make_unique<ScreenshotController>(nullptr, nullptr, nullptr, &client);
+    ScreenshotSelectionParams selection;
+    selection.selection = QRect(0, 0, 120, 80);
+    ScreenshotControllerTestAccess::prepareSelection(*controller, fixture(), selection);
+    ScreenshotControllerTestAccess::presentSelection(*controller);
+    auto& commands = ScreenshotControllerTestAccess::commands(*controller);
+    commands.setDocumentTool();
+    auto* session = controller->findChild<ScreenshotRecognitionSessionController*>();
+    require(session && session->active(), "document fixture has an active session");
+    auto results = session->cachedRecognitionResults();
+    auto document = std::make_shared<ScreenshotRecognizedDocument>();
+    document->html = QStringLiteral("<p>Document shutdown fixture</p>");
+    results.document = document;
+    session->seedRecognitionResults(std::move(results));
+    session->activate(ScreenshotRecognitionSessionController::Mode::Document);
+    require(session->fileExportSnapshot().has_value(), "document export is ready");
+
+    auto& coordinator = ScreenshotExportCoordinator::shared();
+    auto entered = std::make_shared<QSemaphore>();
+    auto release = std::make_shared<QSemaphore>();
+    const auto blocker = coordinator.submit(
+        controller.get(), ScreenshotExportCoordinator::Priority::Foreground,
+        [entered, release](const ScreenshotExportCancellation&) {
+            entered->release();
+            release->acquire();
+            return ScreenshotExportTaskResult{};
+        },
+        [](const ScreenshotExportTaskResult&) {}, std::numeric_limits<qint64>::max());
+    require(blocker.isValid() && entered->tryAcquire(1, 5000), "export worker is occupied");
+    const auto pendingBeforeSave = coordinator.pendingJobCount();
+    commands.quickSaveSelection();
+    const bool queued = coordinator.pendingJobCount() == pendingBeforeSave + 1;
+    controller.reset();
+    release->release();
+    waitUntil([&] { return coordinator.pendingJobCount() == 0; }, "export workers settle");
+    require(queued, "document save returns with work still queued");
+    require(!QFileInfo::exists(QDir(directory).filePath(QStringLiteral("document-shutdown.docx"))),
+            "shutdown cancels the queued save before publication");
+}
+#endif
 
 void mcpSelectionPreservesLiveInputTransactions() {
     using namespace snow_shot::app::mcp;
@@ -363,6 +423,141 @@ void captureActionsChooseToolBeforeFirstPresentation(const QString& directory) {
                         expected,
                 "capture actions and remembered tools must activate synchronously exactly once");
         controller.mcpCancelCapture();
+    }
+}
+
+void copyAndEndWorkflowsSkipTextBackgrounds(const QString& directory) {
+    enum class Workflow { Ordinary, Quick, Translation, ExplicitCopy };
+    using Action = ScreenshotController::CaptureAction;
+    const snow_shot::storage::ScreenshotSettings settings;
+    auto& configuration = snow_shot::storage::ApplicationStorage::instance().configuration();
+    const auto previousFill = configuration.value(QStringLiteral("text_recognition/fill_style"));
+    const auto previousFollowUp = settings.autoExecuteAfterTextRecognition();
+#if SNOW_SHOT_ENABLE_QR_RECOGNITION
+    const bool previousAutomaticQr = settings.autoRecognizeQrCode();
+#endif
+#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+    const snow_shot::storage::ScreenshotTranslationSettings translationSettings;
+    const auto previousTranslation = translationSettings.configuration();
+#endif
+    const auto restore = qScopeGuard([&] {
+        static_cast<void>(
+            configuration.setValue(QStringLiteral("text_recognition/fill_style"), previousFill));
+        static_cast<void>(settings.setAutoExecuteAfterTextRecognition(previousFollowUp));
+#if SNOW_SHOT_ENABLE_QR_RECOGNITION
+        static_cast<void>(settings.setAutoRecognizeQrCode(previousAutomaticQr));
+#endif
+#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+        static_cast<void>(translationSettings.setConfiguration(previousTranslation));
+#endif
+    });
+#if SNOW_SHOT_ENABLE_QR_RECOGNITION
+    require(settings.setAutoRecognizeQrCode(false),
+            "background policy coverage must not run automatic QR recognition");
+#endif
+#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+    require(
+        translationSettings.setConfiguration(
+            {QStringLiteral("en"), QStringLiteral("zh-Hans"),
+             QStringLiteral("missing-background-policy-test-model"), QStringLiteral("original")}),
+        "translation workflow coverage must not use an external model");
+#endif
+    require(configuration.setValue(QStringLiteral("text_recognition/fill_style"),
+                                   QStringLiteral("background_fill")),
+            "use deterministic solid-fill preparation for workflow coverage");
+    ScreenshotOcrRecognitionService recognition(isolatedRecognitionOptions(directory));
+    ScreenshotController controller(nullptr, nullptr, &recognition);
+    for (const auto& followUp :
+         {QStringLiteral("no_action"), QStringLiteral("copy_text"),
+          QStringLiteral("quick_copy_text"), QStringLiteral("enable_edit_mode"),
+          QStringLiteral("copy_text_and_end_screenshot"),
+          QStringLiteral("quick_copy_text_and_end_screenshot")}) {
+        require(settings.setAutoExecuteAfterTextRecognition(followUp),
+                "select the workflow fixture follow-up");
+        for (const auto workflow :
+             {Workflow::Ordinary, Workflow::Quick, Workflow::Translation, Workflow::ExplicitCopy}) {
+            ScreenshotSelectionParams selection;
+            selection.selection = QRect(10, 10, 60, 40);
+            ScreenshotControllerTestAccess::prepareSelection(controller, fixture(), selection);
+            ScreenshotControllerTestAccess::presentSelection(controller);
+            if (workflow == Workflow::Ordinary) {
+                ScreenshotControllerTestAccess::commands(controller).setOcrTool();
+            } else {
+                ScreenshotControllerTestAccess::confirmCaptureSelection(
+                    controller, workflow == Workflow::Quick ? Action::RecognizeText
+                                : workflow == Workflow::Translation
+                                    ? Action::RecognizeTextTranslation
+                                    : Action::RecognizeTextAndCopy);
+            }
+            auto* session = controller.findChild<ScreenshotRecognitionSessionController*>();
+            require(session && session->active(), "workflow activates its recognition session");
+            auto results = session->cachedRecognitionResults();
+            auto presentation = std::make_shared<ScreenshotOcrPresentation>();
+            presentation->selection = selection.selection;
+            presentation->lines.push_back(
+                {QStringLiteral("Recognized text"), 1.0,
+                 QPolygonF{QPointF(15, 15), QPointF(60, 15), QPointF(60, 35), QPointF(15, 35)}});
+            presentation->prepareForRendering();
+            results.text = ScreenshotOcrRecognitionResult{presentation};
+#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+            const bool switchToCachedOcr =
+                workflow == Workflow::Translation &&
+                followUp == QStringLiteral("copy_text_and_end_screenshot");
+            if (switchToCachedOcr) {
+                results.translatedText = std::make_shared<ScreenshotOcrPresentation>(*presentation);
+                results.translatedText->lines[0].text = QStringLiteral("Translated text");
+            }
+#endif
+            QApplication::clipboard()->setText(QStringLiteral("Previous clipboard"));
+            session->seedRecognitionResults(std::move(results));
+            QCoreApplication::processEvents();
+            const bool endCapture =
+                workflow == Workflow::ExplicitCopy ||
+                (workflow != Workflow::Translation &&
+                 (followUp == QStringLiteral("copy_text_and_end_screenshot") ||
+                  (workflow == Workflow::Quick &&
+                   followUp == QStringLiteral("quick_copy_text_and_end_screenshot"))));
+            require(presentation->lines[0].backgroundFillColor.isValid() == !endCapture,
+                    "only applicable copy-and-end workflows skip solid-fill preparation");
+            require(session->active() == !endCapture,
+                    "copy-and-end workflows preserve their session termination behavior");
+            const bool copied =
+                endCapture ||
+                (workflow != Workflow::Translation &&
+                 (followUp == QStringLiteral("copy_text") ||
+                  (workflow == Workflow::Quick && followUp == QStringLiteral("quick_copy_text"))));
+            require(QApplication::clipboard()->text() ==
+                        (copied ? QStringLiteral("Recognized text")
+                                : QStringLiteral("Previous clipboard")),
+                    "workflow background policy preserves automatic clipboard behavior");
+#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+            if (switchToCachedOcr) {
+                ScreenshotToolbarWindow* toolbar = nullptr;
+                for (auto* widget : QApplication::topLevelWidgets()) {
+                    auto* candidate = qobject_cast<ScreenshotToolbarWindow*>(widget);
+                    if (candidate && candidate->isVisible()) {
+                        toolbar = candidate;
+                        break;
+                    }
+                }
+                require(session->translating() && toolbar &&
+                            toolbar->palette()->activeTool() ==
+                                ScreenshotToolPalette::Tool::TextTranslation,
+                        "translation must be active before switching to cached OCR");
+                require(toolbar->palette()->activateToolShortcut(ScreenshotToolPalette::Tool::Ocr),
+                        "switch to OCR through the screenshot toolbar");
+                require(session->active() && !session->translating() &&
+                            QApplication::clipboard()->text() ==
+                                QStringLiteral("Previous clipboard"),
+                        "cached OCR must finish activating before copying and ending capture");
+                QCoreApplication::processEvents();
+                require(!session->active() &&
+                            QApplication::clipboard()->text() == QStringLiteral("Recognized text"),
+                        "switching to OCR must copy the source text and end capture");
+            }
+#endif
+            controller.mcpCancelCapture();
+        }
     }
 }
 
@@ -1850,6 +2045,20 @@ void pinOutputsUseHiDpiScaling() {
 namespace {
 void screenshotSessionFocusRouting() {
     using namespace snow_shot::platform::macos;
+    struct Background final : ScreenshotBackgroundWindow {
+        Background(ScreenshotController& controller, int& suppressions, int& restorations)
+            : controller(controller), suppressions(suppressions), restorations(restorations) {}
+        void suppress() override {
+            ++suppressions;
+        }
+        void restoreBehind() override {
+            require(controller.captureAvailable(), "background must follow presentation teardown");
+            ++restorations;
+        }
+        ScreenshotController& controller;
+        int& suppressions;
+        int& restorations;
+    };
     struct Target final : ScreenshotFocusTarget {
         Target(ScreenshotController& controller, int& restores, int& live)
             : controller(controller), restores(restores), live(live) {
@@ -1859,6 +2068,9 @@ void screenshotSessionFocusRouting() {
             --live;
         }
         bool canRestore() const override {
+            return true;
+        }
+        bool isExternalApplication() const override {
             return true;
         }
         void restore() override {
@@ -1881,14 +2093,42 @@ void screenshotSessionFocusRouting() {
     for (int action = 0; action < 8; ++action) {
         int restores = 0;
         int live = 0;
+        int suppressions = 0;
+        int backgroundRestores = 0;
         {
             ScreenshotController controller;
             ScreenshotSelectionParams selection;
             selection.selection = QRect(0, 0, 100, 60);
             ScreenshotControllerTestAccess::prepareSelection(controller, fixture(), selection);
             ScreenshotControllerTestAccess::installSessionFocus(
-                controller, [&] { return std::make_unique<Target>(controller, restores, live); });
+                controller, [&] { return std::make_unique<Target>(controller, restores, live); },
+                std::make_unique<ScreenshotBackgroundWindowGuard>(
+                    ScreenshotBackgroundWindowGuard::Ports{[&] {
+                                                               return std::make_unique<Background>(
+                                                                   controller, suppressions,
+                                                                   backgroundRestores);
+                                                           },
+                                                           [] { return true; }}));
+            auto* overlay = ScreenshotControllerTestAccess::presentSelection(controller);
+            // Exercise the actual overlay's frozen/live-desktop transitions without
+            // acquiring frames or requiring Screen Recording permission offscreen.
+            for (bool scrolling : {true, false, true, false}) {
+                overlay->setScrollingCaptureMode(scrolling);
+                QCoreApplication::processEvents();
+                require(suppressions == 1 && backgroundRestores == 0,
+                        "scrolling and return to editing must retain background suppression");
+            }
             auto& commands = ScreenshotControllerTestAccess::commands(controller);
+            if (action == 0) {
+                ScreenshotControllerTestAccess::prepareScrollingSnapshot(
+                    controller, scrollingSnapshot(fixture()));
+                commands.setScrollingScreenshotAutoScroll(false);
+                commands.setMoveTool();
+                QCoreApplication::processEvents();
+                require(suppressions == 1 && backgroundRestores == 0 &&
+                            !controller.captureAvailable(),
+                        "stopping the scrolling controller must retain the capture's lease");
+            }
             switch (action) {
             case 0:
                 controller.mcpCancelCapture();
@@ -1951,12 +2191,16 @@ void screenshotSessionFocusRouting() {
                 QCoreApplication::processEvents();
                 require(restores == (action < 5 ? 1 : 0),
                         "late export completion must not restore focus again");
+                require(backgroundRestores == 1,
+                        "all terminal actions must restore background visibility once");
             }
         }
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QCoreApplication::processEvents();
         require(live == 0 && (action != 7 || restores == 0),
                 "shutdown must discard the target and pending restoration");
+        require(action != 7 || backgroundRestores == 0,
+                "shutdown must release the lease without showing the main window");
         closePins();
     }
 }
@@ -1981,6 +2225,101 @@ int runScreenshotControllerClipboardTests(int argc, char** argv) {
                 settings.setShowBorderByDefault(true) && settings.setShowShadowByDefault(false),
             "clipboard controller settings must be isolated and deterministic");
     static_cast<void>(snow_shot::presentation::styles::ThemeManager::instance());
+    if (application.arguments().contains(QStringLiteral("--system-notification-window-tests"))) {
+        using namespace snow_shot::presentation;
+        using Status = snow_shot::platform::SystemNotificationResult::Status;
+        const auto shutdown = qScopeGuard([&] { storage.shutdown(); });
+        LanguageManager::instance().initialize();
+        styles::ThemeManager::instance().initialize(application);
+        snow_shot::app::ApplicationController controller(application);
+        auto* tray = controller.findChild<SystemTrayController*>();
+        require(tray, "the application owns a tray notification controller");
+
+        const auto findMainWindow = []() -> MainWindow* {
+            for (auto* widget : QApplication::topLevelWidgets()) {
+                if (auto* window = qobject_cast<MainWindow*>(widget))
+                    return window;
+            }
+            return nullptr;
+        };
+        const auto reportDelivery = [&] {
+            const snow_shot::platform::SystemNotificationRequest request{
+                QStringLiteral("Recording export completed"), QStringLiteral("fixture.mp4")};
+            for (auto status : {Status::Unavailable, Status::Denied, Status::Failed})
+                emit tray->notificationDeliveryFinished(request, {status, {}});
+            QCoreApplication::processEvents();
+        };
+
+        reportDelivery();
+        require(!findMainWindow(), "rejected notifications must not create the main window");
+        controller.showMainWindow();
+        auto* window = findMainWindow();
+        require(window && window->isVisible(), "the main window opens on request");
+        window->hide();
+        reportDelivery();
+        require(!window->isVisible(), "rejected notifications must not show the hidden window");
+
+        controller.showMainWindow();
+        int activations = 0;
+        QObject::connect(window, &MainWindow::aboutToShowAndActivate, &controller,
+                         [&] { ++activations; });
+        const auto messages = window->findChildren<adqt::widgets::AdMessageHandle*>().size();
+        reportDelivery();
+        require(activations == 0, "rejected notifications must not activate the visible window");
+        require(window->findChildren<adqt::widgets::AdMessageHandle*>().size() == messages,
+                "rejected notifications must not show messages in the visible window");
+        return EXIT_SUCCESS;
+    }
+    if (application.arguments().contains(QStringLiteral("--stitching-image-editing-only"))) {
+        using namespace snow_shot::presentation;
+        const auto shutdown = qScopeGuard([&] { storage.shutdown(); });
+        require(storage.configuration().setValues({{QStringLiteral("mcp/enabled"), false},
+                                                   {QStringLiteral("tray/enabled"), false}}),
+                "isolate the application stitching smoke test");
+        LanguageManager::instance().initialize();
+        styles::ThemeManager::instance().initialize(application);
+        snow_shot::app::ApplicationController controller(application);
+        controller.showMainWindow();
+        MainWindow* mainWindow = nullptr;
+        for (auto* widget : QApplication::topLevelWidgets()) {
+            if (auto* window = qobject_cast<MainWindow*>(widget))
+                mainWindow = window;
+        }
+        require(mainWindow, "the app exposes the history stitching entry point");
+        mainWindow->screenshotHistoryStitchImagesRequested({});
+        auto* stitching = controller.findChild<ImageStitchingWindowCoordinator*>();
+        require(stitching && stitching->window(), "the app presents the stitching window");
+        auto* window = stitching->window();
+        auto stitchingSettings = window->document()->settings();
+        stitchingSettings.background = Qt::transparent;
+        window->document()->setSettings(stitchingSettings);
+        const auto source = fixture();
+        const auto id = window->document()->append(source, QStringLiteral("fixture"));
+        auto* edit = window->modal()->footerWidget()->findChild<QPushButton*>(
+            QStringLiteral("collageImageEditing"));
+        require(id && edit && edit->isEnabled(), "a static result enables the editing action");
+        edit->click();
+
+        auto* editing = controller.findChild<ImageEditingWindowCoordinator*>();
+        require(editing && editing->windows().size() == 1 && editing->windows().first(),
+                "the app creates an independent editor on click");
+        auto* editor = editing->windows().first().data();
+        waitUntil([&] { return !editor->loading(); }, "the app editor loads the stitching result");
+        require(editor->modal()->isOpen() && editor->document()->image() == source,
+                "the result is loaded as the visible editor document");
+        require(window->modal()->isOpen() && window->document()->rotate(id, true) &&
+                    editor->document()->image() == source,
+                "the original stitching window stays open and independently editable");
+        std::cout << "Stitching image editing app smoke test passed\n";
+        return EXIT_SUCCESS;
+    }
+#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
+    if (application.arguments().contains(QStringLiteral("--document-save-shutdown-tests"))) {
+        const auto shutdown = qScopeGuard([&] { storage.shutdown(); });
+        documentQuickSaveCancelsOnShutdown(directory.path());
+        return EXIT_SUCCESS;
+    }
+#endif
     if (application.arguments().contains(QStringLiteral("--history-pin-admission-tests"))) {
         const auto shutdown = qScopeGuard([&] { storage.shutdown(); });
         historyPinAccountsForDecodeBeforeDelivery();
@@ -2179,6 +2518,7 @@ int runScreenshotControllerClipboardTests(int argc, char** argv) {
         storage.shutdown();
         return EXIT_SUCCESS;
     }
+    copyAndEndWorkflowsSkipTextBackgrounds(directory.path());
     {
         ScreenshotController controller;
         combinedCopiesPreserveImagePlacementAndAppearance(controller);

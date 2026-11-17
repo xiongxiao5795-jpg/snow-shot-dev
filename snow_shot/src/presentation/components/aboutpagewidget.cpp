@@ -307,6 +307,11 @@ class AboutResourceButton final : public AdButton {
     qreal m_contentDpr = 0;
 };
 
+QUrl aboutChangelogUrl() {
+    return QUrl(QStringLiteral(SNOW_SHOT_WEBSITE_URL))
+        .resolved(QUrl(QStringLiteral("/changelog.html")));
+}
+
 QUrl aboutProjectUrl(const QString& suffix = {}) {
     QUrl url(QStringLiteral(SNOW_SHOT_PROJECT_URL));
     QString path = url.path();
@@ -354,6 +359,7 @@ struct AboutPageWidget::Ui {
     AdButton* releaseNotes = nullptr;
     AdButton* copyButton = nullptr;
     AdButton* privacyPolicy = nullptr;
+    AdButton* userAgreement = nullptr;
     QTimer* copyFeedbackTimer = nullptr;
     snow_shot::update::UpdateService* updates = nullptr;
     QLabel* updateStatus = nullptr;
@@ -363,12 +369,14 @@ struct AboutPageWidget::Ui {
     QBoxLayout* updateLayout = nullptr;
     QProgressBar* updateProgress = nullptr;
     QWidget* updateProgressWrap = nullptr;
+    QWidget* updateActionRow = nullptr;
+    AdButton* updateCheck = nullptr;
     AdButton* updateAction = nullptr;
     AdButton* updateCancel = nullptr;
     QWidget* updateActionBlank = nullptr;
     QStackedLayout* updateActions = nullptr;
     QGridLayout* resourceLayout = nullptr;
-    std::array<AboutResourceButton*, 5> resources{};
+    std::array<AboutResourceButton*, 4> resources{};
     QLabel* linkError = nullptr;
     AdDivider* footerDivider = nullptr;
     QBoxLayout* footerLayout = nullptr;
@@ -537,26 +545,36 @@ AboutPageWidget::AboutPageWidget(QWidget* parent, UrlOpener urlOpener,
         statusRow->addWidget(m_ui->updateStatus, 1);
         m_ui->updateLayout->addLayout(statusRow, 1);
         m_ui->versionPanelLayout->addLayout(m_ui->updateLayout);
-        // The action and cancel buttons never appear together; the stack reserves the larger
-        // of the two so switching states never changes the card's size.
+        // Reserve room for the update actions or the cancel button in the same row.
         m_ui->updateActions = new QStackedLayout;
-        m_ui->updateAction = new AdButton(m_ui->versionPanel);
+        m_ui->updateActionRow = new QWidget(m_ui->versionPanel);
+        auto* actionRowLayout = new QHBoxLayout(m_ui->updateActionRow);
+        actionRowLayout->setContentsMargins(0, 0, 0, 0);
+        m_ui->updateCheck = new AdButton(m_ui->updateActionRow);
+        m_ui->updateCheck->setObjectName(QStringLiteral("aboutUpdateCheck"));
+        m_ui->updateCheck->setButtonStyle(AdButton::ButtonStyle::Link);
+        m_ui->updateAction = new AdButton(m_ui->updateActionRow);
         m_ui->updateAction->setObjectName(QStringLiteral("aboutUpdateAction"));
+        actionRowLayout->addWidget(m_ui->updateCheck);
+        actionRowLayout->addWidget(m_ui->updateAction);
         m_ui->updateCancel = new AdButton(m_ui->versionPanel);
         m_ui->updateCancel->setObjectName(QStringLiteral("aboutUpdateCancel"));
+        m_ui->updateCancel->setButtonStyle(AdButton::ButtonStyle::Outline);
         m_ui->updateActionBlank = new QWidget(m_ui->versionPanel);
-        m_ui->updateActions->addWidget(m_ui->updateAction);
+        m_ui->updateActions->addWidget(m_ui->updateActionRow);
         m_ui->updateActions->addWidget(m_ui->updateCancel);
         m_ui->updateActions->addWidget(m_ui->updateActionBlank);
-        for (auto* button : {m_ui->updateAction, m_ui->updateCancel}) {
-            button->setButtonStyle(AdButton::ButtonStyle::Outline);
+        for (auto* button : {m_ui->updateCheck, m_ui->updateAction, m_ui->updateCancel}) {
             button->setSizeClass(AdButton::SizeClass::Small);
             button->setFocusPolicy(Qt::StrongFocus);
-            m_ui->updateActions->setAlignment(button, Qt::AlignLeft | Qt::AlignVCenter);
         }
+        m_ui->updateActions->setAlignment(m_ui->updateActionRow, Qt::AlignLeft | Qt::AlignVCenter);
+        m_ui->updateActions->setAlignment(m_ui->updateCancel, Qt::AlignLeft | Qt::AlignVCenter);
         m_ui->updateLayout->addLayout(m_ui->updateActions);
         connect(m_ui->updates, &snow_shot::update::UpdateService::statusChanged, this,
                 &AboutPageWidget::refreshUpdateStatus);
+        connect(m_ui->updateCheck, &AdButton::clicked, m_ui->updates,
+                [service = m_ui->updates] { service->check(); });
         connect(m_ui->updateCancel, &adqt::widgets::AdButton::clicked, m_ui->updates,
                 &snow_shot::update::UpdateService::cancel);
         connect(m_ui->updateAction, &adqt::widgets::AdButton::clicked, this, [this] {
@@ -587,7 +605,6 @@ AboutPageWidget::AboutPageWidget(QWidget* parent, UrlOpener urlOpener,
         new AboutResourceButton(QStringLiteral("aboutWebsite"), outlined::Global(), m_ui->body),
         new AboutResourceButton(QStringLiteral("aboutSourceCode"), outlined::Code(), m_ui->body),
         new AboutResourceButton(QStringLiteral("aboutFeedback"), outlined::Comment(), m_ui->body),
-        new AboutResourceButton(QStringLiteral("aboutQqGroup3"), outlined::Qq(), m_ui->body),
         new AboutResourceButton(QStringLiteral("aboutQqGroup4"), outlined::Qq(), m_ui->body)};
     m_ui->bodyLayout->addLayout(m_ui->resourceLayout);
     m_ui->linkError = aboutLabel(QStringLiteral("aboutLinkError"), m_ui->body);
@@ -610,16 +627,24 @@ AboutPageWidget::AboutPageWidget(QWidget* parent, UrlOpener urlOpener,
     footerText->addLayout(community);
     m_ui->license = aboutLabel(QStringLiteral("aboutLicense"), m_ui->body);
     footerText->addWidget(m_ui->license);
+    m_ui->userAgreement = new AdButton(m_ui->body);
+    m_ui->userAgreement->setObjectName(QStringLiteral("aboutUserAgreement"));
     m_ui->privacyPolicy = new AdButton(m_ui->body);
     m_ui->privacyPolicy->setObjectName(QStringLiteral("aboutPrivacyPolicy"));
-    m_ui->privacyPolicy->setButtonStyle(AdButton::ButtonStyle::Link);
-    m_ui->privacyPolicy->setIconRef(outlined::Export());
-    m_ui->privacyPolicy->setIconPosition(AdButton::IconPosition::Trailing);
-    m_ui->privacyPolicy->setContentPaddingEnabled(false);
-    m_ui->privacyPolicy->setSizeClass(AdButton::SizeClass::Small);
-    m_ui->privacyPolicy->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    m_ui->privacyPolicy->setFocusPolicy(Qt::StrongFocus);
-    footerText->addWidget(m_ui->privacyPolicy, 0, Qt::AlignLeft);
+    auto* policyLinks = new QHBoxLayout;
+    policyLinks->setSpacing(8);
+    for (auto* button : {m_ui->userAgreement, m_ui->privacyPolicy}) {
+        button->setButtonStyle(AdButton::ButtonStyle::Link);
+        button->setIconRef(outlined::Export());
+        button->setIconPosition(AdButton::IconPosition::Trailing);
+        button->setContentPaddingEnabled(false);
+        button->setSizeClass(AdButton::SizeClass::Small);
+        button->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+        button->setFocusPolicy(Qt::StrongFocus);
+        policyLinks->addWidget(button);
+    }
+    policyLinks->addStretch();
+    footerText->addLayout(policyLinks);
     m_ui->footerLayout->addLayout(footerText, 1);
     auto* legalWidget = new QWidget(m_ui->body);
     auto* legal = new QVBoxLayout(legalWidget);
@@ -649,7 +674,7 @@ AboutPageWidget::AboutPageWidget(QWidget* parent, UrlOpener urlOpener,
     });
     connect(m_ui->copyFeedbackTimer, &QTimer::timeout, this, &AboutPageWidget::retranslateUi);
     connect(m_ui->releaseNotes, &AdButton::clicked, this,
-            [this]() { openProjectLink(aboutProjectUrl(QStringLiteral("/releases"))); });
+            [this]() { openProjectLink(aboutChangelogUrl()); });
     connect(m_ui->resources[0], &QAbstractButton::clicked, this,
             [this]() { openProjectLink(QUrl(QStringLiteral(SNOW_SHOT_WEBSITE_URL))); });
     connect(m_ui->resources[1], &QAbstractButton::clicked, this,
@@ -657,11 +682,11 @@ AboutPageWidget::AboutPageWidget(QWidget* parent, UrlOpener urlOpener,
     connect(m_ui->resources[2], &QAbstractButton::clicked, this,
             [this]() { openProjectLink(aboutProjectUrl(QStringLiteral("/issues"))); });
     connect(m_ui->resources[3], &QAbstractButton::clicked, this,
-            [this]() { openProjectLink(QUrl(QStringLiteral(SNOW_SHOT_QQ_GROUP_3_URL))); });
-    connect(m_ui->resources[4], &QAbstractButton::clicked, this,
             [this]() { openProjectLink(QUrl(QStringLiteral(SNOW_SHOT_QQ_GROUP_4_URL))); });
     connect(m_ui->privacyPolicy, &AdButton::clicked, this,
             [this] { openProjectLink(QUrl(snow_shot::app::distribution::privacyPolicyUrl())); });
+    connect(m_ui->userAgreement, &AdButton::clicked, this,
+            [this] { openProjectLink(QUrl(snow_shot::app::distribution::userAgreementUrl())); });
     connect(&themeManager, &styles::ThemeManager::themeChanged, this, &AboutPageWidget::applyTheme);
     connect(&adqt::theme::ThemeManager::instance(), &adqt::theme::ThemeManager::themeChanged, this,
             [this] { updateSkinBackgrounds(); });
@@ -717,7 +742,7 @@ void AboutPageWidget::applyTheme(const styles::ThemeColorScheme& scheme) {
         m_ui->updateDivider->setSemanticStyles(dividerSemantics);
         m_ui->updateLayout->setSpacing(metric.paddingSM);
         m_ui->updateLayout->itemAt(0)->layout()->setSpacing(metric.paddingXS);
-        m_ui->updateActions->setSpacing(metric.paddingXS);
+        m_ui->updateActionRow->layout()->setSpacing(metric.paddingXS);
         const int progressHeight = qMax(4, metric.paddingXXS);
         m_ui->updateProgress->setFixedHeight(progressHeight);
     }
@@ -735,10 +760,12 @@ void AboutPageWidget::applyTheme(const styles::ThemeColorScheme& scheme) {
     for (QLabel* label : {m_ui->license, m_ui->slogan}) {
         styleAboutLabel(label, metric.fontSizeSM - 2, QFont::Normal, colors.colorTextTertiary);
     }
-    adqt::theme::ThemeOverride privacyTheme;
-    privacyTheme.fontSize = metric.fontSizeSM;
-    adqt::theme::ThemeManager::instance().setScopeOverride(m_ui->privacyPolicy, privacyTheme);
-    m_ui->privacyPolicy->setIconSize(QSize(metric.fontSizeSM, metric.fontSizeSM));
+    adqt::theme::ThemeOverride legalTheme;
+    legalTheme.fontSize = metric.fontSizeSM;
+    for (auto* button : {m_ui->userAgreement, m_ui->privacyPolicy}) {
+        adqt::theme::ThemeManager::instance().setScopeOverride(button, legalTheme);
+        button->setIconSize(QSize(metric.fontSizeSM, metric.fontSizeSM));
+    }
     styleAboutLabel(m_ui->linkError, metric.fontSizeSM, QFont::Normal, colors.colorErrorText);
     const int logoSize = metric.controlHeight;
     m_ui->logo->setFixedSize(logoSize, logoSize);
@@ -857,7 +884,7 @@ void AboutPageWidget::retranslateUi() {
                                                                      : outlined::Copy());
     m_ui->releaseNotes->setText(tr("Changelog"));
     m_ui->releaseNotes->setAccessibleName(tr("Changelog"));
-    m_ui->releaseNotes->setToolTip(aboutProjectUrl(QStringLiteral("/releases")).toDisplayString());
+    m_ui->releaseNotes->setToolTip(aboutChangelogUrl().toDisplayString());
     m_ui->resources[0]->setCopy(tr("Official website"),
                                 tr("Discover more features and ways to use it"),
                                 QUrl(QStringLiteral(SNOW_SHOT_WEBSITE_URL)));
@@ -867,10 +894,6 @@ void AboutPageWidget::retranslateUi() {
                                 tr("Make the next experience better"),
                                 aboutProjectUrl(QStringLiteral("/issues")));
     m_ui->resources[3]->setCopy(
-        tr("QQ group 3"),
-        tr("Discussion and support · group no. %1").arg(QStringLiteral("1037819112")),
-        QUrl(QStringLiteral(SNOW_SHOT_QQ_GROUP_3_URL)));
-    m_ui->resources[4]->setCopy(
         tr("QQ group 4"),
         tr("Discussion and support · group no. %1").arg(QStringLiteral("1131891935")),
         QUrl(QStringLiteral(SNOW_SHOT_QQ_GROUP_4_URL)));
@@ -882,6 +905,10 @@ void AboutPageWidget::retranslateUi() {
     m_ui->privacyPolicy->setAccessibleName(tr("Privacy policy"));
     m_ui->privacyPolicy->setToolTip(
         QUrl(snow_shot::app::distribution::privacyPolicyUrl()).toDisplayString());
+    m_ui->userAgreement->setText(tr("User agreement"));
+    m_ui->userAgreement->setAccessibleName(tr("User agreement"));
+    m_ui->userAgreement->setToolTip(
+        QUrl(snow_shot::app::distribution::userAgreementUrl()).toDisplayString());
     m_ui->copyright->setText(
         tr("Copyright © %1 %2").arg(QStringLiteral("2025–2026"), QStringLiteral("mg-chao")));
     m_ui->slogan->setText(
@@ -952,23 +979,19 @@ void AboutPageWidget::updateLayout() {
         separator->setVisible(!lastInRow);
         separator->setFixedHeight(separatorHeight);
     }
-    // Wide layouts share a six-column grid: the three project links span two columns each
-    // and the two QQ group cards span three columns each in the second row. Narrow layouts stack.
-    const int resourceColumns = wide ? 6 : 1;
+    const int resourceColumns = wide ? 3 : 1;
     if (m_ui->resourceColumns != resourceColumns) {
         for (auto* resource : m_ui->resources) {
             m_ui->resourceLayout->removeWidget(resource);
         }
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 3; ++i) {
             m_ui->resourceLayout->setColumnStretch(i, i < resourceColumns ? 1 : 0);
         }
         if (wide) {
             for (int i = 0; i < 3; ++i) {
-                m_ui->resourceLayout->addWidget(m_ui->resources[static_cast<size_t>(i)], 0, i * 2,
-                                                1, 2);
+                m_ui->resourceLayout->addWidget(m_ui->resources[static_cast<size_t>(i)], 0, i);
             }
             m_ui->resourceLayout->addWidget(m_ui->resources[3], 1, 0, 1, 3);
-            m_ui->resourceLayout->addWidget(m_ui->resources[4], 1, 3, 1, 3);
         } else {
             for (size_t i = 0; i < m_ui->resources.size(); ++i) {
                 m_ui->resourceLayout->addWidget(m_ui->resources[i], static_cast<int>(i), 0);
@@ -1020,10 +1043,12 @@ void AboutPageWidget::refreshUpdateStatus() {
     auto statusIcon = outlined::InfoCircle();
     auto actionIcon = outlined::Sync();
     QString text;
-    QString action = tr("Check for updates");
+    const QString checkAction = tr("Check for updates");
+    QString action = checkAction;
     switch (status.state) {
     case UpdateState::Unavailable:
-        text = tr("Automatic updates are unavailable for this copy");
+        text = status.error.isEmpty() ? tr("Automatic updates are unavailable for this copy")
+                                      : status.error;
         break;
     case UpdateState::Idle:
         text = status.version.isEmpty() ? (snow_shot::app::edition::isMini
@@ -1042,10 +1067,8 @@ void AboutPageWidget::refreshUpdateStatus() {
         break;
     case UpdateState::Available:
         text = tr("Update available: %1").arg(status.version);
-        action = m_ui->updates->capabilities().download
-                     ? tr("Download update")
-                     : (status.downloadUrl.host() == u"gitee.com" ? tr("Download from Gitee")
-                                                                  : tr("Download from GitHub"));
+        action = m_ui->updates->capabilities().download ? tr("Download update")
+                                                        : tr("View update details");
         statusIcon = outlined::CloudDownload();
         actionIcon = outlined::Download();
         statusColor = colors.colorInfoText;
@@ -1063,7 +1086,9 @@ void AboutPageWidget::refreshUpdateStatus() {
         statusIcon = outlined::SafetyCertificate();
         break;
     case UpdateState::Ready:
-        text = tr("Ready to install %1").arg(status.version);
+        text = m_ui->updates->installsOnQuit()
+                   ? tr("Update %1 will install when you quit").arg(status.version)
+                   : tr("Ready to install %1").arg(status.version);
         action = tr("Restart and update");
         statusIcon = outlined::CheckCircle();
         actionIcon = outlined::Reload();
@@ -1098,6 +1123,17 @@ void AboutPageWidget::refreshUpdateStatus() {
     m_ui->updateIcon->setPixmap(aboutIcon(statusIcon, m_ui->updateIcon->size(), this, statusColor));
     m_ui->updateStatus->setText(text);
     m_ui->updateStatus->setAccessibleName(text);
+    const QString detail = status.state == UpdateState::Ready && m_ui->updates->installsOnQuit()
+                               ? tr("Update %1 is ready. It will install after you quit and be "
+                                    "available on your next launch")
+                                     .arg(status.version)
+                               : QString();
+    m_ui->updateStatus->setToolTip(detail);
+    m_ui->updateStatus->setAccessibleDescription(detail);
+    m_ui->updateCheck->setText(checkAction);
+    m_ui->updateCheck->setAccessibleName(checkAction);
+    m_ui->updateCheck->setVisible(!storeManaged && status.state == UpdateState::Available);
+    m_ui->updateCheck->setEnabled(m_ui->updates->canCheck());
     m_ui->updateAction->setText(action);
     m_ui->updateAction->setAccessibleName(action);
     m_ui->updateAction->setIconRef(actionIcon);
@@ -1107,18 +1143,18 @@ void AboutPageWidget::refreshUpdateStatus() {
                                                      : AdButton::ButtonStyle::Outline);
     m_ui->updateAction->setAccentRole(primaryAction ? AdButton::AccentRole::Primary
                                                     : AdButton::AccentRole::Neutral);
-    m_ui->updateAction->setEnabled(
-        storeManaged || status.state == UpdateState::Idle || status.state == UpdateState::Failed ||
-        status.state == UpdateState::Available || status.state == UpdateState::Ready);
+    m_ui->updateAction->setEnabled(storeManaged || m_ui->updates->canCheck() ||
+                                   status.state == UpdateState::Available ||
+                                   status.state == UpdateState::Ready);
     m_ui->updateAction->setToolTip(
         storeManaged ? QStringLiteral("ms-windows-store://downloadsandupdates") : QString());
     m_ui->updateCancel->setText(tr("Cancel download"));
     const bool downloading = !storeManaged && status.state == UpdateState::Downloading;
     QWidget* currentAction = m_ui->updateActionBlank;
-    if (downloading) {
+    if (downloading && m_ui->updates->canCancel()) {
         currentAction = m_ui->updateCancel;
     } else if (m_ui->updateAction->isEnabled()) {
-        currentAction = m_ui->updateAction;
+        currentAction = m_ui->updateActionRow;
     }
     m_ui->updateActions->setCurrentWidget(currentAction);
     m_ui->updateRail->setCurrentWidget(downloading ? m_ui->updateProgressWrap

@@ -551,6 +551,10 @@
             <translation>Enter a positive paper dimension</translation>
         </message>
         <message>
+            <source>Enter an image quality from 0% to 100%</source>
+            <translation>Enter an image quality from 0% to 100%</translation>
+        </message>
+        <message>
             <source>Image stitching requires too much temporary memory. Try fewer images or smaller image sizes</source>
             <translation>Image stitching requires too much temporary memory. Try fewer images or smaller image sizes</translation>
         </message>
@@ -1313,12 +1317,20 @@
             <translation>Discard this stitching session?</translation>
         </message>
         <message>
+            <source>Dropped image</source>
+            <translation>Dropped image</translation>
+        </message>
+        <message>
             <source>Export could not be started. Try again</source>
             <translation>Export could not be started. Try again</translation>
         </message>
         <message>
             <source>Exporting PDF page %1 of %2: %3%</source>
             <translation>Exporting PDF page %1 of %2: %3%</translation>
+        </message>
+        <message>
+            <source>Image editing</source>
+            <translation>Image editing</translation>
         </message>
         <message>
             <source>Image loading could not be started. Try again</source>

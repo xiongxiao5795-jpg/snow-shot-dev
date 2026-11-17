@@ -47,6 +47,7 @@ enum class GlobalShortcutAction {
     QuickAnnotationRectangle,
     QuickAnnotationEllipse,
     QuickAnnotationToolbar,
+    ToggleGlobalMouse,
 };
 
 [[nodiscard]] constexpr bool controlsGlobalShortcutGates(GlobalShortcutAction action) {

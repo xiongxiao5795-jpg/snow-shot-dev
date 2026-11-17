@@ -23,7 +23,7 @@ namespace {
 constexpr int MAX_SHORTCUTS_PER_ACTION = 2;
 constexpr int FIRST_REGISTRATION_ID = 0x2200;
 constexpr int LAST_REGISTRATION_ID = 0xBFFF;
-constexpr std::size_t ACTION_COUNT = SNOW_SHOT_ENABLE_QUICK_ANNOTATION ? 37 : 31;
+constexpr std::size_t ACTION_COUNT = SNOW_SHOT_ENABLE_QUICK_ANNOTATION ? 38 : 32;
 
 constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::Screenshot,
@@ -56,6 +56,7 @@ constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::RestoreLastClosedWindows,
     GlobalShortcutAction::HideShowAllWindows,
     GlobalShortcutAction::ToggleGlobalShortcuts,
+    GlobalShortcutAction::ToggleGlobalMouse,
     GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow,
 #if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
     GlobalShortcutAction::QuickAnnotation,
@@ -240,6 +241,8 @@ shortcuts::ShortcutBindingList persistedShortcuts(const storage::ShortcutSetting
         return settings.toggleWindowUnderCursorAlwaysOnTop();
     case GlobalShortcutAction::ToggleGlobalShortcuts:
         return settings.toggleGlobalShortcuts();
+    case GlobalShortcutAction::ToggleGlobalMouse:
+        return settings.toggleGlobalMouse();
     case GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow:
         return settings.toggleDisableOnFocusedFullscreenWindow();
     }
@@ -345,6 +348,8 @@ bool persistShortcuts(const storage::ShortcutSettings& settings, GlobalShortcutA
         return settings.setToggleWindowUnderCursorAlwaysOnTop(bindings);
     case GlobalShortcutAction::ToggleGlobalShortcuts:
         return settings.setToggleGlobalShortcuts(bindings);
+    case GlobalShortcutAction::ToggleGlobalMouse:
+        return settings.setToggleGlobalMouse(bindings);
     case GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow:
         return settings.setToggleDisableOnFocusedFullscreenWindow(bindings);
     }
@@ -440,7 +445,8 @@ class GlobalShortcutManager::Impl {
                     (key == QStringLiteral("extended_features/translation_page_enabled") ||
                      key ==
                          QStringLiteral("global_shortcuts/disable_on_focused_fullscreen_window") ||
-                     key == QStringLiteral("global_shortcuts/fullscreen_window_filter"))) {
+                     key == QStringLiteral("global_shortcuts/fullscreen_window_filter") ||
+                     key == QStringLiteral("global_shortcuts/fullscreen_disable_scope"))) {
                     reconcile();
                 }
             });
@@ -554,25 +560,32 @@ class GlobalShortcutManager::Impl {
             return false;
         }
         const storage::GlobalShortcutSettings settings;
-        const bool suppressionEnabled = settings.disableOnFocusedFullscreenWindow();
+        const auto scope = settings.fullscreenDisableScope();
+        const bool suppressionEnabled =
+            settings.disableOnFocusedFullscreenWindow() && !scope.isEmpty();
         const auto& detector = settings.fullscreenWindowFilter() == QStringLiteral("all_windows")
                                    ? m_focusedFullscreenDetector
                                    : m_focusedFullscreenGameDetector;
         const bool fullscreen = suppressionEnabled && detector && detector();
-        const bool fullscreenChanged = fullscreen != m_focusedFullscreen;
-        const bool changed =
-            suppressionEnabled != m_fullscreenSuppressionEnabled || fullscreenChanged;
-        m_fullscreenSuppressionEnabled = suppressionEnabled;
-        m_focusedFullscreen = fullscreen;
+        const bool shortcutsSuppressed =
+            fullscreen && scope.contains(QStringLiteral("global_shortcuts"));
+        const bool mouseSuppressed = fullscreen && scope.contains(QStringLiteral("global_mouse"));
+        const bool shortcutsChanged = shortcutsSuppressed != m_fullscreenShortcutsSuppressed;
+        const bool mouseChanged = mouseSuppressed != m_fullscreenMouseSuppressed;
+        m_fullscreenShortcutsSuppressed = shortcutsSuppressed;
+        m_fullscreenMouseSuppressed = mouseSuppressed;
         if (suppressionEnabled && !m_fullscreenTimer.isActive()) {
             m_fullscreenTimer.start();
         } else if (!suppressionEnabled) {
             m_fullscreenTimer.stop();
         }
-        if (fullscreenChanged) {
-            emit q.focusedFullscreenSuppressionChanged(fullscreen);
+        if (mouseChanged) {
+            emit q.focusedFullscreenMouseSuppressionChanged(mouseSuppressed);
         }
-        return changed;
+        if (shortcutsChanged) {
+            emit q.focusedFullscreenSuppressionChanged(shortcutsSuppressed);
+        }
+        return shortcutsChanged;
     }
 
     void refreshFocusedFullscreenState() {
@@ -602,7 +615,7 @@ class GlobalShortcutManager::Impl {
         return actionAvailable(action) &&
                (controlsGlobalShortcutGates(action) ||
                 (m_globalShortcutsEnabled &&
-                 (!m_focusedFullscreen || action == GlobalShortcutAction::QuickAnnotation ||
+                 (!m_fullscreenShortcutsSuppressed || action == GlobalShortcutAction::QuickAnnotation ||
                   action == GlobalShortcutAction::QuickAnnotationBrush ||
                   action == GlobalShortcutAction::QuickAnnotationArrow ||
                   action == GlobalShortcutAction::QuickAnnotationRectangle ||
@@ -731,8 +744,8 @@ class GlobalShortcutManager::Impl {
     bool m_initialized = false;
     bool m_globalShortcutsEnabled = true;
     bool m_globalCanvasActive = false;
-    bool m_fullscreenSuppressionEnabled = false;
-    bool m_focusedFullscreen = false;
+    bool m_fullscreenShortcutsSuppressed = false;
+    bool m_fullscreenMouseSuppressed = false;
 };
 
 GlobalShortcutManager::GlobalShortcutManager(QObject* parent)
@@ -815,7 +828,7 @@ bool GlobalShortcutManager::globalShortcutsEnabled() const {
 }
 
 bool GlobalShortcutManager::focusedFullscreenSuppressionActive() const {
-    return m_impl->m_focusedFullscreen;
+    return m_impl->m_fullscreenShortcutsSuppressed;
 }
 
 } // namespace snow_shot::presentation

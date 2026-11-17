@@ -55,6 +55,7 @@ struct ImageStitchingPdfSettings final {
     qreal marginLeftMm = 10;
     qreal marginRightMm = 10;
     ImageStitchingPdfExportMode exportMode = ImageStitchingPdfExportMode::Combined;
+    int imageQuality = 100;
 
     // Treat two NaNs as the same incomplete field so UI refreshes do not emit repeatedly.
     friend bool operator==(const ImageStitchingPdfSettings&, const ImageStitchingPdfSettings&);
@@ -242,6 +243,11 @@ prepareImageStitchingRows(const QVector<ImageStitchingItem>& items,
 // Full image materialization is deliberately bounded and intended for small verification fixtures.
 [[nodiscard]] QImage materializeImageStitchingRows(const ScreenshotImageRowSource& rows,
                                                    qsizetype maximumBytes = 16 * 1024 * 1024);
+
+// Render an editable raster whose pixels retain their shared memory reservation.
+[[nodiscard]] QImage renderImageStitchingResult(const QVector<ImageStitchingItem>& items,
+                                                const ImageStitchingSettings& settings,
+                                                std::function<bool()> cancelled);
 
 // Reserve native clipboard additions before asking the existing clipboard workflow to prepare
 // its PNG and native bitmap representations. Keep this owner until publication finishes.

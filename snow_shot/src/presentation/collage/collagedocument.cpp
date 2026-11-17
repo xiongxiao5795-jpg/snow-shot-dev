@@ -541,7 +541,7 @@ bool operator==(const ImageStitchingPdfSettings& first, const ImageStitchingPdfS
            first.templateType == second.templateType &&
            equalNumber(first.imageSpacingMm, second.imageSpacingMm) &&
            first.paperSize == second.paperSize && first.orientation == second.orientation &&
-           first.exportMode == second.exportMode &&
+           first.exportMode == second.exportMode && first.imageQuality == second.imageQuality &&
            equalNumber(first.customWidthMm, second.customWidthMm) &&
            equalNumber(first.customHeightMm, second.customHeightMm) &&
            equalNumber(first.marginTopMm, second.marginTopMm) &&
@@ -778,6 +778,10 @@ validateImageStitchingPdfSettings(const ImageStitchingPdfSettings& settings) {
         errors.insert(
             QStringLiteral("export_mode"),
             QCoreApplication::translate("ImageStitchingDocument", "Select an export mode"));
+    if (settings.imageQuality < 0 || settings.imageQuality > 100)
+        errors.insert(QStringLiteral("image_quality"),
+                      QCoreApplication::translate("ImageStitchingDocument",
+                                                  "Enter an image quality from 0% to 100%"));
     if (settings.paperSize == ImageStitchingPdfPaperSize::ImageSize && !templateBased)
         return errors;
     if (settings.paperSize == ImageStitchingPdfPaperSize::Custom) {
@@ -1754,24 +1758,15 @@ qint64 imageStitchingImageImportBytes(QSize size, QString* error) {
     return bytes * 2;
 }
 
-QImage captureImageStitchingImage(QSize size, const std::function<QImage()>& capture,
+namespace {
+QImage retainImageStitchingRaster(QSize size, qint64 bytes, const std::function<QImage()>& render,
                                   QString* error) {
-    const qint64 bytes = imageStitchingImageImportBytes(size, error) / 2;
-    if (bytes == 0)
-        return {};
-    if (!capture) {
-        report(error, preparationError());
-        return {};
-    }
     try {
-        auto working = image_stitching_detail::reserveWorking(bytes, error);
-        if (!working)
-            return {};
         auto lifetime = std::make_unique<CapturedImageLifetime>();
         lifetime->reservation = image_stitching_detail::reserve(bytes, error);
         if (!lifetime->reservation)
             return {};
-        lifetime->image = capture();
+        lifetime->image = render();
         const QImage image = lifetime->image;
         if (image.isNull() || image.size() != size || image.sizeInBytes() > bytes) {
             report(error, preparationError());
@@ -1802,5 +1797,30 @@ QImage captureImageStitchingImage(QSize size, const std::function<QImage()>& cap
         report(error, preparationError());
         return {};
     }
+}
+} // namespace
+
+QImage captureImageStitchingImage(QSize size, const std::function<QImage()>& capture,
+                                  QString* error) {
+    const qint64 bytes = imageStitchingImageImportBytes(size, error) / 2;
+    if (bytes == 0)
+        return {};
+    if (!capture) {
+        report(error, preparationError());
+        return {};
+    }
+    const auto working = image_stitching_detail::reserveWorking(bytes, error);
+    return working ? retainImageStitchingRaster(size, bytes, capture, error) : QImage{};
+}
+
+QImage renderImageStitchingResult(const QVector<ImageStitchingItem>& items,
+                                  const ImageStitchingSettings& settings,
+                                  std::function<bool()> cancelled) {
+    const auto rows = prepareImageStitchingRows(items, settings, std::move(cancelled));
+    qint64 bytes = 0;
+    if (!rows.isValid() || !outputBytes(rows.size, &bytes))
+        return {};
+    return retainImageStitchingRaster(
+        rows.size, bytes, [&] { return materializeImageStitchingRows(rows, bytes); }, nullptr);
 }
 } // namespace snow_shot::presentation

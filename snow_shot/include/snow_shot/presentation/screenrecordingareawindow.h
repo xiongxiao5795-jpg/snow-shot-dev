@@ -8,6 +8,7 @@
 #include <QRect>
 #include <QImage>
 #include <QMarginsF>
+#include <QPointer>
 #include <QRectF>
 #include <QRegion>
 #include <QWidget>
@@ -15,6 +16,7 @@
 #include <memory>
 
 class QEvent;
+class QScreen;
 class QShowEvent;
 class RecordingRegionDragHandle;
 class RecordingRegionInputRouter;
@@ -42,6 +44,11 @@ class ScreenRecordingAreaWindow final : public QWidget {
     // Desktop points on macOS; physical desktop pixels on Windows.
     void setRecordingRegion(const QRect& region);
     [[nodiscard]] QRect recordingRegion() const;
+    // Presentation only: retain the selection and canvas while following capture.
+    void setFollowCaptureActive(bool active);
+    void setFollowPointerTracking(bool enabled);
+    void setCaptureViewport(const QRectF& viewport, QScreen* screen = nullptr);
+    [[nodiscard]] QRectF captureViewport() const;
     [[nodiscard]] bool canRestoreRecordingRegion() const;
     bool restoreRecordingRegion(const QRect& region);
     void setRecordingState(ScreenshotToolPalette::RecordingState state);
@@ -76,6 +83,8 @@ class ScreenRecordingAreaWindow final : public QWidget {
     void webcamLayoutCommitted(int size, const QPoint& offset);
     void webcamOrientationRequested(int action);
     void recordingRegionChanged(const QRect& region);
+    void captureSurfaceChanged();
+    void followPointerMoved(const QPoint& position);
     void regionInteractionStarted();
     void regionInteractionFinished();
     void closeRequested();
@@ -100,7 +109,9 @@ class ScreenRecordingAreaWindow final : public QWidget {
     friend class ScreenRecordingAreaWindowTestAccess;
 
     void applyInputMode();
-    void placeRecordingRegion(const QRect& region);
+    void placeRecordingRegion(const QRect& region, bool restoreFromFollow = false);
+    void layoutCaptureViewport();
+    void synchronizeCaptureViewport();
     void beginRegionDrag(const QPoint& pointer, Qt::Edges edges);
     void updateRegionDrag(const QPoint& pointer);
     void applyRegionDragGeometry(const QRect& region);
@@ -125,6 +136,13 @@ class ScreenRecordingAreaWindow final : public QWidget {
     QRectF m_frameRect;
     QRectF m_selectionRect;
     QRect m_recordingRegion;
+    QRectF m_captureViewport;
+    QPointer<QScreen> m_captureScreen;
+    QRectF m_captureLogicalRegion;
+    QRect m_captureWindowGeometry;
+    qreal m_captureScale = 1.0;
+    bool m_followCaptureActive = false;
+    bool m_followPointerTracking = false;
     qreal m_paddingWidth = 0.0;
     ScreenshotToolPalette::RecordingState m_state = ScreenshotToolPalette::RecordingState::Idle;
     InputMode m_inputMode = InputMode::PassThrough;
