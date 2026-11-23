@@ -25,9 +25,6 @@ had_previous=0
 needs_sudo=0
 destination='/Applications/Snow Shot.app'
 previous_destination=''
-github_pid=''
-gitee_pid=''
-metadata_pid=''
 
 message() {
     local en cn tw
@@ -39,7 +36,7 @@ message() {
         root) en='Run this script as your desktop user, without sudo. Administrator access is requested only when needed.'; cn='请以当前桌面用户运行脚本，不要直接使用 root。仅在需要时请求管理员权限。'; tw='請以目前桌面使用者執行指令碼，不要直接使用 root。僅在需要時請求管理員權限。' ;;
         primary) en='[1/5] Downloading the latest macOS package…'; cn='[1/5] 正在下载最新 macOS 安装包…'; tw='[1/5] 正在下載最新 macOS 安裝套件…' ;;
         fallback) en='Selected download unavailable or invalid; trying the same release on the other channel…'; cn='所选下载源不可用或验证失败，正在从另一渠道获取相同版本…'; tw='所選下載來源無法使用或驗證失敗，正在從另一管道取得相同版本…' ;;
-        unavailable) en='No valid package is available from GitHub or Gitee. Retry later; the installed app has not changed.'; cn='GitHub 和 Gitee 均无有效安装包。请稍后重试；已安装的应用未被更改。'; tw='GitHub 和 Gitee 均無有效安裝套件。請稍後重試；已安裝的應用程式未被變更。' ;;
+        unavailable) en='No valid package is available from the fork’s GitHub Releases. Retry later; the installed app has not changed.'; cn='本仓库 GitHub Releases 没有有效安装包。请稍后重试；已安装的应用未被更改。'; tw='本儲存庫 GitHub Releases 沒有有效安裝套件。請稍後重試；已安裝的應用程式未被變更。' ;;
         verify) en='[2/5] Verifying the package and application…'; cn='[2/5] 正在验证安装包和应用…'; tw='[2/5] 正在驗證安裝套件與應用程式…' ;;
         invalid) en='Package validation failed. Download the matching macOS DMG and its .sha256 file again.'; cn='安装包验证失败。请重新下载匹配的 macOS DMG 及其 .sha256 文件。'; tw='安裝套件驗證失敗。請重新下載相符的 macOS DMG 及其 .sha256 檔案。' ;;
         signing) en='[3/5] Signing with your persistent local identity…'; cn='[3/5] 正在使用持久本地身份签名…'; tw='[3/5] 正在使用持久本機身分簽署…' ;;
@@ -112,37 +109,6 @@ fetch() {
     run curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 15 --max-time 600 --retry 2 --retry-max-time 120 \
         --output "$2" "$1"
-}
-
-stop_metadata_request() {
-    if [[ -n "$metadata_pid" ]]; then
-        kill "$metadata_pid" 2>/dev/null || true
-        wait "$metadata_pid" 2>/dev/null || true
-        metadata_pid=''
-    fi
-}
-
-stop_discovery() {
-    local pid
-    for pid in "$github_pid" "$gitee_pid"; do
-        [[ -z "$pid" ]] || kill "$pid" 2>/dev/null || true
-    done
-    for pid in "$github_pid" "$gitee_pid"; do
-        [[ -z "$pid" ]] || wait "$pid" 2>/dev/null || true
-    done
-    github_pid=''; gitee_pid=''
-}
-
-fetch_metadata() {
-    local status=0
-    # Wait on an asynchronous curl so discovery's signal trap can interrupt it.
-    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-        --connect-timeout 10 --max-time 30 --max-filesize 8388608 --output "$2" "$1" \
-        >> "$work/diagnostic.log" 2>&1 &
-    metadata_pid=$!
-    wait "$metadata_pid" || status=$?
-    metadata_pid=''
-    return "$status"
 }
 
 verify_checksum() {
@@ -393,8 +359,6 @@ cleanup() {
     local status=$? safe_to_remove=1
     trap - EXIT ERR INT TERM HUP
     set +e
-    stop_metadata_request
-    stop_discovery
     if [[ "$status" != 0 && -n "$work" && -s "$work/diagnostic.log" ]]; then
         tail -n 15 "$work/diagnostic.log" >&2
     fi

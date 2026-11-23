@@ -50,7 +50,7 @@ target_link_libraries(snow_shot_updates PRIVATE snow_shot_distribution)
 if(APPLE)
     if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION)
         target_sources(snow_shot_updates PRIVATE src/update/forkupdatedriver.cpp)
-        target_compile_definitions(snow_shot_updates PRIVATE SNOW_FORK_BUILD=3)
+        target_compile_definitions(snow_shot_updates PRIVATE SNOW_FORK_BUILD=4)
         set(_fork_update_files
             "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/install-snow-shot-macos.sh"
             "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/fork/update.sh")
