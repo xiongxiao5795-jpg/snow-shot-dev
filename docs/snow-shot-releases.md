@@ -719,7 +719,7 @@ Authenticode certificate, remove SmartScreen prompts, or establish installer rep
 
 ```powershell
 python scripts/test-snow-shot-gitee-release.py
-node scripts/test-macos-installer-parser.js
+python scripts/test-macos-installer.py -k fork_release
 & scripts/test-snow-shot-github-release.ps1
 & scripts/test-remote-macos-release.ps1
 cargo test --manifest-path snow_shot/rust/snow-shot-updater/Cargo.toml --lib service::tests

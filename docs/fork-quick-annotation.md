@@ -28,12 +28,22 @@ release, the mode exits and marks fade unless persistence is enabled. If persist
 the mode remains active after release; disable persistence, press Escape, or reopen the toolbar
 and close it to exit. Settings and toolbar layout belong to the quick-annotation module, not screenshot styles. Ordinary keys remain visible to the foreground application because the listener is passive; macOS system shortcut conflicts cannot always be detected.
 
-Release artifacts include the upstream installer and the matching DMG checksum. The installer can
+Release artifacts include the fork installer and the matching DMG checksum. The installer can
 stage a locally signed app with a persistent identity; future updates must reuse that identity and
 the same installation path. Migration from earlier ad-hoc builds may require a one-time privacy
 prompt. macOS controls privacy decisions, so consistent signing cannot guarantee retention for
 every macOS release or every update method. Dragging the ad-hoc DMG app directly bypasses the
 persistent-identity installer. Do not replace a separate upstream installation by accident.
+
+The About page checks the latest stable Release of `xiongxiao5795-jpg/snow-shot-dev`.
+For each release, increment `SNOW_FORK_BUILD` in `cmake/SnowShotUpdates.cmake`.
+Upload the DMG with a one-line UTF-8 `fork-update.txt` containing the decimal build number,
+upstream version, fork release tag and lowercase SHA-256 digest, separated by single spaces.
+Sign these exact bytes with the release SSH Ed25519 key using
+`ssh-keygen -Y sign -f <release-key> -n snow-shot-update fork-update.txt`.
+Attach both the manifest and its detached `.sig` before marking the Release latest.
+The public key is pinned in the shipped installer. The release private key belongs to the
+publisher and must be backed up separately from the per-user macOS signing identity.
 
 Keep the feature on `codex/quick-annotation-package`. Syncing the fork's default `main` from
 upstream does not update this branch automatically: merge the updated `main` into this branch,
