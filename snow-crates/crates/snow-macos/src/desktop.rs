@@ -146,6 +146,14 @@ pub struct DesktopConfig {
     pub follow_mouse_options: FollowMouseOptions,
 }
 impl DesktopConfig {
+    fn on_screen_windows_only(&self) -> bool {
+        !self.persistent_window
+            && content::snapshot_uses_visible_windows(
+                &self.excluded_windows,
+                &self.excluded_processes,
+            )
+    }
+
     pub fn new(target: DesktopTarget) -> Self {
         Self {
             target,
@@ -759,9 +767,10 @@ impl DesktopSession {
             return Ok(());
         }
         let deadline = crate::deadline::Deadline::new(self.config.timeout)?;
-        let content = content::shareable_content_cancelable(
+        let content = content::shareable_content_cancelable_filtered(
             deadline.remaining()?,
             &self.config.cancellation,
+            self.config.on_screen_windows_only(),
         )?;
         // A prepared popup can disappear temporarily from discovery. Retain
         // the existing verified streams until replacements can include every ID.
@@ -1052,10 +1061,7 @@ impl DesktopSession {
             None => SharedSnapshot::new(content::shareable_content_cancelable_filtered(
                 deadline.remaining()?,
                 &self.config.cancellation,
-                content::snapshot_uses_visible_windows(
-                    &self.config.excluded_windows,
-                    &self.config.excluded_processes,
-                ),
+                self.config.on_screen_windows_only(),
             )?),
         };
         for i in 0..self.plan.sources.len() {
@@ -1224,6 +1230,23 @@ pub fn inspect(config: &DesktopConfig) -> MacResult<DesktopTransform> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_refresh_and_snapshots_only_need_visible_windows_without_exclusions() {
+        let mut config = DesktopConfig::new(DesktopTarget::PrimaryDisplay);
+        assert!(config.on_screen_windows_only());
+        config.excluded_windows.push(42);
+        assert!(!config.on_screen_windows_only());
+        config.excluded_windows.clear();
+        config.excluded_processes.push(7);
+        assert!(!config.on_screen_windows_only());
+
+        let mut window = DesktopConfig::new(DesktopTarget::Window(WindowId(42)));
+        assert!(window.on_screen_windows_only());
+        window.persistent_window = true;
+        assert!(!window.on_screen_windows_only());
+    }
+
     fn live_window_plan() -> Plan {
         let bounds = DesktopRect {
             space: DesktopSpace::Points,

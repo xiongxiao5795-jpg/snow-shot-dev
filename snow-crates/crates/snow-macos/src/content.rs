@@ -256,7 +256,16 @@ pub(crate) fn displays_cancelable(
     timeout: Duration,
     cancellation: &crate::CancellationToken,
 ) -> MacResult<Vec<DisplayInfo>> {
-    let content = shareable_content_cancelable(timeout, cancellation)?;
+    query_displays(|on_screen_only| {
+        shareable_content_cancelable_filtered(timeout, cancellation, on_screen_only)
+    })
+}
+fn query_displays(
+    query: impl FnOnce(bool) -> MacResult<Retained<SCShareableContent>>,
+) -> MacResult<Vec<DisplayInfo>> {
+    // The display list is independent of window visibility. Materializing every
+    // hidden window can exhaust the screenshot deadline before we see a display.
+    let content = query(true)?;
     displays_from(&content)
 }
 pub(crate) fn displays_from(content: &SCShareableContent) -> MacResult<Vec<DisplayInfo>> {
@@ -423,6 +432,15 @@ mod tests {
         assert!(snapshot_uses_visible_windows(&[], &[]));
         assert!(!snapshot_uses_visible_windows(&[42], &[]));
         assert!(!snapshot_uses_visible_windows(&[], &[7]));
+    }
+
+    #[test]
+    fn display_enumeration_skips_offscreen_windows() {
+        let result = query_displays(|on_screen_only| {
+            assert!(on_screen_only);
+            Err(MacError::Canceled)
+        });
+        assert!(matches!(result, Err(MacError::Canceled)));
     }
 
     fn description(id: u32, on_screen: bool, x: f64) -> CFRetained<CFArray> {
