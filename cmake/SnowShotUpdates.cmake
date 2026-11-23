@@ -48,7 +48,17 @@ target_include_directories(snow_shot_updates PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(snow_shot_updates PUBLIC Qt6::Core)
 target_link_libraries(snow_shot_updates PRIVATE snow_shot_distribution)
 if(APPLE)
-    target_sources(snow_shot_updates PRIVATE src/update/sparkleupdatedriver.mm)
+    if(SNOW_SHOT_ENABLE_QUICK_ANNOTATION)
+        target_sources(snow_shot_updates PRIVATE src/update/forkupdatedriver.cpp)
+        target_compile_definitions(snow_shot_updates PRIVATE SNOW_FORK_BUILD=3)
+        set(_fork_update_files
+            "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/install-snow-shot-macos.sh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/fork/update.sh")
+        set_source_files_properties(${_fork_update_files} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/fork-update")
+        target_sources(snow_shot PRIVATE ${_fork_update_files})
+    else()
+        target_sources(snow_shot_updates PRIVATE src/update/sparkleupdatedriver.mm)
+    endif()
     set_source_files_properties(src/update/sparkleupdatedriver.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(snow_shot_updates PRIVATE SnowSparkle "-framework Foundation")
     target_compile_definitions(snow_shot_updates PRIVATE SNOW_SHOT_VERSION="${SNOW_SHOT_VERSION}")
