@@ -1,8 +1,11 @@
 mod acceleration;
 mod buffer;
 use buffer::{SLOT_HEADER, SharedImage};
+mod paragraph;
 mod protocol;
 mod session;
+#[cfg(feature = "sizing-validation")]
+mod sizing_validation;
 mod worker;
 use worker::{Work, WorkResult, worker_loop};
 
@@ -25,31 +28,11 @@ use std::{
 
 #[derive(Clone, PartialEq, Eq)]
 struct Config {
-    detector_resize_policy: DetectorResizePolicy,
     text_detection_processing: TextDetectionProcessing,
     hardware_acceleration: bool,
     detector_model: PathBuf,
     recognizer_model: PathBuf,
     dictionary: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DetectorResizePolicy {
-    Max,
-    Min,
-}
-
-impl DetectorResizePolicy {
-    fn from_wire(value: u8) -> io::Result<Self> {
-        match value {
-            0 => Ok(Self::Max),
-            1 => Ok(Self::Min),
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid OCR detector resize policy",
-            )),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -68,13 +51,6 @@ impl TextDetectionProcessing {
                 io::ErrorKind::InvalidData,
                 "invalid OCR text detection processing",
             )),
-        }
-    }
-
-    fn recognition_width(self) -> usize {
-        match self {
-            Self::AccuracyFirst => 320,
-            Self::SpeedFirst => 48,
         }
     }
 }
@@ -185,7 +161,8 @@ fn initialize_engine(
 
 fn session_config(payload: &[u8]) -> io::Result<Config> {
     let mut d = Decoder::new(payload);
-    let detector_resize_policy = DetectorResizePolicy::from_wire(d.u8()?)?;
+    // Preserve the protocol 8 field and ignore either historical resize value.
+    wire_boolean(d.u8()?)?;
     let text_detection_processing = TextDetectionProcessing::from_wire(d.u8()?)?;
     let hardware_acceleration = wire_boolean(d.u8()?)?;
     let detector_model = PathBuf::from(d.string()?);
@@ -195,7 +172,6 @@ fn session_config(payload: &[u8]) -> io::Result<Config> {
         return Err(io::Error::other("invalid OCR session configuration"));
     }
     Ok(Config {
-        detector_resize_policy,
         text_detection_processing,
         hardware_acceleration,
         detector_model,
@@ -293,6 +269,13 @@ fn parse_startup_mode(arguments: &[std::ffi::OsString]) -> io::Result<StartupMod
 
 fn main() -> io::Result<()> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    #[cfg(feature = "sizing-validation")]
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--compare-sizing")
+    {
+        return sizing_validation::run(&arguments[1..]);
+    }
     let startup_mode = parse_startup_mode(&arguments)?;
     if startup_mode == StartupMode::Version {
         println!(
@@ -315,7 +298,6 @@ fn main() -> io::Result<()> {
             &recognizer,
             &dictionary,
             1,
-            DetectorResizePolicy::Max,
             TextDetectionProcessing::default(),
             None,
         )
@@ -360,6 +342,37 @@ fn main() -> io::Result<()> {
             Ok(Event::Command(frame)) => frame,
             Ok(Event::Completed(result)) => {
                 match result {
+                    WorkResult::ParagraphsComplete(completion) => {
+                        active = None;
+                        let mut payload = Vec::new();
+                        if completion.cancelled {
+                            put_u8(&mut payload, 2);
+                            put_string(&mut payload, "cancelled");
+                        } else {
+                            match completion.result {
+                                Err(error) => {
+                                    put_u8(&mut payload, 0);
+                                    put_string(&mut payload, &error);
+                                }
+                                Ok(groups) => {
+                                    put_u8(&mut payload, 1);
+                                    put_u32(&mut payload, groups.len() as u32);
+                                    for group in groups {
+                                        put_u32(&mut payload, group.len() as u32);
+                                        for index in group {
+                                            put_u32(&mut payload, index as u32);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        write_frame(
+                            &mut writer,
+                            Kind::ParagraphsComplete,
+                            completion.id,
+                            &payload,
+                        )?;
+                    }
                     WorkResult::Prepared(id, ok) => {
                         write_frame(&mut writer, Kind::SessionReady, id, &[u8::from(ok)])?
                     }
@@ -481,7 +494,7 @@ fn main() -> io::Result<()> {
                 ack.extend_from_slice(&sequence.to_le_bytes());
                 write_frame(&mut writer, Kind::ImageConsumed, frame.request_id, &ack)?;
             }
-            Kind::Recognize => {
+            Kind::Recognize | Kind::GroupParagraphs => {
                 if active.is_some() {
                     return Err(io::Error::other("OCR inference is already running"));
                 }
@@ -493,14 +506,18 @@ fn main() -> io::Result<()> {
                 }
                 let cancelled = Arc::new(AtomicBool::new(false));
                 active = Some((id, Arc::clone(&cancelled)));
-                work_tx
-                    .send(Work::Recognize(Job {
-                        id,
-                        queued_at: Instant::now(),
-                        input,
-                        cancelled,
-                    }))
-                    .map_err(io::Error::other)?;
+                let job = Job {
+                    id,
+                    queued_at: Instant::now(),
+                    input,
+                    cancelled,
+                };
+                let work = if frame.kind == Kind::GroupParagraphs {
+                    Work::GroupParagraphs(job, paragraph::decode(&frame.payload)?)
+                } else {
+                    Work::Recognize(job)
+                };
+                work_tx.send(work).map_err(io::Error::other)?;
             }
             Kind::DiscardImage => {
                 if staged.as_ref().map(|(id, _)| *id) == Some(frame.request_id) {
@@ -546,7 +563,7 @@ fn main() -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DetectorResizePolicy, TextDetectionProcessing, session_config};
+    use super::{TextDetectionProcessing, session_config};
     use crate::protocol::{put_string, put_u8};
 
     #[test]
@@ -584,9 +601,9 @@ mod tests {
         assert!(event_rx.recv().is_err());
     }
 
-    fn session_payload(detector_resize_policy: u8, text_detection_processing: u8) -> Vec<u8> {
+    fn session_payload(legacy_resize: u8, text_detection_processing: u8) -> Vec<u8> {
         let mut payload = Vec::new();
-        put_u8(&mut payload, detector_resize_policy);
+        put_u8(&mut payload, legacy_resize);
         put_u8(&mut payload, text_detection_processing);
         put_u8(&mut payload, 0);
         for path in ["det.onnx", "rec.onnx", "dict.txt"] {
@@ -596,17 +613,11 @@ mod tests {
     }
 
     #[test]
-    fn session_config_selects_and_validates_detector_resize_policy() {
-        for (wire, expected) in [
-            (0, DetectorResizePolicy::Max),
-            (1, DetectorResizePolicy::Min),
-        ] {
-            let mut payload = session_payload(wire, 0);
-            let config = session_config(&payload).unwrap();
-            assert_eq!(config.detector_resize_policy, expected);
-            payload[0] = 2;
-            assert!(session_config(&payload).is_err());
-        }
+    fn session_config_ignores_legacy_resize_policy() {
+        let default = session_config(&session_payload(0, 0)).unwrap();
+        let legacy = session_config(&session_payload(1, 0)).unwrap();
+        assert!(default == legacy);
+        assert!(session_config(&session_payload(2, 0)).is_err());
     }
 
     #[test]
@@ -615,19 +626,17 @@ mod tests {
             (0, TextDetectionProcessing::AccuracyFirst),
             (1, TextDetectionProcessing::SpeedFirst),
         ] {
-            for detector_policy in [0, 1] {
-                let mut payload = session_payload(detector_policy, wire);
-                let config = session_config(&payload).unwrap();
-                assert_eq!(config.text_detection_processing, expected);
-                assert_eq!(config.detector_model, PathBuf::from("det.onnx"));
-                assert_eq!(config.recognizer_model, PathBuf::from("rec.onnx"));
-                assert_eq!(config.dictionary, PathBuf::from("dict.txt"));
-                payload[1] = 2;
-                assert_eq!(
-                    session_config(&payload).err().unwrap().kind(),
-                    io::ErrorKind::InvalidData
-                );
-            }
+            let mut payload = session_payload(0, wire);
+            let config = session_config(&payload).unwrap();
+            assert_eq!(config.text_detection_processing, expected);
+            assert_eq!(config.detector_model, PathBuf::from("det.onnx"));
+            assert_eq!(config.recognizer_model, PathBuf::from("rec.onnx"));
+            assert_eq!(config.dictionary, PathBuf::from("dict.txt"));
+            payload[1] = 2;
+            assert_eq!(
+                session_config(&payload).err().unwrap().kind(),
+                io::ErrorKind::InvalidData
+            );
         }
     }
 

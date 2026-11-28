@@ -34,6 +34,14 @@ pub(super) unsafe fn grayscale_chunk(source: &[u8], output: &mut [u8], channels:
                 let pixels = vld4_u8(source.as_ptr().add(x * 4));
                 (pixels.0, pixels.1, pixels.2)
             };
+            // Equal RGB components round back to the original byte for every
+            // luminance. Document backgrounds and antialiased text often fill
+            // an entire vector with such pixels.
+            if vmaxv_u8(vorr_u8(veor_u8(r, g), veor_u8(g, b))) == 0 {
+                vst1_u8(output.as_mut_ptr().add(x), r);
+                x += 8;
+                continue;
+            }
             let r = bytes_to_f32(r);
             let g = bytes_to_f32(g);
             let b = bytes_to_f32(b);
@@ -82,6 +90,45 @@ pub(super) unsafe fn grayscale(frame: &Frame) -> Image {
             };
         });
     Image::from_buffer(frame.width() as usize, frame.height() as usize, pixels)
+}
+
+#[target_feature(enable = "neon")]
+pub(super) unsafe fn resize_blocks(
+    blocks: &[ResizeBlock],
+    vertical: ResizeCoefficient,
+    top: &[u8],
+    bottom: &[u8],
+    output: &mut [u8],
+) -> usize {
+    for (block, dst) in blocks.iter().zip(output.chunks_exact_mut(8)) {
+        // The plan bounds the full load on both rows, including the last complete block.
+        unsafe {
+            let first = vld1_u8(block.first.as_ptr());
+            let second = vld1_u8(block.second.as_ptr());
+            let weights = vld1q_u16(block.weights.as_ptr());
+            let horizontal = |row: &[u8]| {
+                let bytes = vld1q_u8(row.as_ptr().add(block.start));
+                let left = vmovl_u8(vqtbl1_u8(bytes, first));
+                let right = vmovl_u8(vqtbl1_u8(bytes, second));
+                // (256 - w) * left + w * right fits in 16 bits, including w = 256.
+                vmlaq_u16(vshlq_n_u16::<8>(left), vsubq_u16(right, left), weights)
+            };
+            let a = horizontal(top);
+            let b = horizontal(bottom);
+            let blend = |a, b| {
+                let sum = vmlal_n_u16(
+                    vmull_n_u16(a, vertical.first_weight),
+                    b,
+                    vertical.second_weight,
+                );
+                vrshrn_n_u32::<16>(sum)
+            };
+            let lo = blend(vget_low_u16(a), vget_low_u16(b));
+            let hi = blend(vget_high_u16(a), vget_high_u16(b));
+            vst1_u8(dst.as_mut_ptr(), vmovn_u16(vcombine_u16(lo, hi)));
+        }
+    }
+    blocks.len() * 8
 }
 
 pub(super) fn fast_polarity_masks(differences: &[i16; 16], threshold: i16) -> (u32, u32) {
@@ -171,6 +218,7 @@ pub(super) unsafe fn fast_scores(
     threshold: i16,
     border: u32,
 ) -> RasterBuffer {
+    let threshold_value = threshold as u8;
     let mut scores = RasterBuffer::zeroed(pixels.len());
     scores
         .par_chunks_mut(width as usize)
@@ -190,18 +238,21 @@ pub(super) unsafe fn fast_scores(
                     let center = vld1q_u8(source);
                     let threshold = vdupq_n_u8(threshold as u8);
                     let mut samples = [vdupq_n_u8(0); 16];
-                    let mut dark = vdupq_n_u8(0);
-                    let mut bright = dark;
-                    for index in [0, 4, 8, 12] {
-                        let (dx, dy) = CIRCLE[index];
-                        let sample =
-                            vld1q_u8(source.offset(dy as isize * w as isize + dx as isize));
-                        samples[index] = sample;
-                        dark = vsubq_u8(dark, vcgtq_u8(vqsubq_u8(center, sample), threshold));
-                        bright = vsubq_u8(bright, vcgtq_u8(vqsubq_u8(sample, center), threshold));
-                    }
-                    // Every nine-pixel arc contains at least two cardinal samples.
-                    if vmaxvq_u8(vmaxq_u8(dark, bright)) >= 2 {
+                    // A nine-point arc intersects both opposite cardinal pairs.
+                    // Min/max keeps the polarity of each pair while testing all lanes.
+                    let north = vld1q_u8(source.sub(3 * w));
+                    let south = vld1q_u8(source.add(3 * w));
+                    let west = vld1q_u8(source.sub(3));
+                    let east = vld1q_u8(source.add(3));
+                    let darkest = vmaxq_u8(vminq_u8(north, south), vminq_u8(west, east));
+                    let brightest = vminq_u8(vmaxq_u8(north, south), vmaxq_u8(west, east));
+                    let contrast =
+                        vmaxq_u8(vqsubq_u8(center, darkest), vqsubq_u8(brightest, center));
+                    if vmaxvq_u8(contrast) > threshold_value {
+                        samples[0] = south;
+                        samples[4] = east;
+                        samples[8] = north;
+                        samples[12] = west;
                         for index in [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15] {
                             let (dx, dy) = CIRCLE[index];
                             samples[index] =
@@ -281,6 +332,83 @@ unsafe fn load_four_bytes(source: *const u8) -> float32x4_t {
     }
 }
 
+// Signed moment weights for the two 16-byte loads spanning the 31-pixel disc.
+// The center belongs to the first half. It has zero weight in the second.
+pub(super) struct MomentWeights {
+    x: [[[i8; 16]; 2]; 16],
+    y: [[[i8; 16]; 2]; 16],
+}
+
+impl MomentWeights {
+    pub(super) fn new(radii: &[usize]) -> Self {
+        const { assert!(PATCH_SIZE == 31) };
+        Self {
+            x: std::array::from_fn(|y| {
+                std::array::from_fn(|half| {
+                    std::array::from_fn(|i| {
+                        let x = (half * 15 + i) as i8 - 15;
+                        if usize::from(x.unsigned_abs()) <= radii[y] {
+                            x
+                        } else {
+                            0
+                        }
+                    })
+                })
+            }),
+            y: std::array::from_fn(|y| {
+                std::array::from_fn(|half| {
+                    std::array::from_fn(|i| {
+                        let x = (half * 15 + i) as i8 - 15;
+                        if (half == 0 || i > 0) && usize::from(x.unsigned_abs()) <= radii[y] {
+                            y as i8
+                        } else {
+                            0
+                        }
+                    })
+                })
+            }),
+        }
+    }
+}
+
+#[target_feature(enable = "neon")]
+pub(super) unsafe fn orient(image: &Image, point: &mut Keypoint, weights: &MomentWeights) {
+    let x = cv_round(point.x) as usize;
+    let y = cv_round(point.y) as usize;
+    // The detector's border contains the whole disc, including its enclosing square.
+    let center = y * image.width + x;
+    unsafe {
+        let mut mx = vdupq_n_s32(0);
+        let mut my = vdupq_n_s32(0);
+        let dot = |acc, a, b| {
+            vpadalq_s16(
+                vpadalq_s16(acc, vmull_s8(vget_low_s8(a), vget_low_s8(b))),
+                vmull_high_s8(a, b),
+            )
+        };
+        let load = |i| {
+            vreinterpretq_s8_u8(veorq_u8(
+                vld1q_u8(image.pixels.as_ptr().add(i)),
+                vdupq_n_u8(128),
+            ))
+        };
+        // Subtracting 128 from each intensity cancels in the symmetric moments.
+        for half in 0..2 {
+            let start = center - 15 + half * 15;
+            mx = dot(mx, load(start), vld1q_s8(weights.x[0][half].as_ptr()));
+            for dy in 1..16 {
+                let lower = load(start + dy * image.width);
+                let upper = load(start - dy * image.width);
+                let wx = vld1q_s8(weights.x[dy][half].as_ptr());
+                let wy = vld1q_s8(weights.y[dy][half].as_ptr());
+                mx = dot(dot(mx, lower, wx), upper, wx);
+                my = dot(dot(my, lower, wy), upper, vnegq_s8(wy));
+            }
+        }
+        point.angle = fast_atan2(vaddvq_s32(my) as f32, vaddvq_s32(mx) as f32);
+    }
+}
+
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn blur(image: &Image) -> Image {
     blur_with_rows(
@@ -294,17 +422,31 @@ pub(super) unsafe fn blur(image: &Image) -> Image {
                 *target = horizontal_blur_reflected(&image.pixels, image.width, x, y);
             }
             let mut x = 3;
-            while x + 4 <= image.width - 3 {
-                let source = image.pixels.as_ptr().add(y * image.width + x - 3);
-                let mut value = vmulq_n_f32(load_four_bytes(source), BLUR_KERNEL[0]);
-                for (offset, weight) in BLUR_KERNEL.iter().enumerate().skip(1) {
-                    value = vaddq_f32(
-                        value,
-                        vmulq_n_f32(load_four_bytes(source.add(offset)), *weight),
-                    );
+            if image.width >= 12 {
+                let source = image.pixels.as_ptr().add(y * image.width);
+                let mut first = load_four_bytes(source);
+                let mut middle = load_four_bytes(source.add(4));
+                // Consecutive four-pixel windows share eight input bytes.
+                while x - 3 + 12 <= image.width {
+                    let last = load_four_bytes(source.add(x - 3 + 8));
+                    let taps = [
+                        first,
+                        vextq_f32::<1>(first, middle),
+                        vextq_f32::<2>(first, middle),
+                        vextq_f32::<3>(first, middle),
+                        middle,
+                        vextq_f32::<1>(middle, last),
+                        vextq_f32::<2>(middle, last),
+                    ];
+                    let mut value = vmulq_n_f32(taps[0], BLUR_KERNEL[0]);
+                    for tap in 1..7 {
+                        value = vaddq_f32(value, vmulq_n_f32(taps[tap], BLUR_KERNEL[tap]));
+                    }
+                    vst1q_f32(row.as_mut_ptr().add(x), value);
+                    x += 4;
+                    first = middle;
+                    middle = last;
                 }
-                vst1q_f32(row.as_mut_ptr().add(x), value);
-                x += 4;
             }
             if x > 3 {
                 executed(2);
@@ -314,8 +456,7 @@ pub(super) unsafe fn blur(image: &Image) -> Image {
             }
         },
         |rows, output| unsafe {
-            let mut x = 0;
-            while x + 4 <= output.len() {
+            let rounded = |x| {
                 let load = |row: usize| vld1q_f32(rows[row].as_ptr().add(x));
                 let mut value = vmulq_n_f32(load(3), BLUR_KERNEL[3]);
                 for offset in 1..4 {
@@ -327,12 +468,14 @@ pub(super) unsafe fn blur(image: &Image) -> Image {
                         ),
                     );
                 }
-                let mut values = [0.0_f32; 4];
-                vst1q_f32(values.as_mut_ptr(), value);
-                for (target, value) in output[x..x + 4].iter_mut().zip(values) {
-                    *target = cv_round(value).clamp(0, 255) as u8;
-                }
-                x += 4;
+                // The scalar blur rounds ties to even before narrowing to a pixel.
+                vqmovn_u32(vcvtnq_u32_f32(value))
+            };
+            let mut x = 0;
+            while x + 8 <= output.len() {
+                let pixels = vqmovn_u16(vcombine_u16(rounded(x), rounded(x + 4)));
+                vst1_u8(output.as_mut_ptr().add(x), pixels);
+                x += 8;
             }
             if x > 0 {
                 executed(2);
@@ -354,36 +497,125 @@ pub(super) unsafe fn descriptor(image: &Image, keypoint: Keypoint) -> [u8; 32] {
     let cosine = radians.cos();
     let sine = radians.sin();
     let (pattern_x, pattern_y) = orb_pattern_xy();
-    let mut samples = [0_u8; 512];
+    if image.pixels.len() > i32::MAX as usize {
+        return descriptor_scalar(image, keypoint);
+    }
+    let center = vdupq_n_s32((center_y * image.width as isize + center_x) as i32);
+    let pixels = image.pixels.as_slice();
+    let mut bytes = [0; 32];
     unsafe {
-        for start in (0..512).step_by(4) {
-            let x = vcvtq_f32_s32(vld1q_s32(pattern_x.as_ptr().add(start)));
-            let y = vcvtq_f32_s32(vld1q_s32(pattern_y.as_ptr().add(start)));
-            let rx = vcvtnq_s32_f32(vsubq_f32(vmulq_n_f32(x, cosine), vmulq_n_f32(y, sine)));
-            let ry = vcvtnq_s32_f32(vaddq_f32(vmulq_n_f32(x, sine), vmulq_n_f32(y, cosine)));
-            let mut xs = [0_i32; 4];
-            let mut ys = [0_i32; 4];
-            vst1q_s32(xs.as_mut_ptr(), rx);
-            vst1q_s32(ys.as_mut_ptr(), ry);
-            for lane in 0..4 {
-                samples[start + lane] = image.pixels[(center_y + ys[lane] as isize) as usize
-                    * image.width
-                    + (center_x + xs[lane] as isize) as usize];
+        let weights = vld1_u8([1, 2, 4, 8, 16, 32, 64, 128].as_ptr());
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            let mut samples = [0_u8; 16];
+            for (group, dst) in samples.chunks_exact_mut(4).enumerate() {
+                let start = 16 * index + group * 4;
+                let x = vcvtq_f32_s32(vld1q_s32(pattern_x.as_ptr().add(start)));
+                let y = vcvtq_f32_s32(vld1q_s32(pattern_y.as_ptr().add(start)));
+                let rx = vcvtnq_s32_f32(vsubq_f32(vmulq_n_f32(x, cosine), vmulq_n_f32(y, sine)));
+                let ry = vcvtnq_s32_f32(vaddq_f32(vmulq_n_f32(x, sine), vmulq_n_f32(y, cosine)));
+                let at = vmlaq_n_s32(vaddq_s32(center, rx), ry, image.width as i32);
+                let mut offsets = [0; 4];
+                vst1q_s32(offsets.as_mut_ptr(), at);
+                for (dst, offset) in dst.iter_mut().zip(offsets) {
+                    *dst = pixels[offset as usize];
+                }
             }
+            let group = vld1q_u8(samples.as_ptr());
+            let (low, high) = (vget_low_u8(group), vget_high_u8(group));
+            let bits = vclt_u8(vuzp1_u8(low, high), vuzp2_u8(low, high));
+            *byte = vaddv_u8(vand_u8(bits, weights));
         }
     }
     executed(3);
-    std::array::from_fn(|byte| {
-        (0..8).fold(0, |value, bit| {
-            value
-                | (u8::from(samples[byte * 16 + bit * 2] < samples[byte * 16 + bit * 2 + 1]) << bit)
-        })
-    })
+    bytes
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orientation_matches_scalar_at_patch_edges_and_for_uniform_intensities() {
+        let radii = umax();
+        let weights = MomentWeights::new(&radii);
+        for seed in [0, 1, 127, 255] {
+            let image = Image::new(
+                65,
+                47,
+                (0..65 * 47)
+                    .map(|i| match seed {
+                        0 | 255 => seed as u8,
+                        _ => ((i * seed + i / 7) ^ (i >> 1)) as u8,
+                    })
+                    .collect(),
+            );
+            for y in 15..image.height - 15 {
+                for x in [15, 17, image.width - 16] {
+                    let mut expected = Keypoint {
+                        x: x as f32,
+                        y: y as f32,
+                        octave: 0,
+                        response: 0.0,
+                        angle: -1.0,
+                    };
+                    let mut actual = expected;
+                    super::super::orient(&image, &mut expected, &radii);
+                    unsafe { super::orient(&image, &mut actual, &weights) };
+                    assert_eq!(actual.angle, expected.angle);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn neutral_and_mixed_vectors_preserve_grayscale_for_every_intensity() {
+        for channels in [3, 4] {
+            let mut pixels = Vec::new();
+            for value in 0..=255u8 {
+                for lane in 0..16 {
+                    let blue = if lane == 15 {
+                        value.wrapping_add(73)
+                    } else {
+                        value
+                    };
+                    pixels.extend_from_slice(&[value, value, blue]);
+                    if channels == 4 {
+                        pixels.push(255 - value);
+                    }
+                }
+            }
+            let expected: Vec<_> = pixels.chunks_exact(channels).map(grayscale_pixel).collect();
+            let mut gray = vec![0; expected.len()];
+            unsafe { grayscale_chunk(&pixels, &mut gray, channels) };
+            assert_eq!(gray, expected);
+        }
+    }
+
+    #[test]
+    fn cardinal_prefilter_preserves_every_nine_pixel_arc() {
+        let (width, height) = (40_u32, 25_u32);
+        let y = 12_i32;
+        for x in [18_i32, 19] {
+            // Adjacent lanes in different SIMD blocks.
+            for bright_or_dark in [192, 64] {
+                for start in 0..CIRCLE.len() {
+                    let mut pixels = vec![128_u8; (width * height) as usize];
+                    for i in 0..9 {
+                        let (dx, dy) = CIRCLE[(start + i) % CIRCLE.len()];
+                        pixels[((y + dy) * width as i32 + x + dx) as usize] = bright_or_dark;
+                    }
+                    for threshold in [20, 63, 64] {
+                        let scores = unsafe { fast_scores(width, height, &pixels, threshold, 3) };
+                        assert_eq!(
+                            scores[(y * width as i32 + x) as usize],
+                            if threshold < 64 { 63 } else { 0 },
+                            "arc {start}, sample {bright_or_dark}, threshold {threshold}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn neon_orb_kernels_execute_and_match_scalar_for_formats_tails_arcs_and_angles() {

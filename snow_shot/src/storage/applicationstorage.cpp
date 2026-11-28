@@ -394,11 +394,14 @@ StorageResult ApplicationStorage::initialize(const StorageInitializationOptions&
     static_cast<void>(m_pinnedWindows->setPolicy(pinnedWindowPolicy(), false));
     m_pinnedWindows->setCompressionLevel(
         m_configuration->value(QStringLiteral("pinned_history/compression_level")).toString());
-    m_pinnedCleanupTimer = std::make_unique<QTimer>(this);
-    m_pinnedCleanupTimer->setInterval(60000);
-    connect(m_pinnedCleanupTimer.get(), &QTimer::timeout, this,
-            [this] { requestPinnedWindowRetentionCleanup(false); });
-    m_pinnedCleanupTimer->start();
+    m_retentionCleanupTimer = std::make_unique<QTimer>(this);
+    m_retentionCleanupTimer->setInterval(60000);
+    connect(m_retentionCleanupTimer.get(), &QTimer::timeout, this, [this] {
+        requestPinnedWindowRetentionCleanup(false);
+        if (m_captureHistory && !directoryChangeBlocksWork())
+            m_captureHistory->requestExpiryCleanup();
+    });
+    m_retentionCleanupTimer->start();
     connect(
         m_configuration.get(), &ConfigurationStore::valueChanged, this,
         [this](const QString& key, const QJsonValue&) {
@@ -574,7 +577,7 @@ void ApplicationStorage::releaseApplicationResources() {
 void ApplicationStorage::drainRuntimeWork() {
     // Periodic admission ends with storage, while repositories remain available to consumers.
     // An active timer must not survive until this singleton's post-application destruction.
-    m_pinnedCleanupTimer.reset();
+    m_retentionCleanupTimer.reset();
     waitForDirectoryChange();
     if (!m_initialized) {
         return;
@@ -690,20 +693,22 @@ ApplicationStorage::requestCaptureHistoryPolicyAsync(const CaptureHistoryPolicy&
     return result;
 }
 
-bool ApplicationStorage::requestSmartSelectionMode(SmartSelectionMode mode) {
-    const auto result = requestSmartSelectionModeAsync(mode);
+bool ApplicationStorage::requestSmartSelectionMode(SmartSelectionMode mode,
+                                                   ConfigurationWriteOrigin origin) {
+    const auto result = requestSmartSelectionModeAsync(mode, origin);
     return result.valid() && result.get().success;
 }
 
 std::shared_future<StorageResult>
-ApplicationStorage::requestSmartSelectionModeAsync(SmartSelectionMode mode) {
+ApplicationStorage::requestSmartSelectionModeAsync(SmartSelectionMode mode,
+                                                   ConfigurationWriteOrigin origin) {
     if (directoryChangeBlocksWork() || !m_initialized || m_configuration == nullptr ||
         !m_status.writeAvailable) {
         return readyFuture(
             StorageResult::failure(QStringLiteral("Configuration storage is not writable")));
     }
     if (!m_configuration->setValue(QStringLiteral("screenshot_selection/smart_selection"),
-                                   smartSelectionModeId(mode))) {
+                                   smartSelectionModeId(mode), origin)) {
         updateConfigurationError(m_configuration->lastError());
         return readyFuture(StorageResult::failure(m_configuration->lastError()));
     }
@@ -714,11 +719,11 @@ PinnedWindowPolicy ApplicationStorage::pinnedWindowPolicy() const {
     if (!m_configuration)
         return {};
     return {
-        m_configuration->value(QStringLiteral("pinned_history/enabled")).toBool(true),
-        m_configuration->value(QStringLiteral("pinned_history/retention_days")).toInt(7),
-        m_configuration->value(QStringLiteral("pinned_history/max_entries")).toInt(100),
-        m_configuration->value(QStringLiteral("pinned_history/max_disk_mib")).toInt(1024),
-        m_configuration->value(QStringLiteral("pinned_history/keep_permanently")).toBool(false)};
+        {m_configuration->value(QStringLiteral("pinned_history/retention_days")).toInt(7),
+         m_configuration->value(QStringLiteral("pinned_history/max_entries")).toInt(100),
+         m_configuration->value(QStringLiteral("pinned_history/max_disk_mib")).toInt(1024),
+         m_configuration->value(QStringLiteral("pinned_history/keep_permanently")).toBool(false)},
+        m_configuration->value(QStringLiteral("pinned_history/enabled")).toBool(true)};
 }
 
 bool ApplicationStorage::requestPinnedWindowPolicy(const PinnedWindowPolicy& policy) {

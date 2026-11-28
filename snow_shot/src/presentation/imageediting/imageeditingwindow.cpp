@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "snow_shot/presentation/imageeditingwindow.h"
+#include "snow_shot/presentation/components/windowconfirmation.h"
+#include "snow_shot/shortcuts/annotationoptionshortcut.h"
 #include "snow_shot/presentation/screenshotpinnedrenderpreparation.h"
 #include "snow_shot/presentation/canvasdrawingpreferences.h"
 #include "imageeditingexportcontroller.h"
@@ -21,6 +23,7 @@
 #include <QtMath>
 #include <QMouseEvent>
 #include "snow_shot/presentation/screenshotcanvasoperations.h"
+#include "snow_shot/presentation/screenshotcanvastoolstyles.h"
 #include "snow_shot/presentation/screenshotcanvastools.h"
 #include "snow_shot/presentation/screenshotstylebinding.h"
 #include "snow_shot/presentation/screenshotfloatingtoolpalettewindow.h"
@@ -155,11 +158,51 @@ ScreenshotToolPalette::Options editorOptions() {
     auto options = screenshotDrawingToolbarOptions();
     options.moveToolPresentation = ScreenshotToolPalette::MoveToolPresentation::Pan;
     options.showCropTools = true;
+    options.showAirDropButton = true;
     options.actions = ScreenshotToolPalette::CopyAction | ScreenshotToolPalette::PinAction;
     options.copyButtonWithNeutralIcon = false;
     options.separatorBeforeConfirm = false;
     options.showDrawingModeShortcutOnConfirm = false;
     return options;
+}
+struct EditingFileImport {
+    ImageEditingSource source;
+    std::shared_ptr<ImageStitchingImportReservation> reservation;
+    bool rejected = false;
+};
+
+ScreenshotExportCoordinator::Work readEditingFile(QString path,
+                                                  const std::shared_ptr<EditingFileImport>& file) {
+    return [path = std::move(path), file](const auto& cancellation) {
+        const auto cancelled = [&cancellation] { return cancellation.isCancellationRequested(); };
+        file->source.originalFileName = QFileInfo(path).fileName();
+        file->reservation = reserveImageStitchingImport(0);
+        file->rejected = !file->reservation;
+        const auto files = ScreenshotClipboardContentReader::snapshotLocalFiles(
+            {path}, cancelled, ScreenshotClipboardContentReader::FilePurpose::ImageImport);
+        if (!file->rejected && !files.isEmpty()) {
+            file->source.image = ScreenshotClipboardContentReader::decodeImageFile(
+                files.first(), cancelled, [file](qint64 bytes) {
+                    if (!file->reservation->resize(bytes)) {
+                        file->rejected = true;
+                        return false;
+                    }
+                    return true;
+                });
+            if (!file->source.image.isNull()) {
+                const auto bytes = imageStitchingImageImportBytes(file->source.image.size());
+                file->rejected =
+                    bytes == 0 ||
+                    !file->reservation->resize(std::max(bytes, file->source.image.sizeInBytes()));
+                if (file->rejected)
+                    file->source.image = {};
+            }
+        }
+        file->source.pixelSize = file->source.image.size();
+        file->source.canvasRect = QRectF(QPointF(), QSizeF(file->source.pixelSize));
+        file->source.flattened = true;
+        return ScreenshotExportTaskResult{};
+    };
 }
 } // namespace
 
@@ -229,7 +272,7 @@ struct ImageEditingWindow::Impl {
           shortcuts(&q), autoFilter(new ScreenshotAutoFilterController(
                              [this] { return document.bounds(); },
                              [this](auto done) { done(document.image()); }, &q)),
-          exporter(services.printing, &q, services.pin) {
+          exporter(services.printing, &q, services.pin, services.airDrop) {
         surface->setObjectName(QStringLiteral("imageEditingPreview"));
         surface->installEventFilter(&q);
         canvas->installEventFilter(&q);
@@ -238,15 +281,8 @@ struct ImageEditingWindow::Impl {
         stack->addWidget(canvas);
         emptyState = new components::ImageDropSurface(false, surface);
         emptyState->setObjectName(QStringLiteral("imageEditingEmptyState"));
-        addImages = new AdButton(emptyState);
+        addImages = emptyState->addImageButton();
         addImages->setObjectName(QStringLiteral("imageEditingAddImages"));
-        addImages->setIconRef(adqt::icons::antd::outlined::Plus());
-        addImages->setButtonStyle(AdButton::ButtonStyle::Solid);
-        addImages->setAccentRole(AdButton::AccentRole::Primary);
-        addImages->setFocusPolicy(Qt::StrongFocus);
-        auto* emptyLayout = static_cast<QVBoxLayout*>(emptyState->layout());
-        emptyLayout->insertSpacing(emptyLayout->count() - 1, 8);
-        emptyLayout->insertWidget(emptyLayout->count() - 1, addImages, 0, Qt::AlignHCenter);
         stack->addWidget(emptyState);
         stack->setCurrentWidget(emptyState);
         dropHint = new components::ImageDropSurface(true, surface);
@@ -308,7 +344,7 @@ struct ImageEditingWindow::Impl {
                          [this] { drawing(ImageEditingCanvas::Mode::CropRows); });
         QObject::connect(palette, &ScreenshotToolPalette::cropColumnsRequested, &q,
                          [this] { drawing(ImageEditingCanvas::Mode::CropColumns); });
-        QObject::connect(fit, &AdButton::clicked, canvas, &ImageEditingCanvas::fit);
+        QObject::connect(fit, &AdButton::clicked, canvas, [this] { canvas->fit(true); });
         QObject::connect(actual, &AdButton::clicked, canvas, &ImageEditingCanvas::actualSize);
         QObject::connect(palette, &ScreenshotToolPalette::moveRequested, &q,
                          [this] { drawing(ImageEditingCanvas::Mode::Pan); });
@@ -434,6 +470,10 @@ struct ImageEditingWindow::Impl {
                          [this] { exportContent(ExportOperation::Print); });
         QObject::connect(palette, &ScreenshotToolPalette::cloudUploadRequested, &q,
                          [this] { exportContent(ExportOperation::Upload); });
+#ifdef Q_OS_MACOS
+        QObject::connect(palette, &ScreenshotToolPalette::airDropRequested, &q,
+                         [this] { exportContent(ExportOperation::AirDrop); });
+#endif
         WindowShortcutManager::Binding paste;
         paste.id = QStringLiteral("imageEditingPaste");
         for (const auto& sequence : QKeySequence::keyBindings(QKeySequence::Paste)) {
@@ -517,11 +557,11 @@ struct ImageEditingWindow::Impl {
                 if (!drawing &&
                     !QStringList{
                         QStringLiteral("table_recognition"), QStringLiteral("qr_code_recognition"),
-                        QStringLiteral("text_recognition"), QStringLiteral("text_translation"),
-                        QStringLiteral("copy_to_clipboard"), QStringLiteral("save_as_file"),
-                        QStringLiteral("quick_save"), QStringLiteral("print"),
-                        QStringLiteral("upload_to_cloud"), QStringLiteral("move_tool"),
-                        QStringLiteral("pin_to_screen")}
+                        QStringLiteral("text_recognition"), QStringLiteral("text_recognition_copy"),
+                        QStringLiteral("text_translation"), QStringLiteral("copy_to_clipboard"),
+                        QStringLiteral("save_as_file"), QStringLiteral("quick_save"),
+                        QStringLiteral("print"), QStringLiteral("upload_to_cloud"),
+                        QStringLiteral("move_tool"), QStringLiteral("pin_to_screen")}
                          .contains(it.key()))
                     continue;
                 WindowShortcutManager::Binding binding;
@@ -532,13 +572,25 @@ struct ImageEditingWindow::Impl {
                 binding.priority =
                     drawing ? WindowShortcutManager::StandardPriority::DrawingShortcut
                             : WindowShortcutManager::StandardPriority::ScreenshotShortcut;
-                binding.canActivate = [this](const auto& context) {
-                    return !document.image().isNull() && !loading && !cropBusy && !closing &&
-                           !(colorSampling && colorSampling->active()) &&
-                           !WindowShortcutManager::focusAcceptsTextInput(context.focusWidget) &&
-                           !canvas->hasActiveTextEditing();
+                binding.canActivate = [this, id = it.key(), drawing](const auto& context) {
+                    if (document.image().isNull() || loading || cropBusy || closing ||
+                        (colorSampling && colorSampling->active()) ||
+                        WindowShortcutManager::focusAcceptsTextInput(context.focusWidget) ||
+                        canvas->hasActiveTextEditing())
+                        return false;
+                    if (id == snow_shot::shortcuts::kCycleAnnotationToolOptions &&
+                        WindowShortcutManager::inputTargetsPopup(context))
+                        return false;
+                    return drawing ? palette->canActivateDrawingShortcut(id)
+                                   : palette->canActivateScreenshotShortcut(id);
                 };
                 binding.activate = [this, id = it.key(), drawing](const auto&) {
+                    if (id == QStringLiteral("text_recognition_copy")) {
+                        activate(Session::Mode::Text, false,
+                                 ScreenshotClipboardService::reservePublication(
+                                     QApplication::clipboard()));
+                        return true;
+                    }
                     return drawing ? palette->activateDrawingShortcut(id)
                                    : palette->activateScreenshotShortcut(id);
                 };
@@ -802,7 +854,9 @@ struct ImageEditingWindow::Impl {
                             : document.baseState() == 0 ? initialRecognition
                                                         : ScreenshotRecognitionResults{};
         const bool sized = screenshotOcrImageWithinPixelLimit(document.image().size());
-        palette->setOcrEnabled((sized && providers.recognition) || cached.text.has_value());
+        const auto textSession = sessions.value(document.baseState()).controller;
+        palette->setOcrEnabled((sized && providers.recognition) || cached.text.has_value() ||
+                               (textSession && textSession->hasTextResult()));
         palette->setTableEnabled((sized && providers.tableRecognition) ||
                                  !cached.tableEntries.isEmpty() || cached.table.has_value());
         palette->setQrEnabled((sized && providers.qrRecognition) || cached.qr.has_value());
@@ -916,7 +970,8 @@ struct ImageEditingWindow::Impl {
         syncPalette();
     }
     void bindRecognition();
-    void activate(Session::Mode mode, bool translate = false);
+    void activate(Session::Mode mode, bool translate = false,
+                  ScreenshotClipboardService::PublicationId copySourceOnReady = 0);
     Session* ensureSession();
     void pruneRecognitionSessions(bool replaceDocument = false) {
         for (auto it = sessions.begin(); it != sessions.end();) {
@@ -948,7 +1003,8 @@ struct ImageEditingWindow::Impl {
             return {};
         return target->contentCheckpoints().value(target->activeContentKey());
     }
-    bool exportContent(ExportOperation operation);
+    bool exportContent(ExportOperation operation,
+                       ScreenshotRecognitionCopy intent = ScreenshotRecognitionCopy::Result);
     void translateConfirmation() {
         confirmation->setWindowTitle(ImageEditingWindow::tr("Discard changes?"));
         confirmation->setText(ImageEditingWindow::tr("This editing window has unsaved changes"));
@@ -1020,8 +1076,6 @@ ScreenshotRecognitionWindow* ImageEditingWindow::Impl::ensureRecognitionView() {
     if (!recognitionView) {
         ScreenshotRecognitionWindowActions actions;
         actions.handleCancel = [this] { drawing(ImageEditingCanvas::Mode::Pan); };
-        actions.handleCopy = [this] { exportContent(ExportOperation::Copy); };
-        actions.copyOcrResult = [this] { return exportContent(ExportOperation::Copy); };
         actions.handleTextEdited = [this](const QString& text) {
             if (session && session->ownsContentAttachment())
                 session->setTextDraft(text);
@@ -1084,6 +1138,9 @@ Session* ImageEditingWindow::Impl::ensureSession() {
     const auto owner = std::make_shared<QPointer<Session>>();
     actions.isCurrentSession = [this, owner] { return *owner && session == *owner; };
     actions.ensureContent = [this] { return ensureRecognitionView(); };
+    actions.requestCopy = [this](ScreenshotRecognitionCopy intent) {
+        return exportContent(ExportOperation::Copy, intent);
+    };
     actions.applyOcrPresentation = [this](auto presentation) {
         canvas->setRecognitionBackground();
         recognitionView->setOcrPresentation(std::move(presentation));
@@ -1218,7 +1275,9 @@ Session* ImageEditingWindow::Impl::ensureSession() {
     });
     return session;
 }
-void ImageEditingWindow::Impl::activate(Session::Mode mode, bool translate) {
+void ImageEditingWindow::Impl::activate(
+    Session::Mode mode, bool translate,
+    ScreenshotClipboardService::PublicationId copySourceOnReady) {
     if (loading || cropBusy || document.image().isNull())
         return;
     const QPointer<ImageEditingWindow> lifetime(&q);
@@ -1236,7 +1295,7 @@ void ImageEditingWindow::Impl::activate(Session::Mode mode, bool translate) {
     current->setShowOriginalImage(false);
     if (!lifetime || !current || current != session)
         return;
-    current->activate(mode);
+    current->activate(mode, copySourceOnReady);
     if (!lifetime || !current || current != session)
         return;
     syncAvailability();
@@ -1350,114 +1409,172 @@ void ImageEditingWindow::Impl::bindRecognition() {
     palette->setOriginalImageToggleEnabled(false);
 }
 
-bool ImageEditingWindow::Impl::exportContent(ExportOperation operation) {
-    if (loading || cropBusy || exporter.busy() || closing || document.image().isNull())
+bool ImageEditingWindow::Impl::exportContent(ExportOperation operation,
+                                             ScreenshotRecognitionCopy intent) {
+    if (loading || cropBusy || !exporter.canStart(operation) || closing ||
+        document.image().isNull())
         return false;
-    if (!q.preparePendingEdits())
+
+    const QPointer<ImageEditingWindow> lifetime(&q);
+    const bool copying = operation == ExportOperation::Copy;
+    ImageEditingExportController::CopyOptions copyOptions;
+    if (copying) {
+        copyOptions.publication =
+            ScreenshotClipboardService::reservePublication(QApplication::clipboard());
+        copyOptions.requestedAt = QDateTime::currentDateTime();
+        if (storage::ScreenshotSettings().copyImageFileToClipboard())
+            copyOptions.file = ScreenshotCloudUploadService::currentOptions();
+        exporter.cancelCopy();
+        if (!lifetime || closing)
+            return false;
+    }
+    if (!q.preparePendingEdits() ||
+        (copying && !ScreenshotClipboardService::publicationCurrent(copyOptions.publication)))
         return false;
+
     const QPointer<Session> recognition =
         operation != ExportOperation::Pin && session && session->active() ? session : nullptr;
-    QByteArray checkpoint =
-        recognition ? recognitionCheckpoint(recognition) : document.checkpoint();
     const QString contentKey = recognition ? recognition->activeContentKey() : QString{};
     const auto state = document.baseState();
-    const bool recognitionExport = bool(recognition);
-    const auto finish = [this, recognition, contentKey, state, recognitionExport](
-                            const QByteArray& savedCheckpoint, bool success, QString error) {
-        if (closing)
+    const auto finish = [this, lifetime, operation, recognition, contentKey,
+                         state](const QByteArray& checkpoint, bool recognitionContent, bool success,
+                                QString error) {
+        if (!lifetime || closing)
             return;
-        palette->setCloudUploadBusy(false);
-        if (success) {
-            if (recognitionExport) {
+        if (operation == ExportOperation::Upload)
+            palette->setCloudUploadBusy(false);
+        if (success && !checkpoint.isEmpty()) {
+            if (recognitionContent) {
                 const auto entry = sessions.find(state);
-                if (!savedCheckpoint.isEmpty() && recognition && entry != sessions.end() &&
-                    entry->controller == recognition)
-                    entry->saved.insert(contentKey, savedCheckpoint);
-            } else
-                document.markExported(savedCheckpoint);
-            showNotice(Notice::Exported);
-        } else if (!error.isEmpty())
-            message(std::move(error));
-        else if (notice == Notice::Exporting)
-            message({});
-        emit q.exportFinished(success);
+                if (recognition && entry != sessions.end() && entry->controller == recognition)
+                    entry->saved.insert(contentKey, checkpoint);
+            } else {
+                document.markExported(checkpoint);
+            }
+        }
+        if (!lifetime || closing)
+            return;
+        if (!exporter.busy()) {
+            if (success)
+                showNotice(Notice::Exported);
+            else if (!error.isEmpty())
+                message(std::move(error));
+            else if (notice == Notice::Exporting)
+                message({});
+        }
+        if (lifetime && !closing)
+            emit q.exportFinished(success);
     };
-    ImageEditingExportController::Content content;
-    const bool ocrOverlay =
-        recognition && recognition->mode() == Session::Mode::Text && !recognition->editing();
-    if (recognition && recognition->originalImageTranslationActive())
-        checkpoint.clear();
-    if (recognition && operation == ExportOperation::Copy) {
-#if SNOW_SHOT_ENABLE_DOCUMENT_RECOGNITION
-        if (recognition->mode() == Session::Mode::Document) {
-            auto request = recognition->documentCopyRequest();
-            if (!request.document) {
-                finish({}, false,
-                       ImageEditingWindow::tr("No recognition result is available to export"));
+    const auto completion = [finish](QByteArray checkpoint, bool recognitionContent) {
+        return [finish, checkpoint = std::move(checkpoint), recognitionContent](bool success,
+                                                                                QString error) {
+            finish(checkpoint, recognitionContent, success, std::move(error));
+        };
+    };
+
+    if (copying) {
+        const auto publish = [this, lifetime,
+                              copyOptions](ImageEditingExportController::CopyContent content,
+                                           ImageEditingExportController::Completion done) {
+            if (!lifetime || closing ||
+                !ScreenshotClipboardService::publicationCurrent(copyOptions.publication))
                 return false;
-            }
-            content = std::move(request);
-        } else
-#endif
-        {
-            auto mime = recognition->recognitionClipboardMimeData();
-            if (!mime) {
-                finish({}, false,
-                       ImageEditingWindow::tr("No recognition result is available to export"));
+            if (!exporter.busy())
+                showNotice(Notice::Exporting);
+            if (!lifetime || closing ||
+                !ScreenshotClipboardService::publicationCurrent(copyOptions.publication))
                 return false;
-            }
-            if (ocrOverlay && (!mime->hasText() || mime->text() != recognition->textDraft()))
-                checkpoint.clear();
-            content = std::move(mime);
-        }
-    } else if (recognition &&
-               (operation == ExportOperation::Save || operation == ExportOperation::QuickSave)) {
-        if (recognition->mode() == Session::Mode::Text && recognition->hasTextResult()) {
-            content = recognition->textDraft();
-        } else {
-#if SNOW_SHOT_ENABLE_IMAGE_CONVERSION || SNOW_SHOT_ENABLE_LATEX_RECOGNITION ||                     \
-    SNOW_SHOT_ENABLE_QR_RECOGNITION || SNOW_SHOT_ENABLE_TABLE_RECOGNITION
-            if (auto snapshot = recognition->fileExportSnapshot())
-                content = std::move(*snapshot);
-            else
-#endif
-            {
-                finish({}, false,
-                       ImageEditingWindow::tr("No recognition result is available to export"));
-                return false;
-            }
-        }
-    } else if (recognition && recognitionView) {
-        QImage image;
-        if (showsRecognitionImage()) {
-            checkpoint.clear();
-            image = recognition->showOriginalImage()
-                        ? document.image()
-                        : recognitionView->printViewportSnapshot(
-                              document.image(), document.bounds(), canvas->recognitionBackground(),
-                              canvas->recognitionBackgroundRect());
-        } else {
-            image = recognitionView->printViewportSnapshot();
-        }
-        content = ScreenshotExportSource::fromImage(std::move(image));
-    } else {
-        QString error;
-        auto source = document.exportSource(&error);
-        if (!source.isValid()) {
-            finish({}, false, error);
+            return exporter.startCopy(std::move(content), copyOptions, surface->window(),
+                                      std::move(done));
+        };
+        if (!recognition) {
+            QString error;
+            auto source = document.exportSource(&error);
+            if (source.isValid())
+                return publish(std::move(source), completion(document.checkpoint(), false));
+            finish({}, false, false, error);
             return false;
         }
-        content = std::move(source);
+        // Copying a preview can publish just one selection of a larger editable result.
+        auto checkpoint = std::make_shared<QByteArray>(intent == ScreenshotRecognitionCopy::Result
+                                                           ? recognitionCheckpoint(recognition)
+                                                           : QByteArray{});
+        const bool ocrOverlay =
+            recognition->mode() == Session::Mode::Text && !recognition->editing();
+        const auto draft = ocrOverlay ? recognition->textDraft() : QString{};
+        ImageEditingExportController::PrepareCopy prepare =
+            [recognition, intent, publication = copyOptions.publication, ocrOverlay, draft,
+             checkpoint](QObject* request, ImageEditingExportController::CopyPrepared ready) {
+                if (!recognition || !recognition->ownsContentAttachment())
+                    return false;
+                // Retiring an attachment may happen inside tool activation. Finish the export
+                // after the transition, and let request destruction disconnect queued callbacks.
+                QObject::connect(
+                    recognition, &Session::clipboardCopyRetired, request,
+                    [ready, publication](quint64 retired) {
+                        if (retired == publication)
+                            ready({}, {});
+                    },
+                    Qt::QueuedConnection);
+                return recognition->prepareClipboardCopy(
+                    intent, nullptr, publication,
+                    [ready = std::move(ready), ocrOverlay, draft, checkpoint](auto mime,
+                                                                              QString error) {
+                        if (mime && (mime->hasImage() || (ocrOverlay && mime->text() != draft)))
+                            checkpoint->clear();
+                        ready(std::move(mime), std::move(error));
+                    });
+            };
+        return publish(std::move(prepare), [finish, checkpoint](bool success, QString error) {
+            finish(*checkpoint, true, success, std::move(error));
+        });
     }
-    const QPointer<ImageEditingWindow> lifetime(&q);
+
+    ImageEditingExportController::Content content;
+    QByteArray checkpoint;
+    bool recognitionContent = false;
+    if (recognition &&
+        (operation == ExportOperation::Save || operation == ExportOperation::QuickSave)) {
+        auto snapshot = recognition->fileExportSnapshot();
+        if (!lifetime || !recognition || recognition != session)
+            return false;
+        if (snapshot) {
+#if SNOW_SHOT_ENABLE_TABLE_RECOGNITION
+            if (snapshot->isMissingTableResult()) {
+                finish({}, true, false, ScreenshotRecognitionFileExport::noResultMessage());
+                return false;
+            }
+#endif
+            checkpoint = recognitionCheckpoint(recognition);
+            content = std::move(*snapshot);
+            recognitionContent = true;
+        }
+    }
+    if (!recognitionContent) {
+        auto snapshot = recognition
+                            ? recognition->imageExportSnapshot(document.image(), document.bounds(),
+                                                               canvas->recognitionBackground(),
+                                                               canvas->recognitionBackgroundRect())
+                            : std::nullopt;
+        if (snapshot) {
+            content = ScreenshotExportSource::fromRecognitionImage(std::move(*snapshot));
+        } else {
+            QString error;
+            auto source = document.exportSource(&error);
+            if (!source.isValid()) {
+                finish({}, false, false, error);
+                return false;
+            }
+            checkpoint = document.checkpoint();
+            content = std::move(source);
+        }
+    }
     showNotice(Notice::Exporting);
     if (!lifetime || closing)
         return false;
     palette->setCloudUploadBusy(operation == ExportOperation::Upload);
     exporter.start(operation, std::move(content), surface->window(), floating,
-                   [finish, checkpoint](bool success, QString error) {
-                       finish(checkpoint, success, std::move(error));
-                   });
+                   completion(std::move(checkpoint), recognitionContent));
     return true;
 }
 
@@ -1647,46 +1764,10 @@ void ImageEditingWindow::presentFile(QString path) {
     d.cancelLoading();
     d.errorSource = nullptr;
     d.setLoading(true);
-    struct FileImage {
-        ImageEditingSource source;
-        std::shared_ptr<ImageStitchingImportReservation> reservation;
-        bool rejected = false;
-    };
-    auto file = std::make_shared<FileImage>();
+    auto file = std::make_shared<EditingFileImport>();
     d.loadJob = ScreenshotExportCoordinator::shared().submit(
         this, ScreenshotExportCoordinator::Priority::Foreground,
-        [path = std::move(path), file](const auto& cancellation) {
-            const auto cancelled = [&cancellation] {
-                return cancellation.isCancellationRequested();
-            };
-            file->source.originalFileName = QFileInfo(path).fileName();
-            file->reservation = reserveImageStitchingImport(0);
-            file->rejected = !file->reservation;
-            const auto files = ScreenshotClipboardContentReader::snapshotLocalFiles(
-                {path}, cancelled, ScreenshotClipboardContentReader::FilePurpose::ImageImport);
-            if (!file->rejected && !files.isEmpty()) {
-                file->source.image = ScreenshotClipboardContentReader::decodeImageFile(
-                    files.first(), cancelled, [file](qint64 bytes) {
-                        if (!file->reservation->resize(bytes)) {
-                            file->rejected = true;
-                            return false;
-                        }
-                        return true;
-                    });
-                if (!file->source.image.isNull()) {
-                    const auto bytes = imageStitchingImageImportBytes(file->source.image.size());
-                    file->rejected = bytes == 0 || !file->reservation->resize(std::max(
-                                                       bytes, file->source.image.sizeInBytes()));
-                    if (file->rejected)
-                        file->source.image = {};
-                }
-            }
-            file->source.pixelSize = file->source.image.size();
-            file->source.canvasRect = QRectF(QPointF(), QSizeF(file->source.pixelSize));
-            file->source.flattened = true;
-            return ScreenshotExportTaskResult{};
-        },
-        [this, file, generation](auto result) {
+        readEditingFile(std::move(path), file), [this, file, generation](auto result) {
             if (m_impl->closing || m_impl->loadGeneration != generation)
                 return;
             if (!result.succeeded() || file->source.image.isNull()) {
@@ -1695,23 +1776,29 @@ void ImageEditingWindow::presentFile(QString path) {
                         ? tr("The image is too large or there is not enough memory to load it")
                         : tr("The image could not be loaded");
             }
-            const bool success = result.succeeded() && !file->source.image.isNull();
-            const QPointer<ImageEditingWindow> guard(this);
-            present(std::move(file->source));
-            if (!guard || m_impl->closing || m_impl->loadGeneration != generation + 1)
-                return;
-            if (file->rejected)
-                m_impl->errorSource = QT_TRANSLATE_NOOP(
-                    "ImageEditingWindow",
-                    "The image is too large or there is not enough memory to load it");
-            if (success)
-                m_impl->fileReservation = std::move(file->reservation);
+            presentFileImage(std::move(file->source), std::move(file->reservation), file->rejected);
         });
     if (!d.loadJob.isValid()) {
         ImageEditingSource failure;
         failure.error = tr("The image could not be loaded");
         present(std::move(failure));
     }
+}
+void ImageEditingWindow::presentFileImage(
+    ImageEditingSource source, std::shared_ptr<ImageStitchingImportReservation> reservation,
+    bool rejected) {
+    const auto generation = m_impl->loadGeneration;
+    const bool success = source.error.isEmpty() && !source.image.isNull();
+    const QPointer<ImageEditingWindow> guard(this);
+    present(std::move(source));
+    if (!guard || m_impl->closing || m_impl->loadGeneration != generation + 1)
+        return;
+    if (rejected)
+        m_impl->errorSource =
+            QT_TRANSLATE_NOOP("ImageEditingWindow",
+                              "The image is too large or there is not enough memory to load it");
+    if (success)
+        m_impl->fileReservation = std::move(reservation);
 }
 void ImageEditingWindow::present(ImageEditingSource source) {
     auto& d = *m_impl;
@@ -1792,6 +1879,10 @@ void ImageEditingWindow::present(ImageEditingSource source) {
     d.pruneRecognitionSessions(true);
     d.fileReservation.reset();
     d.initialRecognition = source.recognition;
+    // Loading can restore a session with older creation styles or reset a reused editor.
+    const auto defaults = screenshotCanvasToolStyleDefaults();
+    applyScreenshotCanvasToolStyles(*d.canvas, defaults);
+    d.palette->setCreationStyleDefaults(defaults);
     d.syncAvailability();
     d.stack->setCurrentWidget(d.canvas);
     d.canvas->fit();
@@ -1964,16 +2055,12 @@ void ImageEditingWindow::confirmDiscard(std::function<void(bool)> done) {
         done(false);
         return;
     }
-    auto* dialog = new AdModal(this);
+    auto* dialog = modal_window::createConfirmation(this, d.surface->window());
     d.confirmation = dialog;
-    dialog->setMode(AdModal::Mode::Window);
-    dialog->setOwnerWindow(d.surface->window());
-    dialog->setWindowModality(Qt::WindowModal);
-    dialog->setPreset(AdModal::Preset::Confirm);
+
     d.translateConfirmation();
-    connect(dialog, &AdModal::finished, this, [this, done = std::move(done), dialog](auto code) {
+    connect(dialog, &AdModal::finished, this, [this, done = std::move(done)](auto code) {
         m_impl->confirmation = nullptr;
-        dialog->deleteLater();
         done(code == AdModal::DialogCode::Accepted);
     });
     dialog->setOpen(true);
@@ -2159,7 +2246,21 @@ ImageEditingWindow* ImageEditingWindowCoordinator::createWindow() {
             });
     return window;
 }
-void ImageEditingWindowCoordinator::presentFiles(const QStringList& paths) {
+void ImageEditingWindowCoordinator::presentFiles(const QStringList& paths, bool skipUnreadable) {
+    if (skipUnreadable) {
+        for (const auto& path : paths) {
+            auto file = std::make_shared<EditingFileImport>();
+            if (!m_fileImports.enqueue(ScreenshotExportCoordinator::Priority::Foreground,
+                                       readEditingFile(path, file), [this, file](auto result) {
+                                           if (result.succeeded() && !file->source.image.isNull())
+                                               createWindow()->presentFileImage(
+                                                   std::move(file->source),
+                                                   std::move(file->reservation), false);
+                                       }))
+                break;
+        }
+        return;
+    }
     if (auto* window = createWindow()) {
         window->presentEmpty();
         window->openFiles(paths);
@@ -2211,6 +2312,16 @@ void ImageEditingWindowCoordinator::presentSelectedFiles(
 void ImageEditingWindowCoordinator::presentHistory(const storage::CaptureHistoryRecord& record) {
     if (auto* window = createWindow())
         window->presentHistory(record);
+}
+bool ImageEditingWindowCoordinator::presentDocument(ImageEditingSource source,
+                                                    std::function<void(bool)> completion) {
+    auto* window = createWindow();
+    if (!window)
+        return false;
+    connect(window, &ImageEditingWindow::loaded, window, std::move(completion),
+            Qt::SingleShotConnection);
+    window->present(std::move(source));
+    return true;
 }
 void ImageEditingWindowCoordinator::presentSource(ScreenshotExportSource source) {
     if (auto* window = createWindow())
@@ -2274,7 +2385,7 @@ bool ImageEditingWindowCoordinator::hasUnsavedChanges() const {
 }
 bool ImageEditingWindowCoordinator::prepareForUpdateHandoff() {
     Q_ASSERT(QThread::currentThread() == thread());
-    if (m_handoffPreparing || m_reviewPending)
+    if (m_handoffPreparing || m_reviewPending || m_fileImports.active())
         return false;
     const QPointer<ImageEditingWindowCoordinator> lifetime(this);
     m_handoffPreparing = true;
@@ -2293,9 +2404,11 @@ bool ImageEditingWindowCoordinator::prepareForUpdateHandoff() {
         if (m_windowRevision != revision || m_reviewPending || window->dirty())
             return false;
     }
-    return m_windowRevision == revision && !m_reviewPending && !hasUnsavedChanges();
+    return m_windowRevision == revision && !m_reviewPending && !m_fileImports.active() &&
+           !hasUnsavedChanges();
 }
 void ImageEditingWindowCoordinator::shutdown() {
+    m_fileImports.cancel();
     const auto windows = std::exchange(m_windows, {});
     if (!windows.isEmpty())
         ++m_windowRevision;

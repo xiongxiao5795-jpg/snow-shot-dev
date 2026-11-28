@@ -216,6 +216,47 @@ void imageTransfersConvertDirectlyWithoutPublishingReady() {
         !transport_detail::copyImageToTransferSlot(fixture, slot.data(), kSlotHeaderBytes - 1, 7),
         "OCR mappings shorter than a header must reject staging");
 }
+
+#ifdef Q_OS_MACOS
+void allocatorPolicyAppliesOnlyToTheOcrChild() {
+    const auto setting = QStringLiteral("MallocLargeCache");
+    const auto parent = QProcessEnvironment::systemEnvironment();
+    const auto check = [&](const QString& overrideValue, const QByteArray& expectedValue) {
+        QProcessEnvironment environment;
+        environment.insert(QStringLiteral("SNOW_TEST_OCR_ENVIRONMENT"), QStringLiteral("kept"));
+        if (!overrideValue.isNull())
+            environment.insert(setting, overrideValue);
+
+        QObject receiver;
+        QByteArray output;
+        bool finished = false;
+        snow_shot::ocr::ScreenshotOcrTransport transport(
+            &receiver,
+            {[](qint64) {}, [&](QByteArray chunk) { output += chunk; }, [](QByteArray) {},
+             [&](int code, QProcess::ExitStatus status) {
+                 require(code == 0 && status == QProcess::NormalExit,
+                         "the child environment probe must exit successfully");
+                 finished = true;
+             },
+             [](QString, QString) { require(false, "the child environment probe must launch"); }});
+        ScreenshotOcrResolvedAssets assets;
+        assets.processPath = QStringLiteral("/usr/bin/env");
+        assets.runtimeDirectory = QDir::tempPath();
+        transport.start(assets, environment);
+        require(waitUntil([&] { return finished; }), "the child environment probe must finish");
+
+        const auto variables = output.split('\n');
+        require(variables.contains("MallocLargeCache=" + expectedValue) &&
+                    variables.contains("SNOW_TEST_OCR_ENVIRONMENT=kept"),
+                "OCR launch must supply its allocator default while preserving explicit values");
+        require(QProcessEnvironment::systemEnvironment() == parent,
+                "OCR launch must leave the parent environment unchanged");
+    };
+    check({}, "0");
+    check(QStringLiteral("1"), "1");
+    check(QStringLiteral(""), "");
+}
+#endif
 } // namespace
 
 // A real subprocess with the OCR wire handshake, but no model or inference timing.
@@ -233,7 +274,7 @@ int runOcrLifecycleChild() {
         QByteArray frame;
         QDataStream stream(&frame, QIODevice::WriteOnly);
         stream.setByteOrder(QDataStream::LittleEndian);
-        const quint16 version = qEnvironmentVariableIsSet("SNOW_TEST_OCR_OLD_PROTOCOL") ? 6 : 7;
+        const quint16 version = qEnvironmentVariableIsSet("SNOW_TEST_OCR_OLD_PROTOCOL") ? 7 : 8;
         stream << quint32(0x52434f53) << version << kind << token << quint32(payload.size());
         frame.append(payload);
         std::fwrite(frame.constData(), 1, static_cast<std::size_t>(frame.size()), stdout);
@@ -250,7 +291,19 @@ int runOcrLifecycleChild() {
         QDataStream stream(&payload, QIODevice::WriteOnly);
         stream.setByteOrder(QDataStream::LittleEndian);
         stream << quint8(1) << quint32(0);
-        if (qEnvironmentVariableIsSet("SNOW_TEST_OCR_TEXT_COLOR")) {
+        if (qEnvironmentVariableIsSet("SNOW_TEST_OCR_PARAGRAPH_CHAIN")) {
+            stream << quint32(2) << quint32(5);
+            stream.writeRawData("First", 5);
+            stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
+            stream << 0.95F;
+            for (float coordinate : {1.F, 1.F, 7.F, 1.F, 7.F, 3.F, 1.F, 3.F})
+                stream << coordinate;
+            stream << quint32(6);
+            stream.writeRawData("Second", 6);
+            stream << 0.95F;
+            for (float coordinate : {1.F, 4.F, 7.F, 4.F, 7.F, 6.F, 1.F, 6.F})
+                stream << coordinate;
+        } else if (qEnvironmentVariableIsSet("SNOW_TEST_OCR_TEXT_COLOR")) {
             stream << quint32(1) << quint32(7);
             stream.writeRawData("Colored", 7);
             stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
@@ -272,7 +325,7 @@ int runOcrLifecycleChild() {
         quint16 version = 0, kind = 0;
         quint64 token = 0;
         input >> magic >> version >> kind >> token >> size;
-        if (magic != 0x52434f53 || version != 7 || size > 1024 * 1024)
+        if (magic != 0x52434f53 || version != 8 || size > 1024 * 1024)
             return 2;
         QByteArray payload(size, '\0');
         if (std::fread(payload.data(), 1, size, stdin) != size)
@@ -297,8 +350,8 @@ int runOcrLifecycleChild() {
             QDataStream output(&ready, QIODevice::WriteOnly);
             output.setByteOrder(QDataStream::LittleEndian);
             output << quint8(1) << quint32(0) << quint32(5);
-            output.writeRawData("1.2.2", 5);
-            output << quint32(7);
+            output.writeRawData("1.5.3", 5);
+            output << quint32(8);
             reply(2, 0, ready);
         } else if (kind == 19) {
             event("acceleration " + payload.toHex());
@@ -406,6 +459,14 @@ int runOcrLifecycleChild() {
             if (!marker.open(QIODevice::WriteOnly | QIODevice::Append))
                 return 5;
             marker.write(QByteArray::number(token) + '\n');
+        } else if (kind == 21 && qEnvironmentVariableIsSet("SNOW_TEST_OCR_PARAGRAPH_CHAIN")) {
+            event("group " + QByteArray::number(token));
+            QByteArray grouped;
+            QDataStream output(&grouped, QIODevice::WriteOnly);
+            output.setByteOrder(QDataStream::LittleEndian);
+            output << quint8(1) << quint32(2) << quint32(1) << quint32(0) << quint32(1)
+                   << quint32(1);
+            reply(22, token, grouped);
         } else if (kind == 6) {
             if (qEnvironmentVariableIsSet("SNOW_TEST_OCR_LIFECYCLE_COMPLETE"))
                 return 0;
@@ -416,6 +477,9 @@ int runOcrLifecycleChild() {
 
 void ocrProcessLifecycleTests() {
     imageTransfersConvertDirectlyWithoutPublishingReady();
+#ifdef Q_OS_MACOS
+    allocatorPolicyAppliesOnlyToTheOcrChild();
+#endif
     require(!ScreenshotOcrRuntimeConfiguration{}.hardwareAcceleration &&
                 !ScreenshotOcrRecognitionService::Options{}.hardwareAcceleration,
             "hardware acceleration must default off in runtime and initial options");
@@ -796,45 +860,34 @@ void ocrProcessLifecycleTests() {
         require(detachIndex >= 0 && detachIndex < lastPrepare &&
                     countEvent("release") == initialReleases,
                 "hot reset must detach the image mapping and preserve compiled models");
-        require(
-            before.at(lastPrepare).startsWith("prepare 0000"),
-            "default warm session must request max-side detection and accuracy-first processing");
-        configuration.detectorResizePolicy = ScreenshotOcrDetectorResizePolicy::Min;
+        require(before.at(lastPrepare).startsWith("prepare 0000"),
+                "default warm session must send the reserved byte and accuracy-first processing");
+        configuration.textDetectionProcessing = ScreenshotOcrTextDetectionProcessing::SpeedFirst;
         service.setRuntimeConfiguration(configuration);
         require(waitUntil([&] { return countEvent("prepare ") == initialLoads + 3; }),
-                "detector scaling change must rebuild idle warm-up");
+                "processing change must rebuild the idle warm session");
+        require(countEvent("release") == initialReleases + 1,
+                "configuration changes must release the previous model session before loading");
         QByteArray latestPrepare;
         for (const auto& event : events()) {
             if (event.startsWith("prepare "))
                 latestPrepare = event;
         }
-        require(latestPrepare.startsWith("prepare 0100") && service.processId() == warmedPid,
-                "the min-side detector policy must reach the existing worker process");
-        require(countEvent("release") == initialReleases + 1,
-                "configuration changes must release the previous model session before loading");
-        configuration.textDetectionProcessing = ScreenshotOcrTextDetectionProcessing::SpeedFirst;
-        service.setRuntimeConfiguration(configuration);
-        require(waitUntil([&] { return countEvent("prepare ") == initialLoads + 4; }),
-                "processing change must rebuild the idle warm session");
-        for (const auto& event : events()) {
-            if (event.startsWith("prepare "))
-                latestPrepare = event;
-        }
-        require(latestPrepare.startsWith("prepare 0101") && service.processId() == warmedPid,
-                "speed-first processing must reach the existing worker without changing detection");
+        require(latestPrepare.startsWith("prepare 0001") && service.processId() == warmedPid,
+                "speed-first processing must reach the existing worker");
         service.setTextDetectionProcessing(ScreenshotOcrTextDetectionProcessing::SpeedFirst);
         QCoreApplication::processEvents();
-        require(countEvent("prepare ") == initialLoads + 4,
+        require(countEvent("prepare ") == initialLoads + 3,
                 "reapplying the selected processing mode must preserve the existing warm session");
         configuration.textDetectionProcessing = ScreenshotOcrTextDetectionProcessing::AccuracyFirst;
         service.setTextDetectionProcessing(configuration.textDetectionProcessing);
-        require(waitUntil([&] { return countEvent("prepare ") == initialLoads + 5; }),
+        require(waitUntil([&] { return countEvent("prepare ") == initialLoads + 4; }),
                 "restoring accuracy first must rebuild the warm session");
         for (const auto& event : events()) {
             if (event.startsWith("prepare "))
                 latestPrepare = event;
         }
-        require(latestPrepare.startsWith("prepare 0100") && service.processId() == warmedPid,
+        require(latestPrepare.startsWith("prepare 0000") && service.processId() == warmedPid,
                 "accuracy-first processing must be restored without replacing the worker");
         configuration.modelHotStart = false;
         const int released = countEvent("release");
@@ -927,6 +980,65 @@ void ocrProcessLifecycleTests() {
             QFile::remove(directory.filePath(QStringLiteral("finish-%1").arg(token)));
     }
     qputenv("SNOW_TEST_OCR_LIFECYCLE_COMPLETE", "1");
+    {
+        qputenv("SNOW_TEST_OCR_PARAGRAPH_CHAIN", "1");
+        QSemaphore entered, resume;
+        auto chainOptions = options;
+        chainOptions.paragraphModelPath = chainOptions.processPath;
+        chainOptions.beforeLocalRender = [&]() {
+            entered.release();
+            require(resume.tryAcquire(1, 5000), "paragraph-chain barrier must be released");
+        };
+        const qsizetype initialStarts = recordsFor(QStringLiteral("ocr.process_started")).size();
+        const qsizetype initialExits = processExits().size();
+        ScreenshotOcrRecognitionService service(chainOptions);
+        QObject receiver;
+        QImage image(8, 8, QImage::Format_RGBA8888);
+        image.fill(Qt::white);
+        bool paragraphCompleted = false;
+        ScreenshotOcrRequest request;
+        request.image = image;
+        request.canvasRect = QRectF(0, 0, 8, 8);
+        request.retainProcessThroughCompletion = true;
+        require(service.recognize(
+                    request, &receiver,
+                    [&](ScreenshotOcrRecognitionResult result) {
+                        require(result.error.isEmpty() && result.presentation &&
+                                    result.presentation->lines.size() == 2,
+                                "the OCR completion must expose lines before paragraph grouping");
+                        QVector<QPolygonF> quads;
+                        for (const auto& line : result.presentation->lines)
+                            quads.push_back(line.quad);
+                        require(service.groupParagraphs(
+                                    {image, QRectF(0, 0, 8, 8), quads}, &receiver,
+                                    [&](ScreenshotOcrParagraphResult grouped) {
+                                        require(grouped.error.isEmpty() &&
+                                                    grouped.groups.size() == 2,
+                                                "the follow-up paragraph request must complete");
+                                        paragraphCompleted = true;
+                                    }) != 0,
+                                "the OCR callback must enqueue paragraph grouping");
+                    }) != 0,
+                "the nonresident paragraph-chain OCR request must be accepted");
+        require(waitUntil([&] { return entered.available() == 1; }),
+                "OCR result preparation must pause before its completion callback");
+        const qint64 childPid = service.processId();
+        require(childPid != 0, "the OCR worker must remain available during local preparation");
+        QElapsedTimer reconcileWindow;
+        reconcileWindow.start();
+        require(waitUntil([&] { return reconcileWindow.elapsed() >= 50; }),
+                "the idle reconciliation must run while local preparation is paused");
+        require(service.processId() == childPid && processExits().size() == initialExits &&
+                    recordsFor(QStringLiteral("ocr.process_started")).size() == initialStarts + 1,
+                "local result preparation must hold the same worker for its callback follow-up");
+        resume.release();
+        require(waitUntil([&] { return paragraphCompleted && service.processId() == 0; }),
+                "paragraph grouping must finish before the nonresident worker exits");
+        require(recordsFor(QStringLiteral("ocr.process_started")).size() == initialStarts + 1 &&
+                    processExits().size() == initialExits + 1 && countEvent("group ") == 1,
+                "OCR and paragraph grouping must share one child-process lifetime");
+        qunsetenv("SNOW_TEST_OCR_PARAGRAPH_CHAIN");
+    }
     {
         auto crashOptions = options;
         crashOptions.retryTimeUnitMilliseconds = 20;
@@ -1117,7 +1229,7 @@ void ocrProcessLifecycleTests() {
             {image, QRectF(0, 0, 8, 8)}, &receiver,
             [&](ScreenshotOcrRecognitionResult result) { rejected = !result.error.isEmpty(); });
         require(waitUntil([&] { return rejected; }),
-                "protocol 6 workers must be rejected explicitly");
+                "protocol 7 workers must be rejected explicitly");
         qunsetenv("SNOW_TEST_OCR_OLD_PROTOCOL");
     }
     qputenv("SNOW_TEST_OCR_TEXT_COLOR", "1");

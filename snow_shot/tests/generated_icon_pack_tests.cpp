@@ -12,6 +12,7 @@
 #include <QStringList>
 #include <QXmlStreamReader>
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -98,8 +99,8 @@ void everySnowShotEntryRenders() {
     const auto registered = icons::registerWith(renderer);
     require(registered.ok(), "Snow Shot pack registration should succeed");
     const adqt::icons::IconPack* staticPack = icons::pack().staticPack();
-    require(staticPack != nullptr && staticPack->entryCount == 222,
-            "Snow Shot pack should contain all 222 project-owned assets");
+    require(staticPack != nullptr && staticPack->entryCount == 225,
+            "Snow Shot pack should contain all 225 project-owned assets");
     require(adqt::icons::describeIcon(icons::outlined::CreditsCoin()).key.name ==
                 QStringLiteral("credits-coin"),
             "account credits should resolve to their project-owned coin icon");
@@ -118,6 +119,9 @@ void everySnowShotEntryRenders() {
     require(adqt::icons::describeIcon(icons::outlined::ApplyCrop()).key.name ==
                 QStringLiteral("apply-crop"),
             "applying a crop should resolve to its project-owned icon");
+    require(adqt::icons::describeIcon(icons::outlined::CancelCrop()).key.name ==
+                QStringLiteral("cancel-crop"),
+            "canceling a crop should resolve to its project-owned icon");
     require(adqt::icons::describeIcon(icons::outlined::WindowUnderCursorAlwaysOnTop()).key.name ==
                 QStringLiteral("window-under-cursor-always-on-top"),
             "window always-on-top should resolve to its project-owned icon");
@@ -365,6 +369,20 @@ void projectIconColorsAndModelsArePreserved() {
                 mouseMetadata.key.name == QStringLiteral("mouse") &&
                 containsOpaqueColor(render(mouseRef, QSize(32, 32)).toImage(), primary),
             "mouse should expose a tintable project-owned icon factory");
+
+    for (const QColor& foreground : {QColor("#262626"), QColor("#f5f5f5")}) {
+        const auto ref =
+            icons::outlined::TransparentLayer(adqt::icons::IconColors::primary(foreground));
+        for (int dpr : {1, 2}) {
+            const QImage image = render(ref, QSize(16, 16), dpr).toImage();
+            require(image.size() == QSize(16, 16) * dpr &&
+                        image.pixelColor(5 * dpr, 7 * dpr) == foreground &&
+                        image.pixelColor(8 * dpr, 10 * dpr) == foreground &&
+                        image.pixelColor(8 * dpr, 7 * dpr).alpha() == 0 &&
+                        image.pixelColor(5 * dpr, 10 * dpr).alpha() == 0,
+                    "the two themed checkerboard cells stay distinct at menu size");
+        }
+    }
 
     const QImage screenshot = snow_shot::presentation::icons::renderTintedIconPixmap(
                                   icons::twotone::ScreenshotFeature(), QSize(32, 32), 1.0, primary)
@@ -659,6 +677,25 @@ void imageStitchingIconFollowsAntDesign() {
         require(preview.save(path), "save stitching icon light/dark inspection sheet");
 }
 
+void imageCompressionArrowsStaySeparatedAtMenuSize() {
+    namespace icons = snow_shot::presentation::icons::custom;
+    for (const QColor& color : {QColor("#262626"), QColor("#f0f0f0")}) {
+        const auto icon =
+            icons::outlined::ImageCompression(adqt::icons::IconColors::primary(color));
+        for (qreal dpr : {1.0, 1.25, 2.0}) {
+            const QImage image = render(icon, QSize(16, 16), dpr).toImage();
+            require(containsOpaqueColor(image, color), "compression icon uses the menu text color");
+            const int side = image.width();
+            const QRect upperArrow(side * 3 / 4, side / 4, side / 4, side / 4);
+            const QRect gap(upperArrow.left(), side / 2, upperArrow.width(), 1);
+            require(opaquePixelCount(image, upperArrow) > 0 &&
+                        opaquePixelCount(image, upperArrow.translated(0, side / 4)) > 0 &&
+                        opaquePixelCount(image, gap) == 0,
+                    "opposing compression arrows remain visible with a clear gap");
+        }
+    }
+}
+
 void spreadsheetIconFollowsAntDesign() {
     namespace icons = snow_shot::presentation::icons::custom;
     const auto ref = icons::outlined::OpenSpreadsheetFile();
@@ -847,13 +884,15 @@ void revealIconFollowsAntDesign() {
 
 void cropIconsFollowAntDesign() {
     namespace icons = snow_shot::presentation::icons::custom::outlined;
-    const adqt::icons::IconRef refs[] = {icons::CropVertical(), icons::CropHorizontal()};
-    QImage preview(480, 160, QImage::Format_ARGB32_Premultiplied);
+    const std::array refs{icons::CropVertical(), icons::CropHorizontal(), icons::ApplyCrop(),
+                          icons::CancelCrop()};
+    QImage preview(240 * static_cast<int>(refs.size()), 160, QImage::Format_ARGB32_Premultiplied);
     QPainter painter(&preview);
     for (int row = 0; row < 2; ++row) {
         const QColor foreground(row == 0 ? "#262626" : "#f0f0f0");
-        painter.fillRect(QRect(0, row * 80, 480, 80), row == 0 ? Qt::white : QColor("#141414"));
-        for (int index = 0; index < 2; ++index) {
+        painter.fillRect(QRect(0, row * 80, preview.width(), 80),
+                         row == 0 ? Qt::white : QColor("#141414"));
+        for (std::size_t index = 0; index < refs.size(); ++index) {
             const auto ref = refs[index].withColors(adqt::icons::IconColors::primary(foreground));
             const auto bounds = alphaBounds(render(ref, QSize(1024, 1024)).toImage());
             require(QRect(64, 64, 896, 896).contains(bounds),
@@ -866,7 +905,7 @@ void cropIconsFollowAntDesign() {
                                 containsOpaqueColor(pixels, foreground),
                             "crop icons render with theme colors at toolbar sizes and scales");
                 }
-                painter.drawPixmap(index * 240 + column * 72 + (72 - size) / 2,
+                painter.drawPixmap(static_cast<int>(index) * 240 + column * 72 + (72 - size) / 2,
                                    row * 80 + (80 - size) / 2, render(ref, QSize(size, size)));
                 ++column;
             }
@@ -875,6 +914,9 @@ void cropIconsFollowAntDesign() {
     painter.end();
     require(render(refs[0], QSize(24, 24)).toImage() != render(refs[1], QSize(24, 24)).toImage(),
             "crop directions are visually distinct at toolbar size");
+    require(render(icons::ApplyCrop(), QSize(16, 16)).toImage() !=
+                render(icons::CancelCrop(), QSize(16, 16)).toImage(),
+            "apply and cancel have distinct marks at menu size");
     if (const auto path = qEnvironmentVariable("SNOW_CROP_ICON_PREVIEW"); !path.isEmpty())
         require(preview.save(path), "save crop icon visual inspection sheet");
 }
@@ -1243,6 +1285,7 @@ int main(int argc, char** argv) {
             everySnowShotEntryRenders();
             return 0;
         }
+        imageCompressionArrowsStaySeparatedAtMenuSize();
         imageStitchingIconFollowsAntDesign();
         if (application.arguments().contains(QStringLiteral("--image-stitching-only"))) {
             everySnowShotEntryRenders();

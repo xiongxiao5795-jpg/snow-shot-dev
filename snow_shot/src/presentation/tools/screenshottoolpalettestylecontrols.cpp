@@ -1,4 +1,5 @@
 #include "screenshottoolpalettestylecontrols.h"
+#include "snow_shot/presentation/components/windowconfirmation.h"
 #include "screenshottoolbarperfinstrumentation.h"
 
 #include "screenshottoolpalettestylepresets.h"
@@ -1615,6 +1616,7 @@ ScreenshotToolPaletteShapeFamilyResult ScreenshotToolPaletteStyleControls::build
     auto*& container = spotlight ? m_spotlightShapeControlsContainer : m_shapeControlsContainer;
     auto*& group = spotlight ? m_spotlightShapeButtonGroup : m_shapeButtonGroup;
     ScreenshotToolPaletteRadioEditorConfig shapeConfig;
+    shapeConfig.cycleWithAnnotationShortcut = true;
     shapeConfig.objectName = spotlight ? QStringLiteral("screenshotSpotlightShapeButtonGroup")
                                        : QStringLiteral("screenshotShapeButtonGroup");
     shapeConfig.options = {
@@ -1779,6 +1781,7 @@ ScreenshotToolPaletteShapeFamilyResult ScreenshotToolPaletteStyleControls::build
             host.addGroupSeparator(layout);
         }
         ScreenshotToolPaletteRadioEditorConfig brushModeConfig;
+        brushModeConfig.cycleWithAnnotationShortcut = true;
         brushModeConfig.objectName = QStringLiteral("screenshotBrushModeButtonGroup");
         brushModeConfig.options = {
             {0, QStringLiteral("Regular brush"), custom_outlined_icons::BrushRegular()},
@@ -1817,6 +1820,7 @@ ScreenshotToolPaletteShapeFamilyResult ScreenshotToolPaletteStyleControls::build
         }
 
         ScreenshotToolPaletteRadioEditorConfig lineTypeConfig;
+        lineTypeConfig.cycleWithAnnotationShortcut = true;
         lineTypeConfig.objectName = QStringLiteral("screenshotLineTypeButtonGroup");
         lineTypeConfig.options = {
             {0, QStringLiteral("Straight line"), custom_outlined_icons::LineTypeStraight()},
@@ -2009,6 +2013,7 @@ QWidget* ScreenshotToolPaletteStyleControls::buildArrowFamily(
     }
 
     ScreenshotToolPaletteRadioEditorConfig arrowTypeConfig;
+    arrowTypeConfig.cycleWithAnnotationShortcut = true;
     arrowTypeConfig.objectName = QStringLiteral("screenshotArrowTypeButtonGroup");
     arrowTypeConfig.options = {
         {0, QStringLiteral("Straight arrow"), arrowTypeIcon(SnowCanvasArrowType::Straight)},
@@ -2325,6 +2330,7 @@ QWidget* ScreenshotToolPaletteStyleControls::buildMagnifierFamily(
     if (shapes == nullptr) {
         ScreenshotToolPaletteRadioEditorConfig config;
         config.objectName = QStringLiteral("screenshotMagnifierShapeButtonGroup");
+        config.cycleWithAnnotationShortcut = true;
         config.options = {
             {static_cast<int>(SnowCanvasRectangleShape::Rectangle), "Rectangle",
              custom_outlined_icons::ShapeRectangle()},
@@ -2799,6 +2805,7 @@ QWidget* ScreenshotToolPaletteStyleControls::buildAngleFamily(
     if (types == nullptr) {
         ScreenshotToolPaletteRadioEditorConfig config;
         config.objectName = QStringLiteral("screenshotAngleTypeButtonGroup");
+        config.cycleWithAnnotationShortcut = true;
         config.useButtonMetrics = true;
         config.options = {
             {static_cast<int>(SnowCanvasAngleType::Directed), "360° angle",
@@ -3696,6 +3703,7 @@ QWidget* ScreenshotToolPaletteStyleControls::buildSequenceNumberFamily(
     }
 
     ScreenshotToolPaletteRadioEditorConfig sequenceNumberTypeConfig;
+    sequenceNumberTypeConfig.cycleWithAnnotationShortcut = true;
     sequenceNumberTypeConfig.objectName = QStringLiteral("screenshotSerialNumberTypeButtonGroup");
     sequenceNumberTypeConfig.options = {
         {static_cast<int>(SnowCanvasSerialNumberType::OutlinedCircle),
@@ -5511,6 +5519,14 @@ void ScreenshotToolPaletteStyleControls::setBracketControlsActive(bool active) {
     m_state.bracketControlsActive = active;
 }
 
+bool ScreenshotToolPaletteStyleControls::canCycleDistanceUnit() const {
+    return m_distanceUnitEditor && m_distanceUnitEditor->canCycleUnit();
+}
+
+bool ScreenshotToolPaletteStyleControls::cycleDistanceUnit() {
+    return m_distanceUnitEditor && m_distanceUnitEditor->cycleUnit();
+}
+
 bool ScreenshotToolPaletteStyleControls::handleDistanceWheel(
     const ScreenshotToolPaletteWheelPosition& position, int direction) {
     if (direction == 0)
@@ -6880,18 +6896,14 @@ void ScreenshotToolPaletteStyleControls::openCreateWatermarkTemplateModal() {
         formLayout->insertWidget(formLayout->indexOf(valueItem) + 1, alert);
     }
 
-    auto* modal = new adqt::widgets::AdModal(m_watermarkTemplateSelect);
+    auto* modal = snow_shot::presentation::modal_window::create(
+        m_watermarkTemplateSelect,
+        m_callbacks.watermarkTemplateModalOwnerWindow
+            ? m_callbacks.watermarkTemplateModalOwnerWindow()
+            : m_watermarkTemplateSelect->window(),
+        {.windowModality = m_callbacks.dialogModality});
     modal->setObjectName(QStringLiteral("screenshotWatermarkTemplateCreateModal"));
-    QWidget* modalOwner = m_callbacks.watermarkTemplateModalOwnerWindow
-                              ? m_callbacks.watermarkTemplateModalOwnerWindow()
-                              : m_watermarkTemplateSelect->window();
-    modal->setOwnerWindow(modalOwner);
-    modal->setMode(adqt::widgets::AdModal::Mode::Window);
-    modal->setWindowModality(Qt::ApplicationModal);
-    modal->setCentered(true);
     modal->setPreferredWidth(400);
-    modal->setMaskVisible(false);
-    modal->setCloseOnMaskClick(false);
     modal->setClosePolicy(adqt::widgets::AdModal::ClosePolicy::Manual);
     modal->setStandardButtons(adqt::widgets::AdModal::StandardButton::Ok |
                               adqt::widgets::AdModal::StandardButton::Cancel);
@@ -6964,33 +6976,28 @@ void ScreenshotToolPaletteStyleControls::openDeleteWatermarkTemplateModal(
         index < 0 || index >= m_watermarkTemplates.size()) {
         return;
     }
-    auto* modal = new adqt::widgets::AdModal(m_watermarkTemplateSelect);
+    const auto target = m_watermarkTemplates.at(index);
+    auto* modal = snow_shot::presentation::modal_window::createConfirmation(
+        m_watermarkTemplateSelect,
+        m_callbacks.watermarkTemplateModalOwnerWindow
+            ? m_callbacks.watermarkTemplateModalOwnerWindow()
+            : m_watermarkTemplateSelect->window(),
+        {.windowModality = m_callbacks.dialogModality});
     modal->setObjectName(QStringLiteral("screenshotWatermarkTemplateDeleteModal"));
-    modal->setOwnerWindow(m_callbacks.watermarkTemplateModalOwnerWindow
-                              ? m_callbacks.watermarkTemplateModalOwnerWindow()
-                              : m_watermarkTemplateSelect->window());
-    modal->setMode(adqt::widgets::AdModal::Mode::Window);
-    modal->setWindowModality(Qt::ApplicationModal);
-    modal->setCentered(true);
     modal->setPreferredWidth(400);
-    modal->setMaskVisible(false);
-    modal->setCloseOnMaskClick(false);
     modal->setClosePolicy(adqt::widgets::AdModal::ClosePolicy::Manual);
-    modal->setPreset(adqt::widgets::AdModal::Preset::Confirm);
+
     modal->setAcceptAccentRole(adqt::widgets::AdButton::AccentRole::Danger);
-    modal->setStandardButtons(adqt::widgets::AdModal::StandardButton::Ok |
-                              adqt::widgets::AdModal::StandardButton::Cancel);
     m_deleteWatermarkTemplateModal = modal;
-    m_deleteWatermarkTemplateName = m_watermarkTemplates.at(index).name;
+    m_deleteWatermarkTemplateName = target.name;
     retranslateWatermarkTemplateUi();
 
     QObject::connect(modal, &adqt::widgets::AdModal::closeRequested,
                      m_watermarkTemplateCallbackContext,
-                     [this, modal = QPointer<adqt::widgets::AdModal>(modal),
-                      templateKey](adqt::widgets::AdModal::CloseReason reason) {
+                     [this, modal = QPointer<adqt::widgets::AdModal>(modal), index,
+                      target](adqt::widgets::AdModal::CloseReason reason) {
                          if (reason == adqt::widgets::AdModal::CloseReason::OkAction) {
-                             deleteWatermarkTemplate(templateKey);
-                             if (modal != nullptr) {
+                             if (deleteWatermarkTemplate(index, target) && modal != nullptr) {
                                  modal->accept();
                              }
                              return;
@@ -7003,7 +7010,6 @@ void ScreenshotToolPaletteStyleControls::openDeleteWatermarkTemplateModal(
                              m_deleteWatermarkTemplateModal = nullptr;
                              m_deleteWatermarkTemplateName.clear();
                          }
-                         modal->deleteLater();
                      });
     modal->open();
     if (modal->rejectButton() != nullptr) {
@@ -7011,23 +7017,23 @@ void ScreenshotToolPaletteStyleControls::openDeleteWatermarkTemplateModal(
     }
 }
 
-void ScreenshotToolPaletteStyleControls::deleteWatermarkTemplate(const QString& templateKey) {
-    const int index = watermarkTemplateIndex(templateKey);
-    if (index < 0 || index >= m_watermarkTemplates.size()) {
-        return;
-    }
-    QVector<snow_shot::storage::WatermarkTemplate> templates = m_watermarkTemplates;
-    templates.removeAt(index);
+bool ScreenshotToolPaletteStyleControls::deleteWatermarkTemplate(
+    int index, const snow_shot::storage::WatermarkTemplate& target) {
     const snow_shot::storage::WatermarkTemplateSettings settings;
+    auto templates = settings.templates();
+    // Keep the selected position for identical rows when it still matches.
+    const auto match = index < templates.size() && templates.at(index) == target
+                           ? templates.cbegin() + index
+                           : std::find(templates.cbegin(), templates.cend(), target);
     const QPointer<QObject> context = m_watermarkTemplateCallbackContext;
-    if (!settings.setTemplates(templates)) {
-        return;
+    if (match != templates.cend()) {
+        templates.erase(match);
+        if (!settings.setTemplates(templates))
+            return false;
     }
-    if (context == nullptr) {
-        return;
-    }
-    m_watermarkTemplates = templates;
-    refreshWatermarkTemplateOptions();
+    if (context)
+        refreshWatermarkTemplateOptions();
+    return true;
 }
 
 void ScreenshotToolPaletteStyleControls::retranslateWatermarkTemplateUi() {

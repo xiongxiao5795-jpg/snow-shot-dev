@@ -1,6 +1,11 @@
 #include "snow_shot/presentation/screenshotdisplayconfigurationobserver.h"
 
 #include "icon_renderer.h"
+#ifdef Q_OS_WIN
+#include "../../platform/windows/displayrecoverywindow.h"
+#elif defined(Q_OS_MACOS)
+#include "../../platform/macos/displaywakeobserver.h"
+#endif
 
 #include <QGuiApplication>
 #include <QRect>
@@ -12,11 +17,22 @@ ScreenshotDisplayConfigurationObserver::ScreenshotDisplayConfigurationObserver(
     ChangeHandler onChanged, QObject* parent)
     : QObject(parent), m_onChanged(std::move(onChanged)) {}
 
+ScreenshotDisplayConfigurationObserver::~ScreenshotDisplayConfigurationObserver() = default;
+
 void ScreenshotDisplayConfigurationObserver::connectApplicationSignals(
     QGuiApplication* application) {
     if (application == nullptr) {
         return;
     }
+#ifdef Q_OS_WIN
+    m_recoveryWindow = std::make_unique<snow_shot::platform::windows::DisplayRecoveryWindow>(
+        [this] { notifyChanged(Change::Recovery); });
+#elif defined(Q_OS_MACOS)
+    if (QGuiApplication::platformName() == u"cocoa") {
+        m_displayWakeObserver = snow_shot::platform::macos::observeDisplayWake(
+            [this] { notifyChanged(Change::Recovery); });
+    }
+#endif
 
     QObject::connect(application, &QGuiApplication::screenAdded, this,
                      [this](QScreen* screen) { handleScreenAdded(screen); });
@@ -77,8 +93,8 @@ void ScreenshotDisplayConfigurationObserver::handleObservedScreenChanged() {
     notifyChanged();
 }
 
-void ScreenshotDisplayConfigurationObserver::notifyChanged() {
+void ScreenshotDisplayConfigurationObserver::notifyChanged(Change change) {
     if (m_onChanged) {
-        m_onChanged();
+        m_onChanged(change);
     }
 }

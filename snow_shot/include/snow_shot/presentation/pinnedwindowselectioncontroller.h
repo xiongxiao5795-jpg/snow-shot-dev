@@ -11,6 +11,7 @@
 #include <QPointF>
 #include <QVector>
 #include <QSet>
+#include <QTimer>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -24,6 +25,8 @@ class AdModal;
 } // namespace adqt::widgets
 
 namespace snow_shot::presentation {
+enum class PinnedBatchScope { OrderedSelection, Displayed };
+
 // Selection belongs to a pin session, independently of persistent window groups.
 class PinnedWindowSelectionController final : public QObject {
     Q_OBJECT
@@ -43,17 +46,16 @@ class PinnedWindowSelectionController final : public QObject {
     void toggleSelection(ScreenshotPinnedWindow* window);
     void deselectWindow(ScreenshotPinnedWindow* window);
     void clearSelection();
+    void deferSelectionClear(ScreenshotPinnedWindow* window);
+    void resolvePendingSelectionClick(ScreenshotPinnedWindow* window, bool doubleClick);
     void selectAll(const QList<QPointer<ScreenshotPinnedWindow>>& targets);
     void stitchWindows(const QList<QPointer<ScreenshotPinnedWindow>>& targets);
-    void destroyWindows(ScreenshotPinnedWindow* owner,
-                        const QList<QPointer<ScreenshotPinnedWindow>>& targets);
+    void destroyDisplayedWindows(ScreenshotPinnedWindow* owner,
+                                 const QList<QPointer<ScreenshotPinnedWindow>>& targets);
     // Returns true when selection routing owns this context menu event.
     bool showContextMenu(ScreenshotPinnedWindow* window, const QPoint& globalPosition);
 
-    bool handlePointer(ScreenshotPinnedWindow* window, QObject* watched, QEvent* event);
-    [[nodiscard]] bool routesPointerToClient(const ScreenshotPinnedWindow& window,
-                                             const QPoint& position,
-                                             Qt::KeyboardModifiers modifiers) const;
+    void queueGeometryUpdate(const QPointF& position);
     bool beginGeometry(ScreenshotPinnedWindow* window, const QPointF& desktopPress,
                        std::optional<int> handle = {}, std::optional<QPoint> nativePress = {});
     void updateGeometry(const QPointF& desktopPosition);
@@ -79,7 +81,7 @@ class PinnedWindowSelectionController final : public QObject {
     void showFailure(QWidget* owner, const QString& text);
     void confirmDestroy(ScreenshotPinnedWindow* owner,
                         const QList<QPointer<ScreenshotPinnedWindow>>& targets,
-                        bool displayed = false);
+                        PinnedBatchScope scope);
     void retranslateUi();
 
     QList<QPointer<ScreenshotPinnedWindow>> m_windows;
@@ -88,8 +90,11 @@ class PinnedWindowSelectionController final : public QObject {
     QSet<const ScreenshotPinnedWindow*> m_selectedIndex;
     QPointer<adqt::widgets::AdContextMenu> m_contextMenu;
     QPointer<adqt::widgets::AdModal> m_destroyConfirmation;
+    QSet<QString> m_destroyConfirmationIds;
     DestroyRecords m_destroyRecords;
     quint64 m_selectionRevision = 0;
+    QTimer m_selectionClearTimer;
+    QPointer<ScreenshotPinnedWindow> m_pendingClickWindow;
     struct GeometryState;
     std::shared_ptr<GeometryState> m_geometryState;
 };

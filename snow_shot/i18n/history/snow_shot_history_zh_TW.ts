@@ -15,6 +15,10 @@
     <context>
         <name>HistoryEntryWidget</name>
         <message>
+            <source>%1 x %2 px</source>
+            <translation>%1 × %2 像素</translation>
+        </message>
+        <message>
             <source>%1 x %2 px  ·  %3 display(s)</source>
             <translation>%1 x %2 像素  ·  %3 個顯示器</translation>
         </message>
@@ -61,6 +65,10 @@
         <message>
             <source>Focused window</source>
             <translation>焦點視窗</translation>
+        </message>
+        <message>
+            <source>Image compression</source>
+            <translation>影像壓縮</translation>
         </message>
         <message>
             <source>Image editing</source>
@@ -161,10 +169,6 @@
             <translation>無法讀取選取的影像檔案，請重試</translation>
         </message>
         <message>
-            <source>No available output filename was found</source>
-            <translation>找不到可用的輸出檔名</translation>
-        </message>
-        <message>
             <source>The editing content could not be prepared for export</source>
             <translation>無法準備要匯出的編輯內容</translation>
         </message>
@@ -183,10 +187,6 @@
         <message>
             <source>The image is too large or there is not enough memory to load it</source>
             <translation>影像過大，或記憶體不足，無法載入</translation>
-        </message>
-        <message>
-            <source>The save directory is not available</source>
-            <translation>儲存目錄無法使用</translation>
         </message>
     </context>
     <context>
@@ -686,6 +686,10 @@
             <translation>將影像檔案拖曳至此處，或選擇「新增影像」</translation>
         </message>
         <message>
+            <source>Drag to move an image. Hold %1 to snap to other images. Drag a handle to resize around the center.</source>
+            <translation>拖曳影像可移動它。按住 %1 可吸附到其他影像。拖曳控制點可圍繞中心縮放。</translation>
+        </message>
+        <message>
             <source>Drop images to stitch</source>
             <translation>放開滑鼠，將影像加入影像拼接</translation>
         </message>
@@ -700,6 +704,10 @@
         <message>
             <source>Flip vertically</source>
             <translation>垂直翻轉</translation>
+        </message>
+        <message>
+            <source>Free</source>
+            <translation>自由</translation>
         </message>
         <message>
             <source>Gray</source>
@@ -780,6 +788,14 @@
         <message>
             <source>Percentage</source>
             <translation>百分比</translation>
+        </message>
+        <message>
+            <source>Percentage of the first image’s original height after rotation</source>
+            <translation>第一張影像旋轉後原始高度的百分比</translation>
+        </message>
+        <message>
+            <source>Percentage of the greatest original image height after rotation</source>
+            <translation>所有影像旋轉後最大原始高度的百分比</translation>
         </message>
         <message>
             <source>Percentage of the grid cell width</source>
@@ -1634,6 +1650,10 @@ Files:
             <translation>已隱藏</translation>
         </message>
         <message>
+            <source>Image compression</source>
+            <translation>影像壓縮</translation>
+        </message>
+        <message>
             <source>Image editing</source>
             <translation>影像編輯</translation>
         </message>
@@ -1942,6 +1962,14 @@ Files:
             <translation>取消</translation>
         </message>
         <message>
+            <source>Cancel crop</source>
+            <translation>取消裁剪</translation>
+        </message>
+        <message>
+            <source>Checkerboard</source>
+            <translation>棋盤格</translation>
+        </message>
+        <message>
             <source>Click-through</source>
             <translation>滑鼠穿透</translation>
         </message>
@@ -1994,6 +2022,10 @@ Files:
         <message>
             <source>Copy original content</source>
             <translation>複製原始內容</translation>
+        </message>
+        <message>
+            <source>Copy text to clipboard</source>
+            <translation>複製文字到剪貼簿</translation>
         </message>
         <message>
             <source>Copy to clipboard</source>
@@ -2096,6 +2128,10 @@ Files:
             <translation>隱藏其他視窗</translation>
         </message>
         <message>
+            <source>Image compression</source>
+            <translation>影像壓縮</translation>
+        </message>
+        <message>
             <source>Image editing</source>
             <translation>影像編輯</translation>
         </message>
@@ -2118,6 +2154,10 @@ Files:
         <message>
             <source>Increase speed</source>
             <translation>提高速度</translation>
+        </message>
+        <message>
+            <source>Keep transparent</source>
+            <translation>保持透明</translation>
         </message>
         <message>
             <source>Live content is unavailable. Retrying...</source>
@@ -2170,10 +2210,6 @@ Files:
         <message>
             <source>Pause</source>
             <translation>暫停</translation>
-        </message>
-        <message>
-            <source>Pin to screen management</source>
-            <translation>固定到螢幕管理</translation>
         </message>
         <message>
             <source>Pinned content</source>
@@ -2290,10 +2326,6 @@ Files:
             <translation>無法擷取視窗的目前內容</translation>
         </message>
         <message>
-            <source>The image could not be saved automatically: %1</source>
-            <translation>無法自動儲存影像：%1</translation>
-        </message>
-        <message>
             <source>The new content could not be loaded</source>
             <translation>無法載入新內容</translation>
         </message>
@@ -2318,6 +2350,10 @@ Files:
             <translation>無法開始儲存已固定到螢幕的影像</translation>
         </message>
         <message>
+            <source>The pinned window could not be saved to history</source>
+            <translation>無法將固定到螢幕視窗儲存至歷史記錄</translation>
+        </message>
+        <message>
             <source>The window changed while preparing the image. Please try again</source>
             <translation>準備影像時視窗發生變更，請重試</translation>
         </message>
@@ -2338,6 +2374,10 @@ Files:
             <translation>翻譯結果</translation>
         </message>
         <message>
+            <source>Transparent layer</source>
+            <translation>透明圖層</translation>
+        </message>
+        <message>
             <source>Unavailable</source>
             <translation>暫時無法使用</translation>
         </message>
@@ -2352,6 +2392,10 @@ Files:
         <message>
             <source>Uploading to cloud... %1%</source>
             <translation>正在上傳至雲端… %1%</translation>
+        </message>
+        <message>
+            <source>Window management</source>
+            <translation>視窗管理</translation>
         </message>
     </context>
     <context>
@@ -2458,10 +2502,6 @@ Files:
         <message>
             <source>Save as file</source>
             <translation>儲存為檔案</translation>
-        </message>
-        <message>
-            <source>Text files (*.txt)</source>
-            <translation>文字檔案 (*.txt)</translation>
         </message>
         <message>
             <source>The image could not be loaded</source>
@@ -2602,6 +2642,10 @@ Files:
         <message>
             <source>Copy files to clipboard</source>
             <translation>複製檔案到剪貼簿</translation>
+        </message>
+        <message>
+            <source>Copy text to clipboard</source>
+            <translation>複製文字到剪貼簿</translation>
         </message>
         <message>
             <source>Delete empty groups</source>

@@ -1,6 +1,7 @@
 #include "physical_key_test_support.h"
 #include "snow_shot/presentation/canvasstatusreadout.h"
 #include "snow_shot/presentation/screenshotgeometry.h"
+#include "snow_shot/presentation/screenshotrecognizeddocument.h"
 #include "snow_shot/presentation/screenshotocrpresentation.h"
 #include "snow_shot/presentation/screenshotrecognitionwindow.h"
 #include "snow_shot/presentation/crosshaircursor.h"
@@ -1410,7 +1411,7 @@ void ocrDoubleClickCopiesOnlyTheClickedBlock() {
             host.show();
             int copyCommands = 0;
             ScreenshotRecognitionWindowActions actions;
-            actions.handleCopy = [&]() { ++copyCommands; };
+            actions.resultCopied = [&]() { ++copyCommands; };
             ScreenshotRecognitionWindow window(std::move(actions), &host, mode);
             const QRect canvasSelection(120, 80, 640, 400);
             require(window.present({QGuiApplication::primaryScreen(), &host, host.rect(),
@@ -1472,11 +1473,9 @@ void ocrDoubleClickCopiesOnlyTheClickedBlock() {
                         settings.setDefaultPunctuation(QStringLiteral("full")),
                     "configure OCR block formatting and punctuation defaults");
             doubleClickAt(paragraphPoint);
-            require(
-                QApplication::clipboard()->text() ==
-                        QStringLiteral("First\uff0c \u4e2d\u6587 e\u0301Second\uff01 \U0001f642") &&
-                    presentation->selectedText() == paragraph,
-                "automatic copy applies OCR defaults without changing displayed text");
+            require(QApplication::clipboard()->text() == paragraph &&
+                        presentation->selectedText() == paragraph,
+                    "double-click copies the block with its original line breaks and punctuation");
 
             window.setOcrCopyDefaultsEnabled(false);
             const QString partial = QStringLiteral("Translated, paragraph\n\U0001f642");
@@ -1658,6 +1657,77 @@ HWND windowAtPhysicalPoint(const POINT& point) {
 
 #endif
 
+void recognitionStaysBelowOverlappingToolbar() {
+    QScreen* screen = QGuiApplication::primaryScreen();
+    require(screen != nullptr, "a primary screen is required");
+    const QRect screenGeometry = screen->geometry();
+    const QRect selection(screenGeometry.bottomLeft() + QPoint(24, -240), QSize(360, 230));
+    const QRect toolbarGeometry(selection.bottomRight() - QPoint(175, 30), QSize(176, 40));
+
+    QWidget overlay(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    overlay.setGeometry(screenGeometry);
+    overlay.show();
+
+    QWidget toolbar(&overlay, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint |
+                                  Qt::WindowDoesNotAcceptFocus);
+    toolbar.setAttribute(Qt::WA_ShowWithoutActivating);
+    toolbar.setGeometry(toolbarGeometry);
+    toolbar.show();
+
+    ScreenshotRecognitionWindow window({});
+    require(window.present({.screen = screen,
+                            .transientOwner = &overlay,
+                            .geometry = selection,
+                            .canvasSelection = QRectF(QPointF(), QSizeF(selection.size())),
+                            .screenshotToolbar = &toolbar}),
+            "show the recognition surface over a selection that overlaps the toolbar");
+    const QRect overlap = selection.intersected(toolbarGeometry);
+    const QRect localOverlap = overlap.translated(-selection.topLeft());
+    auto presentation = std::make_shared<ScreenshotOcrPresentation>();
+    presentation->selection = QRect(QPoint(), selection.size());
+    ScreenshotOcrLine line;
+    line.text = QStringLiteral("Recognized text behind the toolbar");
+    line.quad = QPolygonF(QRectF(localOverlap.adjusted(4, 3, -4, -3)));
+    presentation->lines.push_back(std::move(line));
+    window.setOcrPresentation(presentation);
+
+    const auto checkToolbarInput = [&](const char* toolbarMessage) {
+        // Activation can enqueue the toolbar raise while the first pass processes native events.
+        QApplication::processEvents();
+        QApplication::processEvents();
+        require(window.geometry() == selection && window.showsOcrLayer(),
+                "toolbar overlap must preserve the recognition surface and its content");
+#ifdef Q_OS_WIN
+        if (QGuiApplication::platformName() == QStringLiteral("windows")) {
+            const QRect nativeSelection = nativeClientGeometry(window);
+            const QRect nativeOverlap = nativeSelection.intersected(nativeClientGeometry(toolbar));
+            require(!nativeOverlap.isEmpty(), "the native windows must also overlap");
+            const QPoint overlapPoint = nativeOverlap.center();
+            require(windowAtPhysicalPoint({overlapPoint.x(), overlapPoint.y()}) ==
+                        reinterpret_cast<HWND>(toolbar.winId()),
+                    toolbarMessage);
+            const QPoint outsidePoint = nativeSelection.topLeft() + QPoint(12, 12);
+            require(windowAtPhysicalPoint({outsidePoint.x(), outsidePoint.y()}) ==
+                        reinterpret_cast<HWND>(window.winId()),
+                    "the unobstructed part of the OCR window must still receive input");
+        }
+#endif
+        Q_UNUSED(toolbarMessage);
+    };
+    checkToolbarInput("the toolbar must receive input when OCR results are shown");
+    overlay.activateWindow();
+    QApplication::processEvents();
+    window.activateWindow();
+    checkToolbarInput("the toolbar must receive input after native OCR activation");
+    window.raise();
+    checkToolbarInput("the toolbar must receive input after raising the OCR window");
+
+    PhysicalKeyEvent selectAll(QEvent::KeyPress, Qt::Key_A, Qt::ControlModifier);
+    QApplication::sendEvent(&window, &selectAll);
+    require(presentation->selectedText() == presentation->lines.front().text,
+            "the recognition surface must still select text behind a toolbar overlap");
+}
+
 void recognitionMessageUsesOnlyItsPaintedShadow() {
     auto& themes = adqt::theme::ThemeManager::instance();
     const auto originalTheme = themes.config();
@@ -1723,7 +1793,7 @@ void recognitionWindowUsesOrdinaryQtWindowBehavior(bool nativeSurfaceOnly = fals
     int textEditedCalls = 0;
     ScreenshotRecognitionWindowActions actions;
     actions.handleCancel = [&recognitionCancelCalls]() { ++recognitionCancelCalls; };
-    actions.handleCopy = [&recognitionCopyCalls]() { ++recognitionCopyCalls; };
+    actions.resultCopied = [&recognitionCopyCalls]() { ++recognitionCopyCalls; };
     actions.handleTextEdited = [&textEditedCalls](const QString&) { ++textEditedCalls; };
     int tableStateChanges = 0;
     ScreenshotTableCommandState latestTableState;
@@ -2176,12 +2246,16 @@ void recognitionWindowUsesOrdinaryQtWindowBehavior(bool nativeSurfaceOnly = fals
                 QApplication::clipboard()->text() == QStringLiteral("Clipboard before table copy"),
             "keypad Ctrl+Insert should leave the recognized table open and the clipboard intact");
 #endif
-    editor->copySelection();
+    editor->selectionModel()->select(editor->model()->index(1, 1),
+                                     QItemSelectionModel::ClearAndSelect);
+    PhysicalKeyEvent tableCopy(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
+    QApplication::sendEvent(editor, &tableCopy);
     QApplication::processEvents();
     require(QApplication::clipboard()->text() == QStringLiteral("A\tB\nC\tD") &&
                 recognitionCopyCalls == copyCallsBeforeTable + 1,
-            "table recognition should copy the complete table when no cells are selected and end "
+            "table recognition should copy the complete table with cells selected and end "
             "the screenshot");
+    editor->selectionModel()->clearSelection();
     editor->setCurrentIndex(editor->model()->index(1, 1));
     editor->pasteSelection();
     require(rejectedOperations == 1 && session->document == session->baseline,
@@ -2748,7 +2822,7 @@ void qrContentsUseStrictRichTextLinksAndPreserveOrder() {
     int recognitionCopyCalls = 0;
     ScreenshotRecognitionWindowActions actions;
     actions.handleCancel = [&recognitionCancelCalls]() { ++recognitionCancelCalls; };
-    actions.handleCopy = [&recognitionCopyCalls]() { ++recognitionCopyCalls; };
+    actions.resultCopied = [&recognitionCopyCalls]() { ++recognitionCopyCalls; };
     actions.handleLinkActivated = [&activatedLinks](const QUrl& url) {
         activatedLinks.push_back(url);
     };
@@ -2885,7 +2959,7 @@ void emptyOcrResultCopiesEmptyText() {
 
     int recognitionCopyCalls = 0;
     ScreenshotRecognitionWindowActions actions;
-    actions.handleCopy = [&recognitionCopyCalls]() { ++recognitionCopyCalls; };
+    actions.resultCopied = [&recognitionCopyCalls]() { ++recognitionCopyCalls; };
     ScreenshotRecognitionWindow window(std::move(actions));
     require(window.present(ScreenshotRecognitionWindow::Config{
                 screen,
@@ -3288,7 +3362,7 @@ void translationCopyProviderHandlesKeyboardAndContextMenu() {
     QTextDocument document;
     document.setPlainText(QStringLiteral("Full translated result\n").repeated(50));
     ScreenshotRecognitionWindowActions actions;
-    actions.handleCopy = [&] { ++completed; };
+    actions.resultCopied = [&] { ++completed; };
     ScreenshotRecognitionWindow window(std::move(actions));
     auto* screen = QGuiApplication::primaryScreen();
     require(screen &&
@@ -3353,7 +3427,7 @@ void recognitionContextMenusUseAntDesignAndCopyLocally() {
 
     int copyCommandCalls = 0;
     ScreenshotRecognitionWindowActions actions;
-    actions.handleCopy = [&copyCommandCalls]() { ++copyCommandCalls; };
+    actions.resultCopied = [&copyCommandCalls]() { ++copyCommandCalls; };
     ScreenshotRecognitionWindow window(std::move(actions));
     window.setOcrCopyDefaultsEnabled(false);
     require(window.present(
@@ -3611,9 +3685,9 @@ void recognitionContextMenusUseAntDesignAndCopyLocally() {
             requireContextMenuShortcutsHidden(menu);
             contextMenuAction(menu, QStringLiteral("Copy"))->trigger();
         });
-    require(QApplication::clipboard()->text() == QStringLiteral("Alpha cell") &&
+    require(QApplication::clipboard()->text() == QStringLiteral("Alpha cell\tB\nC\tD") &&
                 copyCommandCalls == 0,
-            "table context Copy should copy only selected cells locally");
+            "table context Copy should copy the full table locally with a partial selection");
 
     clickCell(*table, 0, 0);
     auto* cellEditor = table->findChild<QPlainTextEdit*>(QStringLiteral("snowShotTableCellEditor"));
@@ -3745,7 +3819,69 @@ void recognitionContextMenusUseAntDesignAndCopyLocally() {
             "embedded inline table editing should not forward to the pinned image menu");
 }
 
-void tableClipboardPreservesLargeValuesForWholeTableAndSelection() {
+void focusedRecognitionPreviewsCopyTheResultWithoutTextSelection() {
+    using PresentationMode = ScreenshotRecognitionWindow::PresentationMode;
+    for (const auto mode : {PresentationMode::TopLevelWindow, PresentationMode::EmbeddedChild}) {
+        QWidget host;
+        host.resize(500, 300);
+        host.show();
+        QList<ScreenshotRecognitionCopy> requests;
+        ScreenshotRecognitionWindow window({}, &host, mode);
+        require(window.present({QGuiApplication::primaryScreen(), &host, QRect(30, 30, 360, 180),
+                                QRectF(0, 0, 360, 180), mode}),
+                "present recognition preview for keyboard copy");
+        static_cast<void>(window.attachSession(
+            &host, {{}, {}, [&](ScreenshotRecognitionCopy intent, const auto*, const auto&) {
+                        requests.append(intent);
+                        return true;
+                    }}));
+
+        const auto copyFromFocus = [&](QWidget* focused, ScreenshotRecognitionCopy expected) {
+            const auto count = requests.size();
+            require(QApplication::focusWidget() == focused, "copy fixture has keyboard focus");
+            PhysicalKeyEvent copy(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
+            QApplication::sendEvent(focused, &copy);
+            PhysicalKeyEvent release(QEvent::KeyRelease, Qt::Key_C, Qt::ControlModifier);
+            QApplication::sendEvent(focused, &release);
+            require(copy.isAccepted() && requests.size() == count + 1 &&
+                        requests.constLast() == expected,
+                    "Ctrl+C should dispatch the expected copy command once");
+        };
+        const auto checkPreview = [&](QTextEdit* preview) {
+            require(preview && preview->isReadOnly(), "use the displayed read-only preview");
+            window.window()->activateWindow();
+            preview->setFocus(Qt::MouseFocusReason);
+            QApplication::processEvents();
+            require(!preview->textCursor().hasSelection(), "preview starts without a selection");
+            copyFromFocus(preview, ScreenshotRecognitionCopy::Result);
+            preview->selectAll();
+            copyFromFocus(preview, ScreenshotRecognitionCopy::Preview);
+            auto cursor = preview->textCursor();
+            cursor.clearSelection();
+            preview->setTextCursor(cursor);
+            window.setFocus(Qt::MouseFocusReason);
+            copyFromFocus(&window, ScreenshotRecognitionCopy::Result);
+        };
+
+        auto document = std::make_shared<ScreenshotRecognizedDocument>();
+        document->html = QStringLiteral("<h1>Document</h1>");
+        auto preview = std::make_shared<QTextDocument>();
+        preview->setHtml(document->html);
+        window.showDocument(document, preview);
+        checkPreview(window.findChild<QTextEdit*>(QStringLiteral("screenshotOcrEditor")));
+
+        window.showImageConversion(SnowShotImageConversionFormat::Markdown,
+                                   QStringLiteral("# Markdown"), false, {});
+        checkPreview(
+            window.findChild<QTextBrowser*>(QStringLiteral("screenshotImageConversionPreview")));
+        window.showImageConversion(SnowShotImageConversionFormat::Html,
+                                   QStringLiteral("<h1>HTML</h1>"), false, {});
+        checkPreview(
+            window.findChild<QTextBrowser*>(QStringLiteral("screenshotImageConversionPreview")));
+    }
+}
+
+void tableClipboardPreservesLargeValuesWithPartialSelection() {
     const QString value = QStringLiteral("251231312312321321321312312321");
     auto session =
         std::make_shared<ScreenshotTableEditingSession>(ScreenshotTableDocument::fromPlainText(
@@ -3756,7 +3892,9 @@ void tableClipboardPreservesLargeValuesForWholeTableAndSelection() {
     // earlier tests the clipboard history service can hold it briefly
     // (CLIPBRD_E_CANT_OPEN), so publishing needs bounded retries before the
     // payload can be judged.
-    const auto publishAndRead = [&editor]() -> const QMimeData* {
+    editor.selectionModel()->select(editor.model()->index(1, 0),
+                                    QItemSelectionModel::ClearAndSelect);
+    const QMimeData* mime = [&editor]() -> const QMimeData* {
         for (int attempt = 0; attempt < 40; ++attempt) {
             const bool issued = editor.copySelectionToClipboard();
             QCoreApplication::processEvents();
@@ -3767,28 +3905,20 @@ void tableClipboardPreservesLargeValuesForWholeTableAndSelection() {
             QThread::msleep(50);
         }
         return nullptr;
-    };
-    const QMimeData* mime = publishAndRead();
-    require(mime != nullptr, "whole-table copy should publish its clipboard payload");
-    require(mime->hasHtml() && mime->hasText() &&
+    }();
+    require(mime && mime->hasHtml() && mime->hasText() &&
                 mime->text() ==
                     QStringLiteral("Value\tOther\n'") + value + QStringLiteral("\t42") &&
                 ScreenshotTableDocument::fromHtml(mime->html()).toPlainText() == mime->text() &&
                 ScreenshotTableDocument::fromClipboardMimeData(*mime) == session->document,
-            "whole-table copy should publish the exact text and spreadsheet HTML payload");
-
-    const QModelIndex index = editor.model()->index(1, 0);
-    editor.selectionModel()->select(index, QItemSelectionModel::ClearAndSelect);
-    mime = publishAndRead();
-    require(mime != nullptr, "selected-cell copy should publish its clipboard payload");
-    require(mime->text() == QLatin1Char('\'') + value &&
-                ScreenshotTableDocument::fromHtml(mime->html()).cellText(0, 0) == mime->text(),
-            "selected-cell copy should retain every digit and the spreadsheet HTML payload");
-    editor.setCurrentIndex(editor.model()->index(1, 1));
+            "copy with a partial selection should serialize the full table in every format");
+    editor.selectAll();
+    editor.clearSelectionContents();
+    editor.setCurrentIndex(editor.model()->index(0, 0));
     editor.selectionModel()->clearSelection();
     editor.pasteSelection();
-    require(session->document.cellText(1, 1) == value,
-            "pasting Snow Shot's protected clipboard should restore the unprefixed value");
+    require(session->document == session->baseline,
+            "pasting the copied table should restore every value without spreadsheet prefixes");
 }
 } // namespace
 
@@ -4588,6 +4718,10 @@ int main(int argc, char** argv) {
         recognitionMessageUsesOnlyItsPaintedShadow();
         return 0;
     }
+    if (application.arguments().contains(QStringLiteral("--toolbar-overlap-only"))) {
+        recognitionStaysBelowOverlappingToolbar();
+        return 0;
+    }
     if (application.arguments().contains(QStringLiteral("--ocr-box-selection-only"))) {
 #ifdef Q_OS_WIN
         require(QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/segoeui.ttf")) >=
@@ -4638,7 +4772,11 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (application.arguments().contains(QStringLiteral("--table-clipboard-only"))) {
-        tableClipboardPreservesLargeValuesForWholeTableAndSelection();
+        tableClipboardPreservesLargeValuesWithPartialSelection();
+        return 0;
+    }
+    if (application.arguments().contains(QStringLiteral("--preview-copy-only"))) {
+        focusedRecognitionPreviewsCopyTheResultWithoutTextSelection();
         return 0;
     }
     if (application.arguments().contains(QStringLiteral("--selection-only-rendering"))) {
@@ -4684,7 +4822,8 @@ int main(int argc, char** argv) {
     selectionOnlyFormattedTextPaintsOnlyHighlights();
     qrContentsUseStrictRichTextLinksAndPreserveOrder();
     emptyOcrResultCopiesEmptyText();
-    tableClipboardPreservesLargeValuesForWholeTableAndSelection();
+    focusedRecognitionPreviewsCopyTheResultWithoutTextSelection();
+    tableClipboardPreservesLargeValuesWithPartialSelection();
     imageSnapshotTracksOnlyOriginalImageAndOwnsItsResult();
     return 0;
 }

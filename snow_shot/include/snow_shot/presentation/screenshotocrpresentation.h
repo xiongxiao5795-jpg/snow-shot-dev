@@ -3,6 +3,7 @@
 
 #include <QHash>
 #include <QColor>
+#include <QFont>
 #include <QPolygonF>
 #include <QRect>
 #include <QString>
@@ -23,6 +24,8 @@ struct ScreenshotOcrSourceTextMetrics {
     qreal spacingEm = 0; // Extra letter spacing for a row, cell advance for a vertical column.
     qreal inkAscentEm = 0;
     qreal inkDescentEm = 0;
+    qreal inkThicknessEm = 0;            // Painted row height or column width.
+    std::optional<QFont> measuredFont{}; // Set when caching the source metrics for a translation.
     bool operator==(const ScreenshotOcrSourceTextMetrics&) const = default;
 };
 
@@ -43,6 +46,9 @@ struct ScreenshotOcrLine {
     QColor sourceTextColor{};
     // Aligned with sourceLineQuads, including separate word boxes on the same visual row.
     QVector<QColor> sourceLineTextColors{};
+    // Derived translation provenance; never produced by OCR recognition.
+    QVector<int> sourceLineIndices{};
+    bool smartMergeTranslation = false;
 };
 
 struct ScreenshotOcrTextUpdate {
@@ -125,12 +131,16 @@ class ScreenshotOcrPresentation final {
         QPolygonF quad;
         QVector<QPolygonF> sourceLineQuads;
     };
+    struct FillGeometry {
+        QPolygonF quad;
+        bool solid;
+    };
     qint64 m_textColorImageKey = 0;
     QRectF m_textColorCanvasRect;
     QVector<ColorGeometry> m_textColorGeometry;
     qint64 m_fillColorImageKey = 0;
     QRectF m_fillColorCanvasRect;
-    QVector<QPolygonF> m_fillColorGeometry;
+    QVector<FillGeometry> m_fillColorGeometry;
 
     struct CachedLineGeometry {
         QRectF bounds;

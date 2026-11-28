@@ -48,6 +48,8 @@ enum class GlobalShortcutAction {
     QuickAnnotationEllipse,
     QuickAnnotationToolbar,
     ToggleGlobalMouse,
+    CompressSelectedImages,
+    ScreenshotPinWindowToScreen,
 };
 
 [[nodiscard]] constexpr bool controlsGlobalShortcutGates(GlobalShortcutAction action) {

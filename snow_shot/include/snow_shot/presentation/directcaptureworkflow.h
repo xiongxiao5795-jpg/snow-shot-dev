@@ -1,12 +1,17 @@
 #ifndef SNOW_SHOT_PRESENTATION_DIRECTCAPTUREWORKFLOW_H
 #define SNOW_SHOT_PRESENTATION_DIRECTCAPTUREWORKFLOW_H
 
+#include "snow_shot/presentation/capture/screenshotcapturepolicy.h"
 #include "snow_shot/presentation/screenshotpdfexport.h"
 #include "snow_shot/presentation/screenshotimagefileservice.h"
 #include "snow_shot/presentation/screenshothidpiimagescaling.h"
+#include "snow_shot/storage/screenshotexportvariables.h"
+#include "snow_shot/storage/exporttasks.h"
+#include "snow_shot/storage/capturehistorymode.h"
 #include <QDateTime>
 #include <QImage>
 #include <QObject>
+#include <QPointF>
 #include <QRect>
 #include <QSize>
 #include <QStringList>
@@ -18,8 +23,7 @@
 namespace snow_shot::presentation {
 enum class DirectCaptureTarget { FocusedWindow, CurrentMonitor };
 
-[[nodiscard]] bool directCaptureAutoSaveEnabled(DirectCaptureTarget target,
-                                                const QStringList& actions);
+struct DirectCaptureFrame;
 
 struct DirectCaptureDisplay {
     QImage image;
@@ -34,24 +38,31 @@ struct DirectCaptureRequest {
     DirectCaptureTarget target = DirectCaptureTarget::CurrentMonitor;
     quintptr window = 0;
     QString monitorName;
+    QPointF monitorCursor;
     QDateTime requestedAt;
-    bool autoSave = false;
+    std::function<void(const DirectCaptureFrame&)> afterCopy;
     bool copyFile = false;
-    bool historyEnabled = false;
-    QString configuredSaveDirectory;
+    storage::CaptureHistoryMode historyMode = storage::CaptureHistoryMode::Disabled;
     QString imageFormat;
     ScreenshotImageEncodingOptions encoding;
     ScreenshotCompressionLevel historyDisplayCompressionLevel = ScreenshotCompressionLevel::Medium;
     ScreenshotPdfOptions pdf;
+    QString exportDirectory;
     QString filenameFormat;
     bool restoreOriginalScreenColors = false;
     bool shutterSoundNotification = true;
     bool captureCursor = false;
-    quint8 captureBackend = 0;
+    capture::ScreenshotApiMode apiMode = capture::ScreenshotApiMode::Auto;
     // Called on native capture threads with the fixed target's geometry before allocation.
     std::function<bool(QSize)> admitRaster;
     QString hiDpiImageScaling = QStringLiteral("disabled");
-    QVector<ScreenshotHiDpiDisplay> scalingDisplays;
+    storage::ScreenshotExportContext exportContext;
+
+    [[nodiscard]] storage::ScreenshotType screenshotType() const {
+        return target == DirectCaptureTarget::FocusedWindow
+                   ? storage::ScreenshotType::FocusedWindow
+                   : storage::ScreenshotType::CurrentMonitor;
+    }
 };
 
 struct DirectCaptureFrame {
@@ -68,21 +79,20 @@ struct DirectCaptureFrame {
     }
 };
 
-[[nodiscard]] inline qreal directCaptureImageScale(const DirectCaptureRequest& request,
-                                                   const DirectCaptureFrame& frame) {
+[[nodiscard]] inline qreal
+directCaptureImageScale(QStringView mode, const DirectCaptureFrame& frame,
+                        const QVector<ScreenshotHiDpiDisplay>& displays) {
     const QRect bounds = frame.logicalBounds.isEmpty() ? frame.physicalBounds : frame.logicalBounds;
-    return screenshotHiDpiImageScale(request.hiDpiImageScaling, QRectF(bounds),
-                                     request.scalingDisplays);
+    return screenshotHiDpiImageScale(mode, QRectF(bounds), displays);
 }
 
 struct DirectCapturePorts {
     using Completion = std::function<void(QString)>;
     std::function<bool(const DirectCaptureRequest&, std::function<void(DirectCaptureFrame)>)>
         acquire;
-    std::function<bool(const DirectCaptureRequest&, const DirectCaptureFrame&,
-                       std::function<void(QString, QString)>)>
-        save;
-    std::function<bool(const DirectCaptureRequest&, const DirectCaptureFrame&, Completion)> copy;
+    using CopyCompletion = std::function<void(bool published, QString error)>;
+    std::function<bool(const DirectCaptureRequest&, const DirectCaptureFrame&, CopyCompletion)>
+        copy;
     std::function<bool(const DirectCaptureRequest&, const DirectCaptureFrame&, Completion)> history;
     std::function<void(const QString&, bool)> report;
     std::function<void()> captureRequested;
@@ -97,9 +107,8 @@ class DirectCaptureWorkflow final : public QObject {
     [[nodiscard]] qsizetype pendingCount() const;
 
   private:
-    enum class Phase { Idle, Acquiring, Saving, Copying, History, Stopped };
+    enum class Phase { Idle, Acquiring, Copying, History, Stopped };
     void startNext();
-    void save();
     void copy();
     void publishHistory();
     void finish();
@@ -108,7 +117,6 @@ class DirectCaptureWorkflow final : public QObject {
     DirectCapturePorts m_ports;
     std::deque<DirectCaptureRequest> m_queue;
     DirectCaptureFrame m_frame;
-    bool m_copySucceeded = false;
     Phase m_phase = Phase::Idle;
     quint64 m_generation = 0;
 };

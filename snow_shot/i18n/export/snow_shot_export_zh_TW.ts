@@ -2,6 +2,93 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="zh_TW" sourcelanguage="en_US">
     <context>
+        <name>ImageCompressionWindow</name>
+        <message>
+            <source>Allow Snow Shot to access Finder in System Settings &gt; Privacy &amp; Security &gt; Automation, then try again</source>
+            <translation>請在「系統設定 &gt; 隱私權與安全性 &gt; 自動化」中允許 Snow Shot 存取 Finder，然後再試一次</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>取消</translation>
+        </message>
+        <message>
+            <source>Copy</source>
+            <translation>複製</translation>
+        </message>
+        <message>
+            <source>Could not read the selected image files. Please try again</source>
+            <translation>無法讀取選取的影像檔案，請重試</translation>
+        </message>
+        <message>
+            <source>Drag an image file here, or choose select image</source>
+            <translation>將影像檔案拖曳至此處，或點選「選擇影像」</translation>
+        </message>
+        <message>
+            <source>Drop one image file at a time</source>
+            <translation>請一次拖入一個影像檔案</translation>
+        </message>
+        <message>
+            <source>Drop one image to compress</source>
+            <translation>拖入一張影像進行壓縮</translation>
+        </message>
+        <message>
+            <source>Drop one image to replace the current image</source>
+            <translation>拖入一張影像以取代目前影像</translation>
+        </message>
+        <message>
+            <source>Export completed</source>
+            <translation>匯出完成</translation>
+        </message>
+        <message>
+            <source>Image compression</source>
+            <translation>影像壓縮</translation>
+        </message>
+        <message>
+            <source>Images</source>
+            <translation>影像</translation>
+        </message>
+        <message>
+            <source>Loading image…</source>
+            <translation>正在載入影像…</translation>
+        </message>
+        <message>
+            <source>Replace</source>
+            <translation>取代</translation>
+        </message>
+        <message>
+            <source>Replace file</source>
+            <translation>取代檔案</translation>
+        </message>
+        <message>
+            <source>Replace the existing file "%1"?</source>
+            <translation>是否取代現有檔案「%1」？</translation>
+        </message>
+        <message>
+            <source>Save</source>
+            <translation>儲存</translation>
+        </message>
+        <message>
+            <source>Select an image to compress</source>
+            <translation>選擇要壓縮的影像</translation>
+        </message>
+        <message>
+            <source>Select image</source>
+            <translation>選擇影像</translation>
+        </message>
+        <message>
+            <source>The image could not be copied</source>
+            <translation>無法複製影像</translation>
+        </message>
+        <message>
+            <source>The image could not be loaded</source>
+            <translation>無法載入影像</translation>
+        </message>
+        <message>
+            <source>The screenshot export queue is full</source>
+            <translation>截圖匯出佇列已滿</translation>
+        </message>
+    </context>
+    <context>
         <name>ScreenshotAirDropService</name>
         <message>
             <source>AirDrop is unavailable on this Mac</source>
@@ -85,6 +172,10 @@
     <context>
         <name>ScreenshotExportArtifact</name>
         <message>
+            <source>Automatic screenshot saving failed: %1</source>
+            <translation>自動儲存截圖失敗：%1</translation>
+        </message>
+        <message>
             <source>Image source unavailable</source>
             <translation>影像來源無法使用</translation>
         </message>
@@ -120,6 +211,10 @@
             <translation>JPEG 影像 (*.jpg *.jpeg)</translation>
         </message>
         <message>
+            <source>No automatic screenshot folder is available</source>
+            <translation>沒有可用於自動儲存截圖的資料夾</translation>
+        </message>
+        <message>
             <source>No output file was selected</source>
             <translation>未選取輸出檔案</translation>
         </message>
@@ -140,6 +235,10 @@
             <translation>編碼後的影像為空</translation>
         </message>
         <message>
+            <source>The image could not be encoded</source>
+            <translation>無法編碼影像</translation>
+        </message>
+        <message>
             <source>The output directory could not be created</source>
             <translation>無法建立輸出目錄</translation>
         </message>
@@ -150,6 +249,18 @@
         <message>
             <source>The screenshot filename format is invalid</source>
             <translation>截圖檔名格式無效</translation>
+        </message>
+        <message>
+            <source>The screenshot folder could not be created: %1</source>
+            <translation>無法建立截圖資料夾：%1</translation>
+        </message>
+        <message>
+            <source>The screenshot image is empty</source>
+            <translation>截圖影像為空</translation>
+        </message>
+        <message>
+            <source>The screenshot image source is empty</source>
+            <translation>截圖影像來源為空</translation>
         </message>
         <message>
             <source>WebP image (*.webp)</source>
@@ -245,8 +356,8 @@
             <translation>未選取輸出檔案</translation>
         </message>
         <message>
-            <source>No recognition result is available to save</source>
-            <translation>沒有可儲存的辨識結果</translation>
+            <source>No recognition result is available to save.</source>
+            <translation>沒有可儲存的辨識結果。</translation>
         </message>
         <message>
             <source>Replace</source>
@@ -626,6 +737,14 @@
         <message>
             <source>Export comparison preview</source>
             <translation>匯出比較預覽</translation>
+        </message>
+        <message>
+            <source>Fit image to window</source>
+            <translation>符合視窗大小</translation>
+        </message>
+        <message>
+            <source>View at actual size (100%)</source>
+            <translation>以實際大小檢視（100%）</translation>
         </message>
     </context>
 </TS>

@@ -31,6 +31,16 @@ void annotationShortcutsPersistValidateAndReset(const QString& configurationPath
     const auto drawingDefaults = storage::DrawingShortcutSettings().allShortcuts();
     const auto undoDefault = backend.localShortcuts(screenshot, QStringLiteral("undo"));
     const auto redoDefault = backend.localShortcuts(screenshot, QStringLiteral("redo"));
+    const QString cycleId = QStringLiteral("cycle_annotation_tool_options");
+    const QString cycleKey = QStringLiteral("drawing_shortcuts/") + cycleId;
+    const shortcuts::ShortcutBindingList tab{QStringLiteral("Tab")};
+    const shortcuts::ShortcutBindingList customCycle{QStringLiteral("Alt+F9")};
+    require(
+        backend.localShortcuts(drawing, cycleId) == tab &&
+            !backend.validateLocalShortcut(drawing, QStringLiteral("line"), tab.first())
+                 .supported &&
+            backend.applyLocalShortcuts(drawing, cycleId, customCycle),
+        "Annotation cycling defaults to Tab, reserves it within Annotation, and can be remapped");
 
     for (const auto* id :
          {"line", "spotlight", "distance", "angle", "magnifier", "speech_bubble"}) {
@@ -56,8 +66,15 @@ void annotationShortcutsPersistValidateAndReset(const QString& configurationPath
                 reloaded.value(QStringLiteral("drawing_shortcuts/line")), false) == line &&
                 shortcuts::shortcutBindingsFromJson(
                     reloaded.value(QStringLiteral("drawing_shortcuts/spotlight")), false) ==
-                    spotlight,
+                    spotlight &&
+                shortcuts::shortcutBindingsFromJson(reloaded.value(cycleKey), false) == customCycle,
             "new annotation shortcut settings must survive configuration reload");
+    require(backend.applyLocalShortcuts(drawing, cycleId, {}) &&
+                storage::ApplicationStorage::instance().configuration().flushNow().success,
+            "the cycle binding can explicitly be cleared and saved");
+    storage::ConfigurationStore afterClearing(configurationPath, true, true, 60000);
+    require(afterClearing.value(cycleKey) == QJsonArray{},
+            "reloading preserves the explicit unassigned choice");
     require(backend.applyLocalShortcuts(drawing, QStringLiteral("line"), {}) &&
                 backend.localShortcuts(drawing, QStringLiteral("line")).isEmpty(),
             "configured annotation shortcuts must be clearable");
@@ -210,6 +227,10 @@ void screenshotSectionResetsRejectPreservedShortcutCollisions() {
         require(configuration.applySnapshot(original), "restore section reset fixture");
         const QString restored = QString::fromLatin1(scenario.restoredAction);
         const QString preserved = QString::fromLatin1(scenario.preservedAction);
+        if (restored == QStringLiteral("save_as_file"))
+            require(backend.applyLocalShortcuts(settings::SettingsLocalShortcutScope::PinToScreen,
+                                                restored, {}),
+                    "free the pin Save As key before assigning it to shared OCR");
         const auto defaultBindings = shortcuts::shortcutBindingsFromJson(
             storage::ConfigurationSchema::defaultValue(QStringLiteral("screenshot_shortcuts/") +
                                                        restored),
@@ -269,7 +290,7 @@ void localShortcutBatchesValidateEveryAffectedScope() {
         {lineKey, validLine},
         {QStringLiteral("screenshot_shortcuts/text_recognition"), validLine},
         {QStringLiteral("screen_recording_shortcuts/export"), validLine},
-        {QStringLiteral("pin_to_screen_shortcuts/resize_window"), validLine},
+        {QStringLiteral("pin_to_screen_shortcuts/next_frame"), validLine},
     };
     configuration.suspendWrites(true);
     reject(values);
@@ -284,7 +305,7 @@ void localShortcutBatchesValidateEveryAffectedScope() {
                     QStringLiteral("text_recognition")) == expected &&
                 storage::ScreenRecordingShortcutSettings().shortcuts(QStringLiteral("export")) ==
                     expected &&
-                storage::PinToScreenShortcutSettings().shortcuts(QStringLiteral("resize_window")) ==
+                storage::PinToScreenShortcutSettings().shortcuts(QStringLiteral("next_frame")) ==
                     expected,
             "shared batch writes must normalize all scopes for their typed adapters");
     require(configuration.applySnapshot(original), "restore mixed shortcut batch assignments");

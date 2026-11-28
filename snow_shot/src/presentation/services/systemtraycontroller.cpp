@@ -119,6 +119,9 @@ QString normalizedClickAction(const QString& action, const char* defaultAction) 
                    action == QStringLiteral("show_main_window") ||
                    action == QStringLiteral("screenshot_copy") ||
                    action == QStringLiteral("screenshot_fixed") ||
+                   action == QStringLiteral("pin_clipboard_content") ||
+                   action == QStringLiteral("restore_last_closed_windows") ||
+                   action == QStringLiteral("hide_show_all_windows") ||
                    action == QStringLiteral("open_capture_history") ||
                    action == QStringLiteral("open_pin_to_screen_management") ||
                    action == QStringLiteral("open_function_settings")
@@ -534,7 +537,7 @@ class SystemTrayController::Impl {
         separatorsBeforeGroup.clear();
         buildMenu();
         retranslateUi();
-        setMenuOptions(menuOptions);
+        setMenuOptions(menuOptions, true);
         return menu;
     }
 
@@ -548,6 +551,12 @@ class SystemTrayController::Impl {
             emit q.quickActionRequested(GlobalShortcutAction::ScreenshotCopy);
         } else if (action == QStringLiteral("screenshot_fixed")) {
             emit q.quickActionRequested(GlobalShortcutAction::ScreenshotPinToScreen);
+        } else if (action == QStringLiteral("pin_clipboard_content")) {
+            emit q.quickActionRequested(GlobalShortcutAction::PinClipboardContent);
+        } else if (action == QStringLiteral("restore_last_closed_windows")) {
+            emit q.quickActionRequested(GlobalShortcutAction::RestoreLastClosedWindows);
+        } else if (action == QStringLiteral("hide_show_all_windows")) {
+            emit q.quickActionRequested(GlobalShortcutAction::HideShowAllWindows);
         } else if (action == QStringLiteral("open_capture_history")) {
             emit q.quickActionRequested(GlobalShortcutAction::OpenCaptureHistory);
         } else if (action == QStringLiteral("open_pin_to_screen_management")) {
@@ -786,7 +795,7 @@ class SystemTrayController::Impl {
         requestGroupMenuRefresh();
     }
 
-    void setMenuOptions(const QStringList& options) {
+    void setMenuOptions(const QStringList& options, bool preserveInputPause = false) {
         const QSet<QString> requested(options.cbegin(), options.cend());
         const QString mouseToggleId = QStringLiteral("quick.toggle-global-mouse");
         const bool mouseToggleWasVisible = menuOptions.contains(mouseToggleId);
@@ -824,6 +833,9 @@ class SystemTrayController::Impl {
             }
             priorGroupVisible = priorGroupVisible || visibleGroups.at(groupIndex);
         }
+
+        if (preserveInputPause)
+            return;
 
         const auto clearManualPause = [this](GlobalShortcutAction toggle) {
             if (!checkedQuickActions.value(toggle))
@@ -1119,8 +1131,8 @@ void SystemTrayController::setGlobalShortcuts(GlobalShortcutAction action,
     m_impl->retranslateUi();
 }
 
-void SystemTrayController::setMenuOptions(const QStringList& options) {
-    m_impl->setMenuOptions(options);
+void SystemTrayController::setMenuOptions(const QStringList& options, bool preserveInputPause) {
+    m_impl->setMenuOptions(options, preserveInputPause);
 }
 
 QStringList SystemTrayController::menuOptions() const {

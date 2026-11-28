@@ -36,7 +36,7 @@ def bash_executable():
 def write_qt_kit(prefix, static=True, architectures=('arm64', 'x64')):
     translations = prefix / 'translations'
     translations.mkdir(parents=True, exist_ok=True)
-    for language in ('zh_CN', 'zh_TW'):
+    for language in ('zh_CN', 'zh_TW', 'ru'):
         (translations / f'qtbase_{language}.qm').touch()
     for module in ('Qt6', 'Qt6Core'):
         directory = prefix / 'lib/cmake' / module
@@ -173,7 +173,7 @@ class QtKitValidation(unittest.TestCase):
     def test_stock_dialog_catalogs_are_required_without_an_english_catalog(self):
         self.assertFalse((self.prefix / 'translations/qtbase_en_US.qm').exists())
         self.run_validator('--kit-only')
-        for language in ('zh_CN', 'zh_TW'):
+        for language in ('zh_CN', 'zh_TW', 'ru'):
             path = self.prefix / 'translations' / f'qtbase_{language}.qm'
             path.unlink()
             result = self.run_validator('--kit-only', success=False)
@@ -574,6 +574,7 @@ include([==[{(ROOT / 'cmake/SnowShotMiniMacOS.cmake').as_posix()}]==])
                 self.assertTrue(all(line and 'Snow Shot' in line for line in lines))
         self.assertIn('应用程序', ''.join(groups['zh-Hans'].itertext()))
         self.assertIn('應用程式', ''.join(groups['zh-Hant'].itertext()))
+        self.assertIn('Программы', ''.join(groups['ru'].itertext()))
 
     def test_product_metadata_and_native_translations(self):
         resources = ROOT / 'snow_shot/packaging/macos'
@@ -641,7 +642,7 @@ include([==[{(ROOT / 'cmake/SnowShotMiniMacOS.cmake').as_posix()}]==])
             files.extend([assets / 'ocr/asset-manifest.json',
                           bundle / 'Contents/Resources/snow-shot.icns'])
             files.extend(bundle / ('Contents/Resources/' + language + '.lproj/InfoPlist.strings')
-                         for language in ('en', 'zh-Hans', 'zh-Hant'))
+                         for language in ('en', 'zh-Hans', 'zh-Hant', 'ru'))
             files.extend(bundle / ('Contents/Resources/snow-shot-mini/licenses/' + relative)
                          for relative in ('LICENSE', 'components/snow_rust_ffi/COPYRIGHT',
                                           'third-party/qt/LICENSES/Qt-GPL-exception-1.0.txt',
@@ -716,7 +717,7 @@ include([==[{(ROOT / 'cmake/SnowShotMiniMacOS.cmake').as_posix()}]==])
 
     def test_native_languages_match_the_application_catalogs(self):
         plist = plistlib.loads((ROOT / 'snow_shot/packaging/macos/Info.plist.in').read_bytes())
-        native_languages = {'en_US': 'en', 'zh_CN': 'zh-Hans', 'zh_TW': 'zh-Hant'}
+        native_languages = {'en_US': 'en', 'zh_CN': 'zh-Hans', 'zh_TW': 'zh-Hant', 'ru': 'ru'}
         catalog_languages = {ET.parse(path).getroot().attrib['language']
                              for path in (ROOT / 'snow_shot/i18n').rglob('*.ts')}
         self.assertEqual(set(plist['CFBundleLocalizations']),
@@ -1036,6 +1037,7 @@ class MacOSBuildScripts(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         shutil.copytree(ROOT / "scripts", self.root / "scripts")
+        (self.root / 'CMakeLists.txt').write_text('set(SNOW_SHOT_VERSION "1.2.3")\n')
         (self.root / 'scripts/snow-shot-macos-signing.py').write_text(
             "import os, sys\n"
             "if os.environ.get('SNOW_TEST_RELEASE_IDENTITY_MISSING'): sys.exit(1)\n"
@@ -1047,7 +1049,8 @@ class MacOSBuildScripts(unittest.TestCase):
             "assert sys.argv[1:] == ['bootstrap']\n")
         ocr_pin = self.root / 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml'
         ocr_pin.parent.mkdir(parents=True)
-        shutil.copyfile(ROOT / 'snow-crates/crates/simd-paddle-ocr-rs/rust-toolchain.toml', ocr_pin)
+        # Match the mocked rustup toolchain list, including in CI checkouts without submodules.
+        ocr_pin.write_text('[toolchain]\nchannel = "nightly-2026-09-08"\n')
         self.bin = self.root / ".tools/macos-dev/bin"
         self.bin.mkdir(parents=True)
         self.log = self.root / "commands.jsonl"
@@ -1158,6 +1161,7 @@ if name == 'openssl':
         if option in sys.argv:
             pathlib.Path(sys.argv[sys.argv.index(option) + 1]).touch()
 """
+        (self.root / 'scripts/snow-shot-sparkle.py').write_text(mock)
         tools = ("cmake", "cpack", "ninja", "cargo", "rustc", "rustup", "pkg-config", "uname",
                  "open", "ps", "xcode-select", "xcrun", "git", "lsregister", "security",
                  "openssl", "arch", "sysctl", "cc", "c++", "clang++")
@@ -1497,9 +1501,15 @@ if name == 'openssl':
         self.assertLess(build, symbols)
         self.assertLess(symbols, pack)
         self.assertEqual(calls[pack], ['cpack', '--preset', 'package-snow-shot-macos-arm64-release'])
-        self.assertTrue(any(call[0] == 'cpack' and
-                            any(arg.endswith('CPackSnowShotMiniConfig.cmake') for arg in call)
-                            for call in calls))
+        mini_pack = next(i for i, call in enumerate(calls) if call[0] == 'cpack' and
+                         any(arg.endswith('CPackSnowShotMiniConfig.cmake') for arg in call))
+        self.assertLess(calls.index(['snow-shot-sparkle.py', 'check-key']), build)
+        for product, package in (('snow-shot', pack), ('snow-shot-mini', mini_pack)):
+            dmg = stale.parent / f'{product}-1.2.3-macos-arm64.dmg'
+            prepare = ['snow-shot-sparkle.py', 'prepare-release', '--dmg', str(dmg),
+                       '--product', product, '--version', '1.2.3', '--architecture', 'arm64',
+                       '--output', str(dmg.with_suffix('.sparkle.json'))]
+            self.assertLess(package, calls.index(prepare))
         self.assertFalse(stale.exists())
 
     def test_arm_release_rejects_disabled_mini_before_packaging(self):

@@ -598,12 +598,12 @@ PinnedWindowManagementPageWidget::PinnedWindowManagementPageWidget(
     m_selectionBar->setObjectName(QStringLiteral("pinnedManagementSelectionBar"));
     m_selectionBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto* selectionOuter = new QVBoxLayout(m_selectionBar);
-    selectionOuter->setContentsMargins(0, 0, 0, metric.marginSM);
+    selectionOuter->setContentsMargins(0, 0, 0, metric.margin);
     m_selectionPanel = new HistorySelectionBar(m_selectionBar);
     m_selectionPanel->setObjectName(QStringLiteral("pinnedManagementSelectionPanel"));
     m_selectionPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_selectionLayout = new QBoxLayout(QBoxLayout::LeftToRight, m_selectionPanel);
-    m_selectionLayout->setContentsMargins(metric.paddingMD, metric.paddingSM, metric.paddingMD,
+    m_selectionLayout->setContentsMargins(metric.paddingLG, metric.paddingSM, metric.paddingLG,
                                           metric.paddingSM);
     m_selectionLayout->setSpacing(metric.marginXS);
     m_selectionSummary = new QLabel(m_selectionPanel);
@@ -614,7 +614,7 @@ PinnedWindowManagementPageWidget::PinnedWindowManagementPageWidget(
     m_selectionActions->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     auto* selectionActionsLayout = new QHBoxLayout(m_selectionActions);
     selectionActionsLayout->setContentsMargins(0, 0, 0, 0);
-    selectionActionsLayout->setSpacing(0);
+    selectionActionsLayout->setSpacing(metric.margin);
     m_deleteSelected = new adqt::widgets::AdButton(m_selectionActions);
     m_deleteSelected->setObjectName(QStringLiteral("pinnedManagementDeleteSelected"));
     history_page::configureSelectionAction(m_deleteSelected, true);
@@ -633,7 +633,6 @@ PinnedWindowManagementPageWidget::PinnedWindowManagementPageWidget(
     selectionActionsLayout->addWidget(m_deselect);
     m_selectionLayout->addWidget(m_selectionActions);
     selectionOuter->addWidget(m_selectionPanel);
-    m_selectionBar->hide();
     container->addStickyWidget(m_selectionBar, metric.marginSM);
 
     m_deleteAllConfirmation = new adqt::widgets::AdPopconfirm(content);
@@ -1041,6 +1040,14 @@ void PinnedWindowManagementPageWidget::rebuildEntries() {
                     imageEditing->setToolTip(imageEditing->text());
                     connect(imageEditing, &QAction::triggered, row,
                             [this, id] { emit imageEditingRequested(id); });
+                    auto* imageCompression =
+                        menu->addItem(tr("Image compression"),
+                                      presentation::icons::custom::outlined::ImageCompression());
+                    imageCompression->setObjectName(
+                        QStringLiteral("pinnedManagementEntryImageCompression"));
+                    imageCompression->setToolTip(imageCompression->text());
+                    connect(imageCompression, &QAction::triggered, row,
+                            [this, id] { emit imageCompressionRequested(id); });
                     auto* copyImagePath = menu->addItem(history_page::copyImagePathActionText(),
                                                         outlined_icons::Copy());
                     copyImagePath->setObjectName(
@@ -1084,6 +1091,9 @@ void PinnedWindowManagementPageWidget::rebuildEntries() {
             QUrl imageSource;
             imageSource.setScheme(QStringLiteral("pinned"));
             imageSource.setPath(record.id);
+            row->setDragImage(m_previewViewer->imageLoader(), imageSource);
+            connect(row, &HistoryEntryCard::imageDragRequested, this,
+                    &PinnedWindowManagementPageWidget::imageDragRequested);
             const QString altText = tr("Pinned window image");
             preview->setViewer(m_previewViewer);
             preview->setImageLoader(m_previewViewer->imageLoader());
@@ -1152,6 +1162,11 @@ void PinnedWindowManagementPageWidget::rebuildEntries() {
         for (auto* action :
              row->findChildren<QAction*>(QStringLiteral("pinnedManagementEntryImageEditing"))) {
             action->setText(tr("Image editing"));
+            action->setToolTip(action->text());
+        }
+        for (auto* action :
+             row->findChildren<QAction*>(QStringLiteral("pinnedManagementEntryImageCompression"))) {
+            action->setText(tr("Image compression"));
             action->setToolTip(action->text());
         }
         for (auto* split :
@@ -1240,13 +1255,13 @@ void PinnedWindowManagementPageWidget::updateBatchActions() {
 }
 
 void PinnedWindowManagementPageWidget::updateSelectionBar() {
-    updateBatchActions();
     const int count = static_cast<int>(m_selected.size());
     history_page::updateSelectionBar(
         {m_selectionBar, m_selectionLayout, m_selectionSummary, m_selectionActions, m_selectPage,
          m_deleteSelected, m_deselect, m_deleteSelectedConfirmation},
         m_selected, m_pageIds, true, m_entries->width(), tr("Selected %n item(s)", nullptr, count),
         tr("Delete %n selected item(s)?", nullptr, count));
+    updateBatchActions();
 }
 
 void PinnedWindowManagementPageWidget::clearSelection() {

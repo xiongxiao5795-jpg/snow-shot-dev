@@ -108,6 +108,7 @@ struct ScreenshotToolPaletteStyleControlCallbacks {
     std::function<void(const SnowCanvasMagnifierStyle& style, quint32 properties)>
         magnifierStyleChanged;
     bool quickAnnotation = false;
+    Qt::WindowModality dialogModality = Qt::WindowModal;
 };
 
 // Palette-owned row services used by the family builders. The palette supplies
@@ -284,6 +285,8 @@ class ScreenshotToolPaletteStyleControls final {
     void setDistanceControlsActive(bool active);
     void setAngleControlsActive(bool active);
     void setBracketControlsActive(bool active);
+    [[nodiscard]] bool canCycleDistanceUnit() const;
+    bool cycleDistanceUnit();
     [[nodiscard]] bool handleDistanceWheel(const ScreenshotToolPaletteWheelPosition& position,
                                            int direction);
     [[nodiscard]] bool handleMagnifierWheel(const ScreenshotToolPaletteWheelPosition& position,
@@ -473,7 +476,7 @@ class ScreenshotToolPaletteStyleControls final {
     void refreshWatermarkTemplateOptions();
     void openCreateWatermarkTemplateModal();
     void openDeleteWatermarkTemplateModal(const QString& templateKey);
-    void deleteWatermarkTemplate(const QString& templateKey);
+    bool deleteWatermarkTemplate(int index, const snow_shot::storage::WatermarkTemplate& target);
     void setWatermarkAngle(double angle);
     void setWatermarkGap(double gap);
     void setWatermarkOpacity(double opacity);

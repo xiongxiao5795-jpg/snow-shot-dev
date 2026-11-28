@@ -43,6 +43,7 @@ struct ScreenshotOcrResolvedAssets {
     QString recognizerModelPath;
     QString dictionaryPath;
     bool offline = false;
+    QString paragraphModelPath;
 
     [[nodiscard]] bool valid() const;
 };
@@ -69,12 +70,15 @@ class ScreenshotOcrAssets final : public QObject {
         QString bundledRuntimeRoot = {};
         // Executable code must come from the immutable application payload.
         bool requireBundledRuntime = false;
+        // Acquire only the runtime and the independent paragraph model.
+        bool paragraphGrouping = false;
     };
 
     explicit ScreenshotOcrAssets(Options options, QObject* parent = nullptr);
     ~ScreenshotOcrAssets() override;
 
-    void prepare();
+    // Cache-only preparation may also select an available local model.
+    void prepare(bool allowDownload = true, bool tryCachedFallback = false);
     void setProxyUrl(const QString& proxyUrl);
     void setModelType(ScreenshotOcrModelType modelType);
 

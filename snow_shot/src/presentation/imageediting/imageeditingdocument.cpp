@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "snow_shot/presentation/imageeditingdocument.h"
-#include "snow_shot/presentation/screenshotdefaultstyles.h"
+#include "snow_shot/presentation/screenshotcanvastoolstyles.h"
 #include "snow_draw_engine_qt/snow_canvas_image.h"
 #include <QCryptographicHash>
 #include <QCoreApplication>
@@ -112,7 +112,7 @@ QImage joinStrip(const QImage& current, const ImageEditingDocument::Crop& crop,
 } // namespace
 
 ImageEditingDocument::ImageEditingDocument(QObject* parent)
-    : QObject(parent), m_runtime(SnowCanvasRuntimeConfig{screenshotCanvasStyleDefaults()}) {
+    : QObject(parent), m_runtime(SnowCanvasRuntimeConfig{screenshotCanvasToolStyleDefaults()}) {
     m_runtime.setDocumentChangedHandler([this] {
         m_exportCache = {};
         pruneCrops();
@@ -180,8 +180,9 @@ ImageEditingDocument::prepareCrop(const QImage& image, CropAxis axis, int first,
     crop.result = removeStrip(image, crop, cancelled);
     if (crop.result.isNull())
         return crop;
-    crop.removed = image.copy(rows ? QRect(0, crop.start, image.width(), crop.length)
-                                   : QRect(crop.start, 0, crop.length, image.height()));
+    crop.removed =
+        snowCanvasCopyImage(image, rows ? QRect(0, crop.start, image.width(), crop.length)
+                                        : QRect(crop.start, 0, crop.length, image.height()));
     if (crop.removed.isNull() || (cancelled && cancelled())) {
         crop.result = {};
         crop.removed = {};

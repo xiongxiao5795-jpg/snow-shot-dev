@@ -1,6 +1,7 @@
 #ifndef SNOW_SHOT_STORAGE_SETTINGSADAPTERS_H
 #define SNOW_SHOT_STORAGE_SETTINGSADAPTERS_H
 
+#include "snow_shot/storage/exporttasks.h"
 #include "snow_shot/app/edition.h"
 #include "snow_shot/clouduploadconfiguration.h"
 #if SNOW_SHOT_ENABLE_API_CONFIGURATION
@@ -15,6 +16,7 @@
 #include <QColor>
 #include <QPoint>
 #include <QByteArray>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMap>
@@ -26,6 +28,8 @@
 #include <optional>
 
 namespace snow_shot::storage {
+class ConfigurationStore;
+enum class ConfigurationWriteOrigin;
 class CloudUploadConfigurationSettings final {
   public:
     [[nodiscard]] CloudUploadSettings settings() const;
@@ -189,6 +193,8 @@ class ShortcutSettings final {
     bool setScreenshotSave(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList screenshotQuickSave() const;
     bool setScreenshotQuickSave(const shortcuts::ShortcutBindingList& bindings) const;
+    shortcuts::ShortcutBindingList screenshotPinWindowToScreen() const;
+    bool setScreenshotPinWindowToScreen(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList screenshotFullScreen() const;
     bool setScreenshotFullScreen(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList screenshotFocusedWindow() const;
@@ -214,6 +220,8 @@ class ShortcutSettings final {
     bool setSplitSelectedImages(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList editSelectedImages() const;
     bool setEditSelectedImages(const shortcuts::ShortcutBindingList& bindings) const;
+    [[nodiscard]] shortcuts::ShortcutBindingList compressSelectedImages() const;
+    bool setCompressSelectedImages(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList openPinToScreenManagement() const;
     bool setOpenPinToScreenManagement(const shortcuts::ShortcutBindingList& bindings) const;
     [[nodiscard]] shortcuts::ShortcutBindingList openSettings() const;
@@ -255,10 +263,8 @@ class GlobalShortcutSettings final {
 
 class ScreenshotSettings final {
   public:
-    [[nodiscard]] bool shutterSoundNotification() const;
-    bool setShutterSoundNotification(bool enabled) const;
-    [[nodiscard]] bool screenshotSoundNotification() const;
-    bool setScreenshotSoundNotification(bool enabled) const;
+    [[nodiscard]] QStringList shutterSoundTargets() const;
+    bool setShutterSoundTargets(const QStringList& targets) const;
 #if SNOW_SHOT_ENABLE_QR_RECOGNITION
     [[nodiscard]] bool autoRecognizeQrCode() const;
     bool setAutoRecognizeQrCode(bool enabled) const;
@@ -291,13 +297,13 @@ class ScreenshotSettings final {
     bool setHiDpiImageScaling(const QString& mode) const;
     [[nodiscard]] QString selectionResizeMode() const;
     bool setSelectionResizeMode(const QString& mode) const;
-    [[nodiscard]] QStringList autoSaveAfterExecutionActions() const;
-    bool setAutoSaveAfterExecutionActions(const QStringList& actions) const;
-    [[nodiscard]] bool autoSaveAfterExecution(const QString& action) const;
+    [[nodiscard]] QStringList selectedExportTaskIds(ExportTrigger trigger) const;
+    bool setSelectedExportTaskIds(ExportTrigger trigger, const QStringList& ids) const;
+    [[nodiscard]] ExportTasks exportTasks(ExportTrigger trigger,
+                                          ScreenshotType type = ScreenshotType::All) const;
+    bool setExportTasks(ExportTrigger trigger, ExportTasks tasks) const;
     [[nodiscard]] bool copyImageFileToClipboard() const;
     bool setCopyImageFileToClipboard(bool enabled) const;
-    [[nodiscard]] bool copyAfterPinningToScreen() const;
-    bool setCopyAfterPinningToScreen(bool enabled) const;
     [[nodiscard]] bool keepAnnotationsEditableAfterPinningToScreen() const;
     bool setKeepAnnotationsEditableAfterPinningToScreen(bool enabled) const;
     [[nodiscard]] QString imageSaveDirectory() const;
@@ -352,14 +358,24 @@ class DrawingSettings final {
 // Applies partial updates across local shortcut scopes in one commit. Each affected
 // scope is validated against its complete resulting assignment before any values change.
 [[nodiscard]] bool setLocalShortcutValuesAtomic(const QMap<QString, QJsonValue>& values);
+[[nodiscard]] bool setLocalShortcutValuesAtomic(const QMap<QString, QJsonValue>& values,
+                                                ConfigurationWriteOrigin origin);
+[[nodiscard]] bool localShortcutChangesValid(const QMap<QString, QJsonValue>& current,
+                                             const QMap<QString, QJsonValue>& changes,
+                                             bool validateUnchanged = false);
 
 // Keeps the shared color and per-tool appearance preferences consistent in one commit.
 // Also accepts drawing section reset values; disabling materializes the current color.
 [[nodiscard]] bool setDrawingStyleValues(QMap<QString, QJsonValue> values);
+[[nodiscard]] bool setDrawingStyleValues(QMap<QString, QJsonValue> values,
+                                         ConfigurationWriteOrigin origin);
+[[nodiscard]] bool applyDrawingColorPolicy(const ConfigurationStore& configuration,
+                                           QMap<QString, QJsonValue>& values);
 
 class ScreenshotShortcutSettings final {
   public:
-    [[nodiscard]] static bool isReservedShortcut(const shortcuts::ShortcutBinding& shortcut);
+    [[nodiscard]] static bool isReservedShortcut(const shortcuts::ShortcutBinding& shortcut,
+                                                 const QString& actionId = {});
     [[nodiscard]] static bool isReservedShortcutAllowed(const QString& actionId,
                                                         const shortcuts::ShortcutBinding& shortcut);
 
@@ -389,6 +405,7 @@ class ScreenshotShortcutSettings final {
     [[nodiscard]] shortcuts::ShortcutBindingList shortcuts(const QString& actionId) const;
     bool setShortcuts(const QString& actionId,
                       const shortcuts::ShortcutBindingList& bindings) const;
+    [[nodiscard]] shortcuts::ShortcutBindingMap activeShortcuts() const;
     [[nodiscard]] shortcuts::ShortcutBindingMap allShortcuts() const;
     bool setAllShortcutsAtomic(const shortcuts::ShortcutBindingMap& shortcutsByAction) const;
 };
@@ -416,7 +433,9 @@ class DrawingShortcutSettings final {
 
 class PinToScreenShortcutSettings final {
   public:
+    [[nodiscard]] static bool isReservedShortcut(const shortcuts::ShortcutBinding& shortcut);
     [[nodiscard]] static bool actionsMayConflict(const QString& first, const QString& second);
+    [[nodiscard]] shortcuts::ShortcutBindingList screenshotShortcuts(const QString& actionId) const;
     [[nodiscard]] shortcuts::ShortcutBindingList shortcuts(const QString& actionId) const;
     bool setShortcuts(const QString& actionId,
                       const shortcuts::ShortcutBindingList& bindings) const;
@@ -691,8 +710,12 @@ struct DrawTemplate {
 
 class DrawTemplateSettings final {
   public:
+    [[nodiscard]] QJsonArray encodedTemplates() const;
+    [[nodiscard]] static QByteArray decodePayload(const QJsonObject& record);
     [[nodiscard]] QVector<DrawTemplate> templates() const;
     bool setTemplates(const QVector<DrawTemplate>& templates) const;
+    bool appendTemplate(const DrawTemplate& drawTemplate) const;
+    bool removeTemplate(qsizetype index, const QJsonObject& expected) const;
 };
 
 class PinToScreenSettings final {
@@ -780,8 +803,6 @@ class TraySettings final {
 
 class SystemSettings final {
   public:
-    [[nodiscard]] bool annotationModeWhenOpeningForEditing() const;
-    [[nodiscard]] bool setAnnotationModeWhenOpeningForEditing(bool enabled) const;
     [[nodiscard]] bool autoStartAtBoot() const;
     [[nodiscard]] bool launchAsAdministrator() const;
     [[nodiscard]] bool setLaunchAsAdministrator(bool enabled) const;

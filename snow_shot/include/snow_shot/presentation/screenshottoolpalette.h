@@ -18,6 +18,7 @@
 #include <QDateTime>
 #include <QMargins>
 #include <QHash>
+#include <QJsonArray>
 #include <QPoint>
 #include <QPointer>
 #include <QRect>
@@ -31,6 +32,7 @@
 #include <initializer_list>
 #include <optional>
 
+class QAbstractButton;
 class QFrame;
 class QEvent;
 class QHideEvent;
@@ -119,6 +121,8 @@ class ScreenshotToolPalette final : public QWidget,
         Paused,
     };
 
+    enum class RecordingCommand { Start, Stop, Pause, Resume, Copy, Save, Trim, Close, OpenFolder };
+
     enum class RecordingBusyOperation {
         None,
         Starting,
@@ -129,6 +133,28 @@ class ScreenshotToolPalette final : public QWidget,
 
     class RecordingSessionStatus {
       public:
+        [[nodiscard]] bool allows(RecordingCommand command, bool trimming, bool trimBusy) const {
+            if (command == RecordingCommand::Close || command == RecordingCommand::OpenFolder)
+                return true;
+            if (busy() || trimBusy)
+                return false;
+            switch (command) {
+            case RecordingCommand::Start:
+                return state() == RecordingState::Idle;
+            case RecordingCommand::Pause:
+                return !trimming && state() == RecordingState::Recording;
+            case RecordingCommand::Resume:
+                return !trimming && state() == RecordingState::Paused;
+            case RecordingCommand::Stop:
+                return !trimming && state() != RecordingState::Idle;
+            case RecordingCommand::Copy:
+            case RecordingCommand::Trim:
+            case RecordingCommand::Save:
+                return trimming || state() != RecordingState::Idle;
+            default:
+                return false;
+            }
+        }
         [[nodiscard]] static RecordingSessionStatus idle() {
             return RecordingSessionStatus(RecordingState::Idle, RecordingBusyOperation::None);
         }
@@ -272,6 +298,7 @@ class ScreenshotToolPalette final : public QWidget,
         bool showScreenRecordButton = false;
         bool showRecordingControls = false;
         bool recordingDrawingMode = false;
+        Qt::WindowModality dialogModality = Qt::WindowModal;
         bool showTrailingDragHandle = false;
         bool enableStyleToolbar = true;
         bool separatorAfterSelect = false;
@@ -347,6 +374,7 @@ class ScreenshotToolPalette final : public QWidget,
     void refreshShortcutTooltips();
     void setGlobalCanvasClickThrough(bool enabled);
     void setGlobalCanvasLaserPointer(bool enabled);
+    [[nodiscard]] static std::optional<Tool> drawingShortcutTool(const QString& toolId);
     [[nodiscard]] bool canActivateDrawingShortcut(const QString& toolId) const;
     [[nodiscard]] bool canActivateScreenshotShortcut(const QString& actionId);
     [[nodiscard]] bool activateDrawingShortcut(const QString& toolId);
@@ -508,6 +536,7 @@ class ScreenshotToolPalette final : public QWidget,
     [[nodiscard]] MaterializationState actionFamilyStateForTests(ActionFamily family) const;
     [[nodiscard]] MaterializationState styleFamilyStateForTests(Tool tool) const;
     [[nodiscard]] StyleReconcileStats lastStyleReconcileStatsForTests() const;
+    [[nodiscard]] qsizetype loadedDrawTemplateCountForTests() const;
     // Null until the recording effect settings dialog has been built, and null
     // again once it closes. Lets tests assert absence without waiting for the
     // deferred deletion to run.
@@ -745,7 +774,6 @@ class ScreenshotToolPalette final : public QWidget,
     [[nodiscard]] bool drawingToolCanBeActivated(Tool tool) const;
     [[nodiscard]] bool canActivateToolShortcut(Tool tool) const;
     [[nodiscard]] adqt::widgets::AdButton* toolEntryButton(Tool tool) const;
-    [[nodiscard]] std::optional<Tool> drawingShortcutTool(const QString& toolId) const;
     void clearDrawingToolGroups();
     void releaseDrawingToolGroupPopover(adqt::widgets::AdButton* trigger);
     bool activateToolFromToolbar(Tool tool, bool toggleVisibleButton = true);
@@ -756,10 +784,11 @@ class ScreenshotToolPalette final : public QWidget,
     bool activateDrawingItem(const QString& itemId, bool toggleVisibleButton = true);
     [[nodiscard]] bool historyActionEnabled(const QString& itemId) const;
     [[nodiscard]] bool canActivateHistoryItem(const QString& itemId) const;
-    [[nodiscard]] adqt::widgets::AdButton* screenshotShortcutButton(const QString& actionId) const;
     void refreshDrawingToolGroup(int groupIndex);
     void addRecordingControls(QBoxLayout* layout);
     [[nodiscard]] adqt::widgets::AdButton* recordingActionSourceButton(const QString& itemId) const;
+    enum class RecordingAudioControl { Microphone, SystemAudio };
+    void activateRecordingAudio(RecordingAudioControl control);
     void refreshRecordingAudioGainTriggers();
     void createRecordingExportSettingsToolbar();
     // Builds the recording effect settings dialog on first use; it is destroyed
@@ -789,6 +818,8 @@ class ScreenshotToolPalette final : public QWidget,
     void ensureLayoutApplied() const;
     void markLayoutDirty(bool rowOrderChanged = false);
     void updateToolbarRowGeometry(bool styleToolbarVisible);
+    [[nodiscard]] bool annotationOptionsActive() const;
+    [[nodiscard]] QAbstractButton* nextAnnotationOptionButton() const;
     void setActiveToolButton(adqt::widgets::AdButton* activeButton);
     bool clearActiveToolState();
     bool setStyleControlsActive(Tool tool);
@@ -807,7 +838,9 @@ class ScreenshotToolPalette final : public QWidget,
     void refreshThemeDependentIcons();
     void synchronizeFilterModeGroups(Tool tool);
     void updateBrushFilterStrokeWidthControls();
-    adqt::widgets::AdButton* recordingShortcutButton(const QString& actionId) const;
+    [[nodiscard]] std::optional<RecordingCommand> recordingShortcutCommand(const QString& id) const;
+    [[nodiscard]] std::optional<RecordingCommand> recordingItemCommand(const QString& id) const;
+    bool invokeRecordingCommand(RecordingCommand command);
     void refreshRecordingShortcutTooltips();
     void updateRecordingControls();
     void updateRecordingControlMetrics();
@@ -1171,7 +1204,7 @@ class ScreenshotToolPalette final : public QWidget,
     QPointer<adqt::widgets::AdFormItem> m_drawTemplateNameItem;
     QPointer<adqt::widgets::AdAlert> m_drawTemplateAlert;
     int m_drawTemplateAlertKind = 0;
-    QVector<snow_shot::storage::DrawTemplate> m_drawTemplates;
+    QJsonArray m_drawTemplateRecords;
     QByteArray m_pendingDrawTemplatePayload;
     QString m_deleteDrawTemplateName;
     std::function<QByteArray()> m_selectedDrawTemplatePayload;

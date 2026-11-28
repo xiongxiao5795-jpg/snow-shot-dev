@@ -250,10 +250,10 @@
       "allowedStringValues": [],
       "defaultJsonType": 2,
       "defaultStringIsNull": false,
-      "defaultValue": 7,
+      "defaultValue": 12,
       "integerRange": [
-        7,
-        7,
+        12,
+        12,
         1
       ],
       "key": "storage/schema_version",
@@ -496,6 +496,20 @@
     },
     {
       "allowedStringValues": [
+        "performance",
+        "normal",
+        "power_saving"
+      ],
+      "defaultJsonType": 3,
+      "defaultStringIsNull": false,
+      "defaultValue": "performance",
+      "integerRange": null,
+      "key": "system/power_qos",
+      "maximumListItems": -1,
+      "valueKind": "String"
+    },
+    {
+      "allowedStringValues": [
         "smart_control",
         "disabled"
       ],
@@ -532,14 +546,23 @@
       "valueKind": "String"
     },
     {
-      "allowedStringValues": [],
-      "defaultJsonType": 1,
+      "allowedStringValues": [
+        "pin_to_screen",
+        "pin_to_screen_and_annotate",
+        "stitch_images",
+        "split_images",
+        "edit_images",
+        "compress_images"
+      ],
+      "defaultJsonType": 4,
       "defaultStringIsNull": false,
-      "defaultValue": true,
+      "defaultValue": [
+        "pin_to_screen"
+      ],
       "integerRange": null,
-      "key": "system/annotation_mode_when_opening_for_editing",
+      "key": "system/context_menu_options",
       "maximumListItems": -1,
-      "valueKind": "Boolean"
+      "valueKind": "StringList"
     },
     {
       "allowedStringValues": [],
@@ -641,19 +664,6 @@
       "defaultValue": "small",
       "integerRange": null,
       "key": "text_recognition/model_type",
-      "maximumListItems": -1,
-      "valueKind": "String"
-    },
-    {
-      "allowedStringValues": [
-        "max",
-        "min"
-      ],
-      "defaultJsonType": 3,
-      "defaultStringIsNull": false,
-      "defaultValue": "max",
-      "integerRange": null,
-      "key": "text_recognition/detector_resize_policy",
       "maximumListItems": -1,
       "valueKind": "String"
     },
@@ -850,7 +860,7 @@
       "allowedStringValues": [],
       "defaultJsonType": 1,
       "defaultStringIsNull": false,
-      "defaultValue": false,
+      "defaultValue": true,
       "integerRange": null,
       "key": "screenshot_translation/copy_translation_results_as_image",
       "maximumListItems": -1,
@@ -1115,6 +1125,16 @@
       "defaultStringIsNull": false,
       "defaultValue": [],
       "integerRange": null,
+      "key": "global_shortcuts/screenshot_pin_window_to_screen",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
       "key": "global_shortcuts/screenshot_full_screen",
       "maximumListItems": 2,
       "valueKind": "ShortcutList"
@@ -1226,6 +1246,16 @@
       "defaultValue": [],
       "integerRange": null,
       "key": "global_shortcuts/edit_selected_images",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "global_shortcuts/compress_selected_images",
       "maximumListItems": 2,
       "valueKind": "ShortcutList"
     },
@@ -1374,6 +1404,16 @@
       "key": "global_shortcuts/fullscreen_disable_scope",
       "maximumListItems": -1,
       "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "global_mouse/screenshot",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
     },
     {
       "allowedStringValues": [],
@@ -2669,6 +2709,20 @@
       "defaultStringIsNull": false,
       "defaultValue": [
         {
+          "portable": "Tab"
+        }
+      ],
+      "integerRange": null,
+      "key": "drawing_shortcuts/cycle_annotation_tool_options",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [
+        {
           "portable": "M"
         },
         {
@@ -3032,6 +3086,16 @@
       "allowedStringValues": [],
       "defaultJsonType": 4,
       "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "screenshot_shortcuts/text_recognition_copy",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
       "defaultValue": [
         {
           "portable": "Ctrl+T"
@@ -3191,7 +3255,57 @@
       "defaultStringIsNull": false,
       "defaultValue": [],
       "integerRange": null,
-      "key": "context_menu_shortcuts/edit_with_snow_shot",
+      "key": "context_menu_shortcuts/pin_to_screen",
+      "maximumListItems": 1,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "context_menu_shortcuts/pin_to_screen_and_annotate",
+      "maximumListItems": 1,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "context_menu_shortcuts/stitch_images",
+      "maximumListItems": 1,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "context_menu_shortcuts/split_images",
+      "maximumListItems": 1,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "context_menu_shortcuts/edit_images",
+      "maximumListItems": 1,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "context_menu_shortcuts/compress_images",
       "maximumListItems": 1,
       "valueKind": "ShortcutList"
     },
@@ -3325,6 +3439,76 @@
       "allowedStringValues": [],
       "defaultJsonType": 4,
       "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "pin_to_screen_shortcuts/split_image",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "pin_to_screen_shortcuts/image_editing",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "pin_to_screen_shortcuts/image_compression",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "pin_to_screen_shortcuts/show_all_windows",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "pin_to_screen_shortcuts/hide_other_windows",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "pin_to_screen_shortcuts/close_other_windows",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "pin_to_screen_shortcuts/close_all_windows",
+      "maximumListItems": 2,
+      "valueKind": "ShortcutList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
       "defaultValue": [
         {
           "portable": "Ctrl+Alt+A"
@@ -3388,20 +3572,6 @@
       ],
       "integerRange": null,
       "key": "pin_to_screen_shortcuts/save_as_file",
-      "maximumListItems": 2,
-      "valueKind": "ShortcutList"
-    },
-    {
-      "allowedStringValues": [],
-      "defaultJsonType": 4,
-      "defaultStringIsNull": false,
-      "defaultValue": [
-        {
-          "portable": "Ctrl+D"
-        }
-      ],
-      "integerRange": null,
-      "key": "pin_to_screen_shortcuts/show_text_recognition_results",
       "maximumListItems": 2,
       "valueKind": "ShortcutList"
     },
@@ -4760,6 +4930,9 @@
         "show_main_window",
         "screenshot_copy",
         "screenshot_fixed",
+        "pin_clipboard_content",
+        "restore_last_closed_windows",
+        "hide_show_all_windows",
         "open_capture_history",
         "open_pin_to_screen_management",
         "open_function_settings"
@@ -4779,6 +4952,9 @@
         "show_main_window",
         "screenshot_copy",
         "screenshot_fixed",
+        "pin_clipboard_content",
+        "restore_last_closed_windows",
+        "hide_show_all_windows",
         "open_capture_history",
         "open_pin_to_screen_management",
         "open_function_settings"
@@ -4805,6 +4981,7 @@
         "quick.screenshot-quick-save",
         "quick.screenshot-full-screen",
         "quick.screenshot-focused-window",
+        "quick.open-capture-history",
         "quick.pin-clipboard-content",
         "quick.pin-selected-files",
         "quick.restore-last-closed-windows",
@@ -4813,11 +4990,11 @@
         "quick.screen-record",
         "quick.screen-record-copy",
         "quick.open-screen-recording-folder",
-        "quick.open-capture-history",
         "quick.global-canvas",
         "quick.stitch-selected-images",
         "quick.split-selected-images",
         "quick.edit-selected-images",
+        "quick.compress-selected-images",
         "quick.translate-selected-text",
         "quick.toggle-window-under-cursor-always-on-top",
         "quick.toggle-global-hotkeys",
@@ -5055,24 +5232,19 @@
       "valueKind": "Boolean"
     },
     {
-      "allowedStringValues": [],
-      "defaultJsonType": 1,
+      "allowedStringValues": [
+        "direct_capture",
+        "normal_screenshot"
+      ],
+      "defaultJsonType": 4,
       "defaultStringIsNull": false,
-      "defaultValue": true,
+      "defaultValue": [
+        "direct_capture"
+      ],
       "integerRange": null,
       "key": "screenshot/shutter_sound_notification",
       "maximumListItems": -1,
-      "valueKind": "Boolean"
-    },
-    {
-      "allowedStringValues": [],
-      "defaultJsonType": 1,
-      "defaultStringIsNull": false,
-      "defaultValue": false,
-      "integerRange": null,
-      "key": "screenshot/screenshot_sound_notification",
-      "maximumListItems": -1,
-      "valueKind": "Boolean"
+      "valueKind": "StringList"
     },
     {
       "allowedStringValues": [],
@@ -5220,39 +5392,12 @@
       "valueKind": "String"
     },
     {
-      "allowedStringValues": [
-        "copy_screenshot",
-        "copy_scrolling_screenshot",
-        "copy_pinned_image",
-        "capture_focused_window",
-        "capture_current_monitor",
-        "pin_to_screen"
-      ],
-      "defaultJsonType": 4,
-      "defaultStringIsNull": false,
-      "defaultValue": [],
-      "integerRange": null,
-      "key": "screenshot/auto_save_after_execution_actions",
-      "maximumListItems": -1,
-      "valueKind": "StringList"
-    },
-    {
       "allowedStringValues": [],
       "defaultJsonType": 1,
       "defaultStringIsNull": false,
       "defaultValue": false,
       "integerRange": null,
       "key": "screenshot/copy_image_file_to_clipboard",
-      "maximumListItems": -1,
-      "valueKind": "Boolean"
-    },
-    {
-      "allowedStringValues": [],
-      "defaultJsonType": 1,
-      "defaultStringIsNull": false,
-      "defaultValue": false,
-      "integerRange": null,
-      "key": "screenshot/copy_after_pinning_to_screen",
       "maximumListItems": -1,
       "valueKind": "Boolean"
     },
@@ -5342,6 +5487,7 @@
       "allowedStringValues": [
         "vertical",
         "horizontal",
+        "free",
         "custom"
       ],
       "defaultJsonType": 3,
@@ -5733,14 +5879,18 @@
       "valueKind": "Structured"
     },
     {
-      "allowedStringValues": [],
-      "defaultJsonType": 1,
+      "allowedStringValues": [
+        "full",
+        "results_only",
+        "disabled"
+      ],
+      "defaultJsonType": 3,
       "defaultStringIsNull": false,
-      "defaultValue": true,
+      "defaultValue": "full",
       "integerRange": null,
-      "key": "capture_history/enabled",
+      "key": "capture_history/retention_mode",
       "maximumListItems": -1,
-      "valueKind": "Boolean"
+      "valueKind": "String"
     },
     {
       "allowedStringValues": [],
@@ -5883,6 +6033,672 @@
       "key": "pinned_history/max_disk_mib",
       "maximumListItems": -1,
       "valueKind": "Integer"
+    },
+    {
+      "allowedStringValues": [
+        "auto_save",
+        "pin_to_screen",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_copy",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "auto_save.normal",
+        "auto_save.scrolling",
+        "auto_save.focused_window",
+        "auto_save.current_monitor",
+        "pin_to_screen.normal",
+        "pin_to_screen.scrolling",
+        "pin_to_screen.focused_window",
+        "pin_to_screen.current_monitor",
+        "upload_to_cloud.normal",
+        "upload_to_cloud.scrolling",
+        "upload_to_cloud.focused_window",
+        "upload_to_cloud.current_monitor"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_copy_scoped",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_file",
+        "pin_to_screen",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_save",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_file.normal",
+        "copy_file.scrolling",
+        "pin_to_screen.normal",
+        "pin_to_screen.scrolling",
+        "upload_to_cloud.normal",
+        "upload_to_cloud.scrolling"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_save_scoped",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_to_clipboard",
+        "auto_save",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_pin",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_to_clipboard.normal",
+        "copy_to_clipboard.scrolling",
+        "auto_save.normal",
+        "auto_save.scrolling",
+        "upload_to_cloud.normal",
+        "upload_to_cloud.scrolling"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_pin_scoped",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_to_clipboard",
+        "pin_to_screen",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_print",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_to_clipboard.normal",
+        "copy_to_clipboard.scrolling",
+        "pin_to_screen.normal",
+        "pin_to_screen.scrolling",
+        "upload_to_cloud.normal",
+        "upload_to_cloud.scrolling"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_print_scoped",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_to_clipboard",
+        "auto_save",
+        "pin_to_screen",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_airdrop",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_to_clipboard.normal",
+        "copy_to_clipboard.scrolling",
+        "auto_save.normal",
+        "auto_save.scrolling",
+        "pin_to_screen.normal",
+        "pin_to_screen.scrolling",
+        "upload_to_cloud.normal",
+        "upload_to_cloud.scrolling"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_airdrop_scoped",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "auto_save",
+        "pin_to_screen"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_upload",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "auto_save.normal",
+        "auto_save.scrolling",
+        "pin_to_screen.normal",
+        "pin_to_screen.scrolling"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/screenshot_upload_scoped",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "auto_save",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/pinned_copy",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_file",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/pinned_save",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_to_clipboard",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/pinned_print",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "copy_to_clipboard",
+        "auto_save",
+        "upload_to_cloud"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/pinned_airdrop",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [
+        "auto_save"
+      ],
+      "defaultJsonType": 4,
+      "defaultStringIsNull": false,
+      "defaultValue": [],
+      "integerRange": null,
+      "key": "export_tasks/pinned_upload",
+      "maximumListItems": -1,
+      "valueKind": "StringList"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [],
+        "operation": "left_double_click"
+      },
+      "integerRange": null,
+      "key": "screenshot_mouse/copy",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "screenshot_mouse/save",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "screenshot_mouse/quick_save",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [],
+        "operation": "middle_click"
+      },
+      "integerRange": null,
+      "key": "screenshot_mouse/pin",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "screenshot_mouse/ocr",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "screenshot_mouse/ocr_copy",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "screenshot_mouse/cancel",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [],
+        "operation": "wheel"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/zoom",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [
+          "alt"
+        ],
+        "operation": "wheel"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/fine_zoom",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "operation": "wheel"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/opacity",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/fine_opacity",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/copy",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/copy_and_close",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [
+          "shift"
+        ],
+        "operation": "right_click"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/copy_text",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/save",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [],
+        "operation": "middle_click"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/reset_zoom",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [],
+        "operation": "left_double_click"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/thumbnail_mode",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/hide_to_top",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/show_text_recognition_results",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/close",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/destroy",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [],
+        "operation": "right_click"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/menu",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/annotation_mode",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/toggle_click_through",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/toggle_lock",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/show_all_windows",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/hide_other_windows",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/close_other_windows",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/close_all_windows",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "operation": "left_click"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/multi_select",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [],
+        "operation": "right_drag"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/select_crop",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [
+          "shift"
+        ],
+        "operation": "left_drag"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/pan_crop",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [],
+        "operation": "left_drag"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/move_resize",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [
+          "alt"
+        ],
+        "operation": "left_drag"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/force_move",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "operation": "left_drag"
+      },
+      "integerRange": null,
+      "key": "pin_to_screen_mouse/drag_image",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
     }
   ]
 }

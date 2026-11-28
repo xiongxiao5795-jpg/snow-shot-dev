@@ -23,7 +23,7 @@ class ImageStitchingPreviewCanvas final : public QWidget {
     [[nodiscard]] bool canFitToCanvas() const;
     [[nodiscard]] QRectF imageViewportRect(quint64 id) const;
     [[nodiscard]] QRectF cellViewportRect(quint64 id) const;
-    void fitToCanvas();
+    void fitToCanvas(bool showZoomReadout = false);
     void centerImage(quint64 id);
     void preserveViewport();
     void setEditingEnabled(bool enabled, bool replacementAllowed = true);
@@ -33,6 +33,7 @@ class ImageStitchingPreviewCanvas final : public QWidget {
   signals:
     void replaceImageRequested(quint64 id);
     void previewOriginalRequested(quint64 id);
+    void previewSizeChanged(QSize size);
 
   protected:
     void paintEvent(QPaintEvent*) override;
@@ -44,6 +45,8 @@ class ImageStitchingPreviewCanvas final : public QWidget {
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
+    void keyReleaseEvent(QKeyEvent*) override;
+    void focusOutEvent(QFocusEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
     void dragMoveEvent(QDragMoveEvent*) override;
     void dragLeaveEvent(QDragLeaveEvent*) override;
@@ -51,6 +54,9 @@ class ImageStitchingPreviewCanvas final : public QWidget {
     void changeEvent(QEvent*) override;
 
   private:
+    friend class ImageStitchingEditorWidget;
+    bool swapImages(quint64 source, quint64 target);
+
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };

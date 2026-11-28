@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "snow_shot/presentation/imageeditingcanvas.h"
 #include "snow_shot/presentation/imageeditingwindow.h"
+#include "screenshot_clipboard_test_output.h"
 #include "snow_shot/presentation/screenshotocrpresentation.h"
 #include "snow_shot/presentation/screenshotpinnedtextpreparation.h"
 #include "snow_shot/presentation/screenshotpinnedwindow.h"
@@ -11,7 +12,7 @@
 #include "snow_shot/translation/freetranslation.h"
 #include "translation_test_support.h"
 #include "recognition_attachment_test_access.h"
-#include <QKeyEvent>
+#include "physical_key_test_support.h"
 #include <QKeySequence>
 #include "widgets/select.h"
 
@@ -126,13 +127,21 @@ void cropSessionCopyUsesAttachedController() {
     const bool previousCopy = settings.copyTranslationResultsAsImage();
     const auto restore = qScopeGuard(
         [&] { static_cast<void>(settings.setCopyTranslationResultsAsImage(previousCopy)); });
+    int copies = 0;
+    QObject::connect(&editor, &ImageEditingWindow::exportFinished, &editor, [&](bool success) {
+        require(success, "translation Copy succeeds");
+        ++copies;
+    });
     for (const bool imageCopy : {true, false}) {
         require(settings.setCopyTranslationResultsAsImage(imageCopy),
                 "select Copy output preference");
-        const auto assertClipboard = [&] {
-            const auto* mime = QApplication::clipboard()->mimeData();
-            require(mime && mime->hasImage() == imageCopy && mime->hasText() != imageCopy &&
-                        (imageCopy || mime->text() == QStringLiteral("Edited A translation")),
+        const auto verifyCopy = [&](const auto& action) {
+            const int expected = copies + 1;
+            action();
+            awaitCondition([&] { return copies == expected; }, "the Copy action publishes once");
+            require(imageCopy ? !readScreenshotClipboardOutput().image.isNull()
+                              : QApplication::clipboard()->text() ==
+                                    QStringLiteral("Edited A translation"),
                     "all unselected Copy routes follow A's translation policy");
         };
         {
@@ -141,28 +150,21 @@ void cropSessionCopyUsesAttachedController() {
             auto* copy =
                 menu.findChild<QAction*>(QStringLiteral("screenshotRecognitionCopyAction"));
             require(copy && copy->isEnabled(), "restored translation context Copy is enabled");
-            copy->trigger();
-            assertClipboard();
+            verifyCopy([&] { copy->trigger(); });
         }
-        require(view->copyVisibleContentToClipboard(), "restored direct-view Copy succeeds");
-        assertClipboard();
-        editor.palette()->copyRequested();
-        assertClipboard();
+        verifyCopy([&] {
+            require(view->copyVisibleContentToClipboard(), "restored direct-view Copy succeeds");
+        });
+        verifyCopy([&] { editor.palette()->copyRequested(); });
         auto* text = view->findChild<QTextEdit*>(QStringLiteral("screenshotOcrEditor"));
         require(text, "restored translation owns a text editor");
         text->setFocus();
         QApplication::processEvents();
-        bool sawPublication = false;
-        const auto observe =
-            QObject::connect(QApplication::clipboard(), &QClipboard::dataChanged, view, [&] {
-                sawPublication = true;
-                assertClipboard();
-            });
-        QKeyEvent key(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier, 0x2e, 0x43, 0,
-                      QStringLiteral("c"));
-        QApplication::sendEvent(text, &key);
-        QObject::disconnect(observe);
-        require(sawPublication, "keyboard Copy publishes the correct MIME from its first write");
+        verifyCopy([&] {
+            PhysicalKeyEvent key(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier,
+                                 QStringLiteral("c"));
+            QApplication::sendEvent(text, &key);
+        });
         auto cursor = text->textCursor();
         cursor.setPosition(0);
         cursor.setPosition(6, QTextCursor::KeepAnchor);
@@ -210,6 +212,11 @@ void cropSessionCopyUsesAttachedController() {
 }
 
 void editCachedTranslation(const ImageEditingSource& source) {
+    const snow_shot::storage::ScreenshotTranslationSettings settings;
+    const bool previousCopy = settings.copyTranslationResultsAsImage();
+    const auto restoreCopy = qScopeGuard(
+        [&] { static_cast<void>(settings.setCopyTranslationResultsAsImage(previousCopy)); });
+    require(settings.setCopyTranslationResultsAsImage(false), "start with translation text copy");
     ImageEditingWindow editor;
     editor.present(source);
     editor.palette()->textTranslationRequested();
@@ -231,15 +238,14 @@ void editCachedTranslation(const ImageEditingSource& source) {
     editor.palette()->copyRequested();
     require(QApplication::clipboard()->text() == text->toPlainText(),
             "Copy publishes the translation currently displayed in its editor");
-    const snow_shot::storage::ScreenshotTranslationSettings settings;
-    const auto restoreCopy =
-        qScopeGuard([&] { static_cast<void>(settings.setCopyTranslationResultsAsImage(false)); });
     require(settings.setCopyTranslationResultsAsImage(true),
             "enable editor translation image copy");
+    bool copied = false;
+    QObject::connect(&editor, &ImageEditingWindow::exportFinished, &editor,
+                     [&](bool success) { copied = success; });
     editor.palette()->copyRequested();
-    require(QApplication::clipboard()->mimeData()->hasImage() &&
-                !QApplication::clipboard()->mimeData()->hasText(),
-            "editor Copy publishes the translated document as an image");
+    awaitCondition([&] { return copied && !readScreenshotClipboardOutput().image.isNull(); },
+                   "editor Copy publishes the translated document as an image");
     auto cursor = text->textCursor();
     cursor.setPosition(0);
     cursor.setPosition(6, QTextCursor::KeepAnchor);
@@ -317,6 +323,10 @@ void copyCachedTranslationOverlay(const ImageEditingSource& source) {
     const auto restore = qScopeGuard(
         [&] { static_cast<void>(settings.setCopyTranslationResultsAsImage(previousCopy)); });
     require(settings.setCopyTranslationResultsAsImage(true), "select translated image copy");
+    const snow_shot::storage::ScreenshotSettings output;
+    const bool previousFileCopy = output.copyImageFileToClipboard();
+    const auto restoreFileCopy = qScopeGuard(
+        [&] { static_cast<void>(output.setCopyImageFileToClipboard(previousFileCopy)); });
     ImageEditingWindow editor;
     editor.present(source);
     editor.palette()->textTranslationRequested();
@@ -328,12 +338,22 @@ void copyCachedTranslationOverlay(const ImageEditingSource& source) {
     require(session->findChildren<snow_shot::translation::TranslationJob*>().isEmpty(),
             "cached overlay avoids a new translation request");
     editor.canvas()->actualSize();
-    editor.palette()->copyRequested();
-    const auto* mime = QApplication::clipboard()->mimeData();
-    const auto image = qvariant_cast<QImage>(mime->imageData());
-    require(mime->hasImage() && !mime->hasText() && image.size() == source.image.size() &&
-                image.pixelColor(0, 0) == source.image.pixelColor(0, 0) && image != source.image,
-            "translation image copy composites text over the base image at source resolution");
+    int copies = 0;
+    QObject::connect(&editor, &ImageEditingWindow::exportFinished, &editor, [&](bool success) {
+        require(success, "editor translation image copy succeeds");
+        ++copies;
+    });
+    for (const bool withFile : {false, true}) {
+        require(output.setCopyImageFileToClipboard(withFile), "configure translation file copy");
+        const int expected = copies + 1;
+        editor.palette()->copyRequested();
+        awaitCondition([&] { return copies == expected; }, "translation image copy publishes");
+        const auto [image, filePath] = readScreenshotClipboardOutput();
+        require(!filePath.isEmpty() == withFile && image.size() == source.image.size() &&
+                    image.pixelColor(0, 0) == source.image.pixelColor(0, 0) &&
+                    image != source.image,
+                "translation image copy preserves pixels and follows the file preference");
+    }
     view->setFocus();
     QApplication::processEvents();
     auto* presentation = ScreenshotRecognitionWindowTestAccess::ocrPresentation(*view);
@@ -355,7 +375,7 @@ void copyCachedTranslationOverlay(const ImageEditingSource& source) {
     QApplication::clipboard()->setText(QStringLiteral("keyboard copy sentinel"));
     const auto key = QKeySequence::keyBindings(QKeySequence::Copy).first()[0];
     for (const auto type : {QEvent::ShortcutOverride, QEvent::KeyPress, QEvent::KeyRelease}) {
-        QKeyEvent event(type, int(key.key()), key.keyboardModifiers());
+        PhysicalKeyEvent event(type, int(key.key()), key.keyboardModifiers());
         QApplication::sendEvent(view, &event);
     }
     require(QApplication::clipboard()->text() == QStringLiteral("Translated text"),
@@ -509,6 +529,11 @@ void independentModeAfterSeedingKeepsCapturedText() {
 }
 
 void ordinaryHostsKeepCapturedOverlay() {
+    const snow_shot::storage::ScreenshotTranslationSettings settings;
+    const bool previousCopy = settings.copyTranslationResultsAsImage();
+    const auto restore = qScopeGuard(
+        [&] { static_cast<void>(settings.setCopyTranslationResultsAsImage(previousCopy)); });
+    require(settings.setCopyTranslationResultsAsImage(false), "request translation text output");
     const auto cached = recognitionFixture();
     QImage image(100, 60, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::white);

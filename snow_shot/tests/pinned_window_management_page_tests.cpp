@@ -19,6 +19,9 @@
 #include "widgets/message.h"
 #include "history_sticky_selection_test_support.h"
 #include "history_viewport_test_support.h"
+#include "history_drag_test_support.h"
+#include "pinned_animation_fixtures.h"
+#include "snowimageqtcodec.h"
 #include <QElapsedTimer>
 #include <QTimeZone>
 #include <QThread>
@@ -75,6 +78,8 @@ class Fixture final : public PinnedWindowManagementDataSource {
     QVector<QString> removed;
     QVector<QSize> previewSizes;
     int fullImageRequests = 0;
+    bool delayFullImage = false;
+    quint64 lastFullRequest = 0;
     bool previewFailure = false;
     mutable int recordRequests = 0;
     QHash<QString, quint64> previewRevisions;
@@ -103,6 +108,9 @@ class Fixture final : public PinnedWindowManagementDataSource {
     void requestFullImage(const QString& id, quint64 requestId) override {
         ++fullImageRequests;
         lastFullImageId = id;
+        lastFullRequest = requestId;
+        if (delayFullImage)
+            return;
         QImage image(120, 60, QImage::Format_RGB32);
         image.fill(Qt::green);
         emit fullImageReady(id, requestId, image);
@@ -123,6 +131,133 @@ class Fixture final : public PinnedWindowManagementDataSource {
     }
 };
 
+void pinnedCardDragCancellation() {
+    using namespace history_drag_test;
+    Fixture source;
+    storage::PinnedWindowSummary item;
+    item.id = QStringLiteral("delayed");
+    item.createdUtc = QDateTime::currentDateTimeUtc();
+    source.items.push_back(item);
+    source.delayFullImage = true;
+    PinnedWindowManagementPageWidget page(&source, nullptr);
+    page.resize(980, 640);
+    page.show();
+    history_sticky_test::settleLayout();
+    int publications = 0;
+    QObject::connect(&page, &PinnedWindowManagementPageWidget::imageDragRequested, &page,
+                     [&](QObject*, const QImage&) { ++publications; });
+    auto* row = page.findChild<QFrame*>(QStringLiteral("pinnedManagementRecord"));
+    require(row && source.fullImageRequests == 0, "cards load only thumbnails before a drag");
+    const QPoint origin(3, 3);
+    mouse(row, QEvent::MouseButtonPress, origin);
+    mouse(row, QEvent::MouseMove, origin + QPoint(QApplication::startDragDistance() - 1, 0));
+    QApplication::processEvents();
+    require(source.fullImageRequests == 0, "sub-threshold movement does not load the full image");
+    mouse(row, QEvent::MouseButtonRelease, origin);
+    QImage image(12, 7, QImage::Format_RGB32);
+    image.fill(Qt::yellow);
+    quint64 previous = 0;
+    for (int i = 0; i < 4; ++i) {
+        page.show();
+        start(row, QPoint(3, 3));
+        require(waitFor([&] { return source.fullImageRequests == i + 1; }),
+                "crossing the threshold requests one full image");
+        emit source.fullImageReady(item.id, previous, image);
+        require(publications == 0, "late replies cannot satisfy another drag");
+        previous = source.lastFullRequest;
+        if (i == 0) {
+            mouse(row, QEvent::MouseButtonRelease, QPoint(3, 3));
+        } else if (i == 1) {
+            QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(row, &escape);
+        } else if (i == 2) {
+            page.hide();
+        } else {
+            emit source.fullImageReady(item.id, previous, image);
+            require(publications == 1, "the current gesture can publish its own reply");
+            mouse(row, QEvent::MouseButtonRelease, QPoint(3, 3));
+        }
+        emit source.fullImageReady(item.id, previous, image);
+        require(publications == (i == 3 ? 1 : 0), "cancelled or completed replies cannot publish");
+    }
+    start(row, origin);
+    require(waitFor([&] { return source.fullImageRequests == 5; }), "start a drag before removal");
+    source.items.clear();
+    page.refresh();
+    emit source.fullImageReady(item.id, source.lastFullRequest, image);
+    require(publications == 1, "a removed card cannot start a late native drag");
+}
+
+void pinnedCardDragsMatchFullPreviews() {
+    using namespace history_drag_test;
+    auto& repository = storage::ApplicationStorage::instance().pinnedWindows();
+    const auto animation =
+        image_codec::decodeAnimationSource(pinned_animation_fixtures::images().first().bytes);
+    require(animation && animation->isAnimated(), "decode the two-frame pinned drag fixture");
+    QStringList ids;
+    for (int i = 0; i < 3; ++i) {
+        storage::PinnedWindowRecord record;
+        record.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        record.sourceKind = storage::PinnedWindowSourceKind::ImageData;
+        QSize size(530, 300);
+        if (i == 0) {
+            record.image = QImage(size, QImage::Format_RGB32);
+            record.image.fill(Qt::blue);
+        } else if (i == 1) {
+            record.sourceKind = storage::PinnedWindowSourceKind::ClipboardText;
+            record.originalText = QStringLiteral("Render this text at full size");
+        } else {
+            record.animationSource = animation;
+            record.image = animation->firstFrame;
+            size = record.image.size();
+        }
+        record.nativeGeometry = QRect(QPoint(), size);
+        record.canvasSourceRect = QRectF(record.nativeGeometry);
+        record.contentCanvasRect = record.canvasSourceRect;
+        record.surfaceCanvasRect = record.canvasSourceRect;
+        record.initialWindowSize = size;
+        require(repository.upsert(record).success, "persist a pinned drag fixture");
+        ids.append(record.id);
+    }
+    require(repository.flush().success, "flush pinned drag fixtures");
+    {
+        PinnedWindowManagementPageWidget page;
+        page.resize(980, 900);
+        page.show();
+        history_sticky_test::settleLayout();
+        const auto rows = page.findChildren<QFrame*>(QStringLiteral("pinnedManagementRecord"));
+        require(rows.size() == ids.size(), "all pinned drag records are visible");
+        for (auto* row : rows)
+            row->findChild<adqt::widgets::AdCheckbox*>()->setChecked(true);
+        QImage dragged;
+        int publications = 0;
+        QObject::connect(&page, &PinnedWindowManagementPageWidget::imageDragRequested, &page,
+                         [&](QObject*, const QImage& image) {
+                             dragged = image;
+                             ++publications;
+                         });
+        for (auto* row : rows) {
+            auto* preview = row->findChild<adqt::widgets::AdImage*>();
+            auto* viewer = preview->viewer();
+            const auto url = viewer->itemAt(preview->previewRow()).source;
+            auto* reply = viewer->imageLoader()->load(url, {}, &page);
+            require(waitFor([&] { return reply->isFinished(); }) && reply->isSuccessful(),
+                    "read the full preview for this pinned record");
+            auto* label = row->findChild<QLabel*>(QStringLiteral("pinnedManagementGroup"));
+            dragged = {};
+            start(label, label->rect().center());
+            require(waitFor([&] { return !dragged.isNull(); }) && dragged == reply->image(),
+                    "drag pixels equal the full preview for images, text and animations");
+            mouse(label, QEvent::MouseButtonRelease, label->rect().center());
+            require(row->findChild<adqt::widgets::AdCheckbox*>()->isChecked(),
+                    "dragging a pinned record preserves selection");
+        }
+        require(publications == ids.size(), "each pinned card exports just one image");
+    }
+    for (const auto& id : ids)
+        require(repository.remove(id).success, "remove pinned drag fixture");
+}
+
 class SkinBackdrop final : public QWidget {
   public:
     QColor color = QColor(35, 90, 145);
@@ -135,6 +270,12 @@ class SkinBackdrop final : public QWidget {
 };
 
 void selectionPanelSticksWhileScrolling() {
+    QTranslator englishTranslator;
+    require(englishTranslator.load(QStringLiteral(":/i18n/snow_shot_en_US.qm")),
+            "load the English application translations");
+    QCoreApplication::installTranslator(&englishTranslator);
+    const auto removeTranslator =
+        qScopeGuard([&] { QCoreApplication::removeTranslator(&englishTranslator); });
     Fixture fixture;
     for (int index = 0; index < 55; ++index) {
         storage::PinnedWindowSummary item;
@@ -677,8 +818,8 @@ void pinnedImageStitchingSelectionKeepsRecordOrder() {
                 batchActions->parentWidget()->layout()->indexOf(batchActions) + 1 ==
                     batchActions->parentWidget()->layout()->indexOf(selectAll),
             "pinned Collage is a link action immediately before Select all");
-    require(!batchActions->isVisible() && !batchActions->isEnabled(),
-            "pinned Collage is unavailable before selection");
+    require(batchActions->isVisible() && !batchActions->isEnabled() && selectAll->isEnabled(),
+            "pinned Batch Actions stays visible and disabled before selection");
     QStringList requested;
     int requests = 0;
     QObject::connect(&page, &PinnedWindowManagementPageWidget::stitchImagesRequested, &page,
@@ -731,8 +872,7 @@ void pinnedImageStitchingSelectionKeepsRecordOrder() {
     deselect->click();
     const int previousRequests = requests;
     batchActions->click();
-    require(!batchActions->isVisible() && !batchActions->isEnabled() &&
-                requests == previousRequests,
+    require(batchActions->isVisible() && !batchActions->isEnabled() && requests == previousRequests,
             "deselecting every pin disables collage dispatch");
     selectAll->click();
     triggerBatchStitch(batchActions);
@@ -748,7 +888,7 @@ void pinnedImageStitchingSelectionKeepsRecordOrder() {
             "pinned selection actions fit within a narrow management page");
     page.findChild<adqt::widgets::AdSelect*>()->setCurrentValues(
         {static_cast<int>(storage::PinnedWindowCreationSource::Clipboard)});
-    require(!batchActions->isVisible() && !batchActions->isEnabled(),
+    require(batchActions->isVisible() && !batchActions->isEnabled(),
             "changing the source filter clears the collage selection");
     require(fixture.fullImageRequests == 0 && fixture.removed.isEmpty() && fixture.shown.isEmpty(),
             "selection dispatch neither decodes images nor mutates or opens saved pins");
@@ -930,9 +1070,15 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
                      });
     const QPoint previousCursor = QCursor::pos();
     const auto restoreCursor = qScopeGuard([previousCursor] { QCursor::setPos(previousCursor); });
+    // Keep the physical cursor away from triggers while delivering synthetic hover and keyboard
+    // events. Otherwise closing one popup can immediately open it again over the next row.
+    QCursor::setPos(page.mapToGlobal(QPoint(1, 1)));
     QString editorId;
     QObject::connect(&page, &PinnedWindowManagementPageWidget::imageEditingRequested, &page,
                      [&](const QString& id) { editorId = id; });
+    QString compressionId;
+    QObject::connect(&page, &PinnedWindowManagementPageWidget::imageCompressionRequested, &page,
+                     [&](const QString& id) { compressionId = id; });
     const auto rows = page.findChildren<QFrame*>(QStringLiteral("pinnedManagementRecord"));
     require(rows.size() == 3, "stitching fixtures include closed and open pins");
     auto* selection = rows.back()->findChild<adqt::widgets::AdCheckbox*>();
@@ -964,19 +1110,18 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
                 "More creates its menu only when opened");
         const QPoint local = more->rect().center();
         const QPoint global = more->mapToGlobal(local);
-        QCursor::setPos(global);
         QEnterEvent hover(local, local, global);
         QApplication::sendEvent(more, &hover);
         QCoreApplication::processEvents();
         QPointer<adqt::widgets::AdContextMenu> menu = row->findChild<adqt::widgets::AdContextMenu*>(
             QStringLiteral("pinnedManagementEntryMoreMenu"));
         require(menu && menu->isPopupVisible() && !menu->nativeMenuEnabled() &&
-                    menu->actions().size() == 5,
+                    menu->actions().size() == 6,
                 "hovering More opens the shared widget menu");
         auto* stitch = menu->actions().at(0);
         auto* split = menu->actions().at(1);
-        auto* copyImagePath = menu->actions().at(3);
-        auto* reveal = menu->actions().at(4);
+        auto* copyImagePath = menu->actions().at(4);
+        auto* reveal = menu->actions().at(5);
         require(copyImagePath->objectName() ==
                         QStringLiteral("pinnedManagementEntryCopyImagePath") &&
                     copyImagePath->text() == QStringLiteral("Copy image path") &&
@@ -990,6 +1135,10 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
                     imageEditing->text() == QStringLiteral("Image editing") &&
                     !imageEditing->icon().isNull(),
                 "independent editor follows Image Splitting for open and closed pins");
+        require(menu->actions().at(3)->objectName() ==
+                        QStringLiteral("pinnedManagementEntryImageCompression") &&
+                    menu->actions().at(3)->text() == QStringLiteral("Image compression"),
+                "Image compression immediately follows Image editing");
         require(reveal->objectName() == QStringLiteral("pinnedManagementEntryReveal") &&
                     reveal->text() == presentation::components::history_page::revealActionText() &&
                     reveal->toolTip() == reveal->text() && reveal->isEnabled() &&
@@ -1017,7 +1166,7 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
         menu = row->findChild<adqt::widgets::AdContextMenu*>(
             QStringLiteral("pinnedManagementEntryMoreMenu"));
         require(menu, "reopen More for reveal");
-        activatePinnedMenuAction(menu, menu->actions().at(4));
+        activatePinnedMenuAction(menu, menu->actions().at(5));
         require(!menu && fixture.revealed.last() == row->property("recordId").toString(),
                 "reveal dispatches only its row and retires the menu");
         QTemporaryDir imageDirectory;
@@ -1031,7 +1180,7 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
         menu = row->findChild<adqt::widgets::AdContextMenu*>(
             QStringLiteral("pinnedManagementEntryMoreMenu"));
         require(menu, "reopen More for Copy image path");
-        activatePinnedMenuAction(menu, menu->actions().at(3));
+        activatePinnedMenuAction(menu, menu->actions().at(4));
         require(!menu && QApplication::clipboard()->text() == QDir::toNativeSeparators(imagePath) &&
                     !QApplication::clipboard()->mimeData()->hasUrls() &&
                     !QApplication::clipboard()->mimeData()->hasImage(),
@@ -1045,6 +1194,15 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
             menu, menu->findChild<QAction*>(QStringLiteral("pinnedManagementEntryImageEditing")));
         require(editorId == row->property("recordId").toString() && !menu,
                 "Image Editing dispatches exactly its pin and retires the menu");
+        more->click();
+        QCoreApplication::processEvents();
+        menu = row->findChild<adqt::widgets::AdContextMenu*>(
+            QStringLiteral("pinnedManagementEntryMoreMenu"));
+        require(menu, "reopen More for compression");
+        activatePinnedMenuAction(menu, menu->findChild<QAction*>(QStringLiteral(
+                                           "pinnedManagementEntryImageCompression")));
+        require(compressionId == row->property("recordId").toString() && !menu,
+                "Image compression dispatches exactly its pin and retires the menu");
     }
     require(requests == 3 && splitRequests == 3 && fixture.revealed.size() == 3 &&
                 selection->isChecked() && fixture.fullImageRequests == 0 &&
@@ -1085,11 +1243,11 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
             "language changes retranslate both actions in the open menu");
         const QString revealLabel = presentation::components::history_page::revealActionText();
         const QString copyLabel = translator.translate("HistoryFileLocation", "Copy image path");
-        require(!copyLabel.isEmpty() && menu->actions().at(3)->text() == copyLabel &&
-                    menu->actions().at(3)->toolTip() == copyLabel,
+        require(!copyLabel.isEmpty() && menu->actions().at(4)->text() == copyLabel &&
+                    menu->actions().at(4)->toolTip() == copyLabel,
                 "language changes retranslate Copy image path in the open menu");
-        require(menu->actions().at(4)->text() == revealLabel &&
-                    menu->actions().at(4)->toolTip() == revealLabel &&
+        require(menu->actions().at(5)->text() == revealLabel &&
+                    menu->actions().at(5)->toolTip() == revealLabel &&
                     !translator.translate("HistoryFileLocation", "Open in Explorer").isEmpty() &&
                     !translator.translate("HistoryFileLocation", "Reveal in Finder").isEmpty(),
                 "language changes retranslate the platform reveal action in the open menu");
@@ -1112,7 +1270,7 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
     menu = rows.front()->findChild<adqt::widgets::AdContextMenu*>(
         QStringLiteral("pinnedManagementEntryMoreMenu"));
     require(menu, "reopen More for missing image path");
-    activatePinnedMenuAction(menu, menu->actions().at(3));
+    activatePinnedMenuAction(menu, menu->actions().at(4));
     require(!menu && failureMessage == QStringLiteral("Unable to copy this entry's image path") &&
                 QApplication::clipboard()->text() == clipboardBeforeFailure &&
                 fixture.removed.isEmpty() && fixture.shown.isEmpty() && selection->isChecked(),
@@ -1124,7 +1282,7 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
     menu = rows.front()->findChild<adqt::widgets::AdContextMenu*>(
         QStringLiteral("pinnedManagementEntryMoreMenu"));
     require(menu, "reopen More for failure fixture");
-    activatePinnedMenuAction(menu, menu->actions().at(4));
+    activatePinnedMenuAction(menu, menu->actions().at(5));
     require(!menu &&
                 failureMessage == QStringLiteral("Unable to open this entry's file location") &&
                 QApplication::activeModalWidget() == nullptr && fixture.removed.isEmpty() &&
@@ -1140,7 +1298,7 @@ void pinnedEntryMoreActionsUseOnlyTheirRecord() {
             item.pending = true;
     }
     page.refresh();
-    require(menu && !menu->actions().at(3)->isEnabled() && !menu->actions().at(4)->isEnabled(),
+    require(menu && !menu->actions().at(4)->isEnabled() && !menu->actions().at(5)->isEnabled(),
             "pending pins retain visible disabled Copy image path and reveal actions");
     fixture.items.clear();
     page.refresh();
@@ -1223,6 +1381,8 @@ int main(int argc, char** argv) {
     second.creationSource = storage::PinnedWindowCreationSource::Screenshot;
     fixture.items = {first, second};
     pinnedDescriptionsUseSmallThemeText(fixture.items);
+    pinnedCardDragCancellation();
+    pinnedCardDragsMatchFullPreviews();
     pinnedThemeChangesDoNotRestyleTwice(fixture.items);
     pinnedRowsRespectSkinMask(fixture.items);
     selectionPanelSticksWhileScrolling();

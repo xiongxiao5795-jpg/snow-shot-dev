@@ -72,6 +72,7 @@ struct FileDescriptor {
 };
 
 struct ModelDescriptor {
+    bool paragraph = false;
     ScreenshotOcrModelType type = ScreenshotOcrModelType::Small;
     QString id;
     QString detector;
@@ -81,6 +82,7 @@ struct ModelDescriptor {
 };
 
 struct Descriptor {
+    QJsonObject paragraphModel;
     bool bundled = false;
     QString executable;
     QString runtimeVersion;
@@ -244,6 +246,7 @@ std::optional<Descriptor> loadDescriptor(const QString& root, QString* error) {
     const QJsonObject rootObject = document.object();
     const QJsonObject runtime = rootObject.value(QStringLiteral("runtime")).toObject();
     Descriptor result;
+    result.paragraphModel = rootObject.value(QStringLiteral("paragraph_model")).toObject();
     result.runtimeVersion = runtime.value(QStringLiteral("version")).toString();
     result.platform = runtime.value(QStringLiteral("platform")).toString();
 #ifdef Q_OS_MACOS
@@ -459,9 +462,13 @@ ScreenshotOcrResolvedAssets resolved(const QString& runtimeRoot, const QString& 
     result.runtimeDirectory = runtimeDirectory(runtimeRoot, descriptor);
     result.processPath = QDir(result.runtimeDirectory).filePath(descriptor.executable);
     const QString models = modelDirectory(modelRoot, model);
-    result.detectorModelPath = QDir(models).filePath(model.detector);
-    result.recognizerModelPath = QDir(models).filePath(model.recognizer);
-    result.dictionaryPath = QDir(models).filePath(model.dictionary);
+    if (model.paragraph) {
+        result.paragraphModelPath = QDir(models).filePath(model.files.front().name);
+    } else {
+        result.detectorModelPath = QDir(models).filePath(model.detector);
+        result.recognizerModelPath = QDir(models).filePath(model.recognizer);
+        result.dictionaryPath = QDir(models).filePath(model.dictionary);
+    }
     result.offline = offline;
     return result;
 }
@@ -667,8 +674,9 @@ bool downloadOnce(QNetworkAccessManager* manager, const FileDescriptor& descript
 }
 
 bool download(QNetworkAccessManager* manager, const FileDescriptor& descriptor,
-              const QString& destination, const Progress& progress, QString* error) {
-    for (int attempt = 0; attempt < 3; ++attempt) {
+              const QString& destination, const Progress& progress, QString* error,
+              int attempts = 3) {
+    for (int attempt = 0; attempt < attempts; ++attempt) {
         if (interruptionRequested()) {
             if (error != nullptr)
                 *error = QString::fromLatin1(kInterruptedError);
@@ -798,8 +806,10 @@ ScreenshotOcrModelType screenshotOcrModelTypeFromValue(const QString& value) {
 
 bool ScreenshotOcrResolvedAssets::valid() const {
     return !modelId.isEmpty() && !runtimeVersion.isEmpty() && QFileInfo(processPath).isFile() &&
-           QFileInfo(detectorModelPath).isFile() && QFileInfo(recognizerModelPath).isFile() &&
-           QFileInfo(dictionaryPath).isFile();
+           (!paragraphModelPath.isEmpty() ? QFileInfo(paragraphModelPath).isFile()
+                                          : QFileInfo(detectorModelPath).isFile() &&
+                                                QFileInfo(recognizerModelPath).isFile() &&
+                                                QFileInfo(dictionaryPath).isFile());
 }
 
 class ScreenshotOcrAssets::Impl final {
@@ -823,25 +833,28 @@ class ScreenshotOcrAssets::Impl final {
         delete m_thread;
     }
 
-    void prepare() {
+    void prepare(bool allowDownload, bool tryCachedFallback) {
         // The worker's queued finished handler exclusively owns thread cleanup.
         // A retry can arrive from failed() after the worker function returned
         // but before that handler runs, so replacing the pointer here would let
         // the old handler delete the new worker.
         if (m_thread != nullptr) {
-            m_prepareRequested = true;
+            const auto queued = m_prepareRequested.value_or(Preparation{});
+            m_prepareRequested = Preparation{queued.allowDownload || allowDownload,
+                                             queued.tryCachedFallback || tryCachedFallback};
             return;
         }
-        m_prepareRequested = false;
+        m_prepareRequested.reset();
         setStatus({ScreenshotOcrAssetPhase::Verifying, QStringLiteral("assets")});
         const Options options = m_options;
         const quint64 generation = m_generation;
         QPointer<ScreenshotOcrAssets> owner(m_owner);
-        m_thread = QThread::create(
-            snow_shot::runtime::trackRuntimeWork([this, owner, options, generation]() {
+        m_thread = QThread::create(snow_shot::runtime::trackRuntimeWork(
+            [this, owner, options, generation, allowDownload, tryCachedFallback]() {
                 QString error;
                 ScreenshotOcrResolvedAssets assets;
-                const bool success = acquire(options, generation, &assets, &error);
+                const bool success =
+                    acquire(options, generation, allowDownload, tryCachedFallback, &assets, &error);
                 if (owner == nullptr)
                     return;
                 // Networking and ZIP work above owns thread-local Qt objects.
@@ -872,8 +885,10 @@ class ScreenshotOcrAssets::Impl final {
             m_thread->wait();
             delete m_thread;
             m_thread = nullptr;
-            if (m_prepareRequested)
-                prepare();
+            if (m_prepareRequested) {
+                const auto queued = *m_prepareRequested;
+                prepare(queued.allowDownload, queued.tryCachedFallback);
+            }
         });
         snow_shot::platform::configureApplicationQoSThread(m_thread);
         m_thread->start();
@@ -888,6 +903,7 @@ class ScreenshotOcrAssets::Impl final {
             return;
         m_options.modelType = value;
         ++m_generation;
+        m_prepareRequested.reset();
         setStatus({ScreenshotOcrAssetPhase::Unchecked, QStringLiteral("assets")});
     }
 
@@ -914,8 +930,8 @@ class ScreenshotOcrAssets::Impl final {
             Qt::QueuedConnection);
     }
 
-    bool acquire(const Options& options, quint64 generation, ScreenshotOcrResolvedAssets* assets,
-                 QString* error) {
+    bool acquire(const Options& options, quint64 generation, bool allowDownload,
+                 bool tryCachedFallback, ScreenshotOcrResolvedAssets* assets, QString* error) {
         const auto cancelled = [error]() {
             if (!interruptionRequested())
                 return false;
@@ -937,6 +953,22 @@ class ScreenshotOcrAssets::Impl final {
             return false;
         }
         const ModelDescriptor* model = modelDescriptor(*descriptor, options.modelType);
+        ModelDescriptor paragraph;
+        if (options.paragraphGrouping) {
+            const auto object = descriptor->paragraphModel;
+            paragraph.id = object.value(QStringLiteral("id")).toString();
+            const auto files = object.value(QStringLiteral("files")).toArray();
+            if (paragraph.id != QStringLiteral("line2para-1-2-956253e") || files.size() != 1) {
+                *error = QStringLiteral("invalid paragraph model descriptor");
+                return false;
+            }
+            auto file = parseFile(files.first().toObject(), true, error);
+            if (!file || file->name != QStringLiteral("line2para_1_2-epoch12-signed-1.625.onnx"))
+                return false;
+            paragraph.files.push_back(std::move(*file));
+            paragraph.paragraph = true;
+            model = &paragraph;
+        }
         if (model == nullptr) {
             *error = QStringLiteral("selected OCR model is unavailable");
             return false;
@@ -973,23 +1005,64 @@ class ScreenshotOcrAssets::Impl final {
             *assets = resolved(offlineRuntimeRoot, options.offlineRoot, *descriptor, *model, true);
             return true;
         }
-        if (options.cacheRoot.trimmed().isEmpty()) {
+        const bool haveCache = !options.cacheRoot.trimmed().isEmpty();
+        if (allowDownload && !haveCache) {
             *error = QStringLiteral("OCR component storage is unavailable");
             return false;
         }
-        CacheLock lock(options.cacheRoot);
-        if (cancelled())
-            return false;
-        if (!lock.locked()) {
-            *error = QStringLiteral("timed out waiting for OCR component storage");
-            return false;
+        std::optional<CacheLock> lock;
+        if (allowDownload) {
+            lock.emplace(options.cacheRoot);
+            if (cancelled())
+                return false;
+            if (!lock->locked()) {
+                *error = QStringLiteral("timed out waiting for OCR component storage");
+                return false;
+            }
         }
-        bool cachedRuntime = !requireBundledRuntime && !descriptor->bundled &&
+        bool cachedRuntime = haveCache && !requireBundledRuntime && !descriptor->bundled &&
                              validateComponent(runtimeDirectory(options.cacheRoot, *descriptor),
                                                descriptor->runtimeFiles, descriptor->runtimeVersion,
                                                true, &validationError);
-        bool cachedModel = validateComponent(modelDirectory(options.cacheRoot, *model),
-                                             model->files, model->id, true, &validationError);
+        bool cachedModel =
+            haveCache && validateComponent(modelDirectory(options.cacheRoot, *model), model->files,
+                                           model->id, true, &validationError);
+        if (!allowDownload) {
+            if (offlineRuntime || cachedRuntime) {
+                const QString runtimeRoot = offlineRuntime ? offlineRuntimeRoot : options.cacheRoot;
+                if (offlineModel || cachedModel) {
+                    *assets = resolved(runtimeRoot,
+                                       offlineModel ? options.offlineRoot : options.cacheRoot,
+                                       *descriptor, *model, offlineRuntime && offlineModel);
+                    return !cancelled();
+                }
+                if (tryCachedFallback && !options.paragraphGrouping) {
+                    for (const auto type :
+                         {ScreenshotOcrModelType::Small, ScreenshotOcrModelType::ExtraSmall,
+                          ScreenshotOcrModelType::Medium}) {
+                        const auto* candidate = modelDescriptor(*descriptor, type);
+                        if (candidate == nullptr || candidate == model || cancelled())
+                            continue;
+                        const bool offline = validateComponent(
+                            modelDirectory(options.offlineRoot, *candidate), candidate->files,
+                            candidate->id, true, &validationError);
+                        const bool cached =
+                            !offline && haveCache &&
+                            validateComponent(modelDirectory(options.cacheRoot, *candidate),
+                                              candidate->files, candidate->id, true,
+                                              &validationError);
+                        if (offline || cached) {
+                            *assets = resolved(runtimeRoot,
+                                               offline ? options.offlineRoot : options.cacheRoot,
+                                               *descriptor, *candidate, offlineRuntime && offline);
+                            return !cancelled();
+                        }
+                    }
+                }
+            }
+            *error = QStringLiteral("OCR components are unavailable locally");
+            return false;
+        }
         const QString stagingRoot = QDir(options.cacheRoot).filePath(QStringLiteral(".staging"));
         if (!QDir().mkpath(stagingRoot)) {
             *error = QStringLiteral("OCR component storage is read-only");
@@ -1064,7 +1137,7 @@ class ScreenshotOcrAssets::Impl final {
                           [this, generation](qint64 received, qint64 total) {
                               progress(generation, QStringLiteral("models"), received, total);
                           },
-                          error);
+                          error, options.paragraphGrouping ? 1 : 3);
             if (!acquired) {
                 QDir(staging).removeRecursively();
                 return false;
@@ -1111,7 +1184,7 @@ class ScreenshotOcrAssets::Impl final {
                           [this, generation](qint64 received, qint64 total) {
                               progress(generation, QStringLiteral("runtime"), received, total);
                           },
-                          error);
+                          error, options.paragraphGrouping ? 1 : 3);
         if (downloaded && interruptionRequested()) {
             if (error != nullptr)
                 *error = QString::fromLatin1(kInterruptedError);
@@ -1148,7 +1221,11 @@ class ScreenshotOcrAssets::Impl final {
     ScreenshotOcrAssetStatus m_status;
     QThread* m_thread = nullptr;
     quint64 m_generation = 0;
-    bool m_prepareRequested = false;
+    struct Preparation {
+        bool allowDownload = false;
+        bool tryCachedFallback = false;
+    };
+    std::optional<Preparation> m_prepareRequested;
 };
 
 ScreenshotOcrAssets::ScreenshotOcrAssets(Options options, QObject* parent)
@@ -1156,8 +1233,8 @@ ScreenshotOcrAssets::ScreenshotOcrAssets(Options options, QObject* parent)
 
 ScreenshotOcrAssets::~ScreenshotOcrAssets() = default;
 
-void ScreenshotOcrAssets::prepare() {
-    m_impl->prepare();
+void ScreenshotOcrAssets::prepare(bool allowDownload, bool tryCachedFallback) {
+    m_impl->prepare(allowDownload, tryCachedFallback);
 }
 void ScreenshotOcrAssets::setProxyUrl(const QString& proxyUrl) {
     m_impl->setProxyUrl(proxyUrl);

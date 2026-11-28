@@ -1,5 +1,6 @@
 #include "snow_shot/shortcuts/shortcutbinding.h"
 #include "snow_shot/presentation/screenshottableeditor.h"
+#include "snow_shot/presentation/screenshotclipboardservice.h"
 
 #include "antd_icons.h"
 #include "theme/theme_manager.h"
@@ -630,31 +631,22 @@ void ScreenshotTableEditor::redoEdit() {
 }
 
 void ScreenshotTableEditor::copySelection() {
-    if (copySelectionToClipboard()) {
-        emit copyCompleted();
-    }
+    if (const auto request = m_requestCopy)
+        request(ScreenshotRecognitionCopy::Result);
+    else
+        static_cast<void>(copySelectionToClipboard());
 }
 
 std::unique_ptr<QMimeData> ScreenshotTableEditor::clipboardMimeData() const {
-    if (m_previewOnly)
-        return {};
-    if (m_session == nullptr) {
+    if (m_previewOnly || m_session == nullptr) {
         return {};
     }
-    // A current cell is navigation state, not a text selection. Copy the
-    // complete recognized table when the selection model has no indexes.
-    const ScreenshotTableRange range =
-        selectionModel()->selectedIndexes().isEmpty()
-            ? ScreenshotTableRange{0, 0, m_session->document.rowCount() - 1,
-                                   m_session->document.columnCount() - 1}
-            : selectedRange();
-    if (!range.isValid()) {
-        return {};
-    }
-    return m_session->document.toClipboardMimeData(range);
+    return m_session->document.toClipboardMimeData();
 }
 
 bool ScreenshotTableEditor::copySelectionToClipboard() {
+    if (const auto request = m_requestCopy)
+        return request(ScreenshotRecognitionCopy::Preview);
     if (QApplication::clipboard() == nullptr) {
         return false;
     }
@@ -662,6 +654,7 @@ bool ScreenshotTableEditor::copySelectionToClipboard() {
     if (!mimeData) {
         return false;
     }
+    static_cast<void>(ScreenshotClipboardService::reservePublication());
     QApplication::clipboard()->setMimeData(mimeData.release());
     return true;
 }
@@ -745,8 +738,8 @@ void ScreenshotTableEditor::keyPressEvent(QKeyEvent* event) {
         return;
     }
     if (snow_shot::shortcuts::matchesStandardShortcut(*event, QKeySequence::Copy)) {
-        copySelection();
         event->accept();
+        copySelection();
         return;
     }
     if (snow_shot::shortcuts::matchesStandardShortcut(*event, QKeySequence::Paste)) {
@@ -881,7 +874,12 @@ void ScreenshotTableEditor::showCellEditorContextMenu(QPlainTextEdit* editor,
     remove->setEnabled(writable && hasSelection);
     selectAll->setEnabled(!editor->document()->isEmpty());
 
-    connect(copy, &QAction::triggered, editor, &QPlainTextEdit::copy);
+    connect(copy, &QAction::triggered, editor, [editor] {
+        if (editor->textCursor().hasSelection()) {
+            static_cast<void>(ScreenshotClipboardService::reservePublication());
+            editor->copy();
+        }
+    });
     connect(cut, &QAction::triggered, editor, &QPlainTextEdit::cut);
     connect(paste, &QAction::triggered, editor, &QPlainTextEdit::paste);
     const QPointer<QPlainTextEdit> guardedEditor(editor);

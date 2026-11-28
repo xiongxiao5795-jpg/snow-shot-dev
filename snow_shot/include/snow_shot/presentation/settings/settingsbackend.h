@@ -19,6 +19,7 @@
 #include <QObject>
 #include <QHash>
 #include <QPointer>
+#include <QSet>
 #include <QVariant>
 #include <QVector>
 #include <algorithm>
@@ -194,7 +195,8 @@ class SettingsBackend : public QObject {
 #endif
     virtual bool
     importConfigurationSnapshot(const QMap<QString, QJsonValue>&, int,
-                                std::shared_future<storage::StorageResult>* completion = nullptr) {
+                                std::shared_future<storage::StorageResult>* completion = nullptr,
+                                const QSet<QString>* = nullptr) {
         if (completion)
             *completion = {};
         return false;
@@ -215,6 +217,10 @@ class SettingsBackend : public QObject {
     [[nodiscard]] virtual bool
     applyLocalShortcuts(SettingsLocalShortcutScope scope, const QString& shortcutId,
                         const shortcuts::ShortcutBindingList& shortcuts) = 0;
+    [[nodiscard]] virtual bool
+    applyContextMenuShortcutBatch(const QMap<QString, QJsonValue>&) {
+        return false;
+    }
     [[nodiscard]] virtual quint64 suspendGlobalShortcuts() {
         return 0;
     }
@@ -230,6 +236,13 @@ class SettingsBackend : public QObject {
                                 const SettingsGlobalMouseCombination& combination) {
         Q_UNUSED(action);
         Q_UNUSED(combination);
+        return false;
+    }
+
+    virtual mouse::Bindings mouseBindings() const {
+        return mouse::Bindings{};
+    }
+    virtual bool applyMouseOperation(mouse::Action, mouse::Binding) {
         return false;
     }
 
@@ -313,6 +326,8 @@ class BuiltInSettingsBackend final : public SettingsBackend {
         return m_permissions;
     }
 
+    mouse::Bindings mouseBindings() const override;
+    bool applyMouseOperation(mouse::Action action, mouse::Binding binding) override;
     GlobalMousePermissionState globalMousePermissionState() const override;
     void requestGlobalMousePermission() override;
     void openGlobalMousePermissionSettings() override;
@@ -374,6 +389,8 @@ class BuiltInSettingsBackend final : public SettingsBackend {
     [[nodiscard]] bool
     applyLocalShortcuts(SettingsLocalShortcutScope scope, const QString& shortcutId,
                         const shortcuts::ShortcutBindingList& shortcuts) override;
+    [[nodiscard]] bool
+    applyContextMenuShortcutBatch(const QMap<QString, QJsonValue>& changes) override;
     [[nodiscard]] quint64 suspendGlobalShortcuts() override;
     void resumeGlobalShortcuts(quint64 handle) override;
     [[nodiscard]] SettingsGlobalMouseCombination
@@ -393,9 +410,10 @@ class BuiltInSettingsBackend final : public SettingsBackend {
     bool applyTextTranslationConfigurations(const TextTranslationConfigurations& values) override;
 #endif
 
-    bool importConfigurationSnapshot(
-        const QMap<QString, QJsonValue>& values, int schemaVersion,
-        std::shared_future<storage::StorageResult>* completion = nullptr) override;
+    bool
+    importConfigurationSnapshot(const QMap<QString, QJsonValue>& values, int schemaVersion,
+                                std::shared_future<storage::StorageResult>* completion = nullptr,
+                                const QSet<QString>* explicitlyImported = nullptr) override;
     [[nodiscard]] storage::StorageStatus storageStatus() const override;
     void refreshPlatformSettings() override;
     QString fieldError(const QString& fieldId) const override;
@@ -411,10 +429,13 @@ class BuiltInSettingsBackend final : public SettingsBackend {
   private:
     void observeAppearanceChanges();
     void connectSkinControllerIfNeeded();
-    [[nodiscard]] bool applyContextMenuSettings(const QJsonValue& mode,
-                                                const QJsonValue& shortcuts);
+    [[nodiscard]] bool applyContextMenuSettings(
+        const QMap<QString, QJsonValue>& changes,
+        storage::ConfigurationWriteOrigin origin = storage::ConfigurationWriteOrigin::Explicit,
+        const QSet<QString>* imported = nullptr);
     [[nodiscard]] platform::windows::AdministratorResult
-    applyStartupSettings(bool enabled, bool elevated, bool reportError = true);
+    applyStartupSettings(bool enabled, bool elevated, bool reportError = true,
+                         bool restartOnElevation = false);
 
     ::snow_shot::presentation::GlobalShortcutManager& m_shortcutManager;
     AppPermissionService* m_permissions = nullptr;

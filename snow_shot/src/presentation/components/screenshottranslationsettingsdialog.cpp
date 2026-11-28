@@ -1,4 +1,5 @@
 #include "snow_shot/presentation/components/screenshottranslationsettingsdialog.h"
+#include "snow_shot/presentation/components/modalwindow.h"
 #include "snow_shot/presentation/components/formfields.h"
 #include "snow_shot/presentation/components/translationserviceoptions.h"
 
@@ -42,6 +43,7 @@ struct TranslationSettingsDraft {
     bool targetEdited = false;
     bool secondaryTargetEdited = false;
     bool confidenceThresholdEdited = false;
+    bool originalImageEdited = false;
     std::optional<QString> model;
 };
 QString text(const char* source) {
@@ -49,21 +51,14 @@ QString text(const char* source) {
 }
 } // namespace
 
-adqt::widgets::AdModal*
-createScreenshotTranslationSettingsDialog(translation::TranslationService& service, QWidget* owner,
-                                          QObject* parent,
-                                          std::function<void(bool)> displayModeChanged) {
+adqt::widgets::AdModal* createScreenshotTranslationSettingsDialog(
+    translation::TranslationService& service, QWidget* owner, QObject* parent,
+    std::function<void(bool)> displayModeChanged, Qt::WindowModality modality) {
     using namespace adqt::widgets;
     const QPointer<translation::TranslationService> liveService(&service);
-    auto* modal = new AdModal(parent);
+    auto* modal = modal_window::create(parent, owner, {.windowModality = modality});
     modal->setObjectName(QStringLiteral("screenshotTranslationSettingsModal"));
-    modal->setOwnerWindow(owner);
-    modal->setMode(AdModal::Mode::Window);
-    modal->setWindowModality(Qt::ApplicationModal);
-    modal->setCentered(true);
     modal->setPreferredWidth(440);
-    modal->setMaskVisible(false);
-    modal->setCloseOnMaskClick(false);
     modal->setClosePolicy(AdModal::ClosePolicy::Manual);
     modal->setStandardButtons(AdModal::StandardButtons(AdModal::StandardButton::Ok) |
                               AdModal::StandardButton::Cancel);
@@ -248,6 +243,10 @@ createScreenshotTranslationSettingsDialog(translation::TranslationService& servi
         if (!draft->applying)
             draft->model = value.toString();
     });
+    QObject::connect(imageField.field, &fields::FormField::valueEdited, modal, [draft] {
+        if (!draft->applying)
+            draft->originalImageEdited = true;
+    });
     body->retranslate = [retranslate, sync] {
         retranslate();
         sync();
@@ -275,16 +274,25 @@ createScreenshotTranslationSettingsDialog(translation::TranslationService& servi
         }
         if (!models->isEnabled())
             return;
-        QString modelId = models->currentValue().toString();
-        if (modelId.isEmpty())
-            modelId = draft->model.value_or(liveService->preferences().modelId);
-        if (!liveService->savePreferences({source->currentValue().toString(),
-                                           target->currentValue().toString(), modelId,
-                                           secondaryTarget->currentValue().toString(),
-                                           static_cast<int>(confidenceThreshold->value())}))
+        translation::TranslationPreferenceChanges changes;
+        if (draft->sourceEdited)
+            changes.sourceLanguage = source->currentValue().toString();
+        if (draft->targetEdited)
+            changes.targetLanguage = target->currentValue().toString();
+        if (draft->secondaryTargetEdited)
+            changes.secondaryTargetLanguage = secondaryTarget->currentValue().toString();
+        if (draft->confidenceThresholdEdited)
+            changes.languageDetectionConfidenceThreshold =
+                static_cast<int>(confidenceThreshold->value());
+        if (draft->model) {
+            const QString selectedModel = models->currentValue().toString();
+            changes.modelId = selectedModel.isEmpty() ? *draft->model : selectedModel;
+        }
+        if (!liveService->savePreferenceChanges(changes))
             return;
         const storage::ScreenshotTranslationSettings settings;
-        const bool changed = settings.originalImageTranslationEnabled() != image->isChecked();
+        const bool changed = draft->originalImageEdited &&
+                             settings.originalImageTranslationEnabled() != image->isChecked();
         if (changed && !settings.setOriginalImageTranslationEnabled(image->isChecked())) {
             error->setText(
                 QCoreApplication::translate("snow_shot::translation::TranslationService",

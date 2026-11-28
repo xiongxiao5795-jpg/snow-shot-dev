@@ -1,6 +1,6 @@
-# OCR protocol 7
+# OCR protocol 8
 
-Runtime 1.2.2 uses a binary stdin/stdout command channel. Diagnostics use stderr.
+Runtime 1.5.3 uses a binary stdin/stdout command channel. Diagnostics use stderr.
 The application and runtime are released together; earlier protocols are incompatible.
 All integers and IEEE-754 floats are little-endian. A string is a `u32` byte
 length followed by UTF-8. Frames have a 20-byte header: `SOCR`, version `u16`,
@@ -15,7 +15,7 @@ kind `u16`, operation ID `u64`, payload size `u32`. Payloads are capped at 1 MiB
 | 5 | Complete | Recognition token | Recognition result, described below |
 | 6 | Shutdown | 0 | Empty |
 | 7 | ShutdownAck | 0 | Empty |
-| 8 | PrepareSession | Session operation | Detector resize policy `u8` (0 = max, 1 = min), text detection processing `u8` (0 = accuracy first, 1 = speed first), hardware acceleration `u8` (0 = off, 1 = prefer GPU), detector/recognizer/dictionary path strings |
+| 8 | PrepareSession | Session operation | Reserved resize byte `u8` (send 0, historical 1 also accepted), text detection processing `u8` (0 = accuracy first, 1 = speed first), hardware acceleration `u8` (0 = off, 1 = prefer GPU), detector/recognizer/dictionary path strings |
 | 9 | SessionReady | Session operation | Success `u8` |
 | 10 | ReleaseSession | Session operation | Empty |
 | 11 | SessionReleased | Session operation | Empty |
@@ -28,6 +28,8 @@ kind `u16`, operation ID `u64`, payload size `u32`. Payloads are capped at 1 MiB
 | 18 | DiscardImage | Recognition token | Empty |
 | 19 | ConfigureAcceleration | 0 | Enabled `u8` (0 or 1) |
 | 20 | AccelerationReady | 0 | Empty |
+| 21 | GroupParagraphs | Grouping token | Paragraph model path string, hardware acceleration `u8`, line count `u32`, eight pixel-coordinate `f32`s per original line |
+| 22 | ParagraphsComplete | Grouping token | Status `u8`; success: group count `u32`, then member count `u32` and source indices `u32` per group; failure/cancellation: error string |
 
 `Ready` establishes only the command channel. It does not open an image buffer,
 probe a model, or create an inference session. Model creation and inference run
@@ -44,17 +46,20 @@ the next one. Repeating `PrepareSession` with the same configuration may share
 immutable compiled models, packed weights, dictionary and CPU context. Idle hot
 start detaches the image mapping, then sends `PrepareSession` directly when the
 configuration is unchanged. `ReleaseSession` always drops all model resources;
-configuration changes and disabling hot start still use it. Protocol 7 workers exclusively accept this session layout. Session preparation accepts no image. CPU inference uses simd-paddle-ocr-rs with a
-bounded context and local V6 models, without orientation classification.
-On multi-core workers, detector and recognizer parsing/compilation overlap on
-two bounded tasks. Both are joined before preparation succeeds or fails.
+configuration changes and disabling hot start still use it. Session preparation
+accepts no image. CPU inference uses simd-paddle-ocr-rs with a bounded context
+and local V6 models, without orientation classification. On multi-core workers,
+detector and recognizer model parsing overlap before compilation by the library.
 GPU kernels remain embedded in the executable, compressed at build time and decompressed only
 when a Vulkan pipeline is requested.
-Text detection processing selects the recognizer input-width floor: accuracy first uses
-320, while speed first uses 48 before the existing 32-pixel width alignment.
-Accuracy first is the default. Protocol 7 adds the acceleration preference to
-PrepareSession and the separate acceleration control/readiness messages. Older
-workers are rejected before decoding their incompatible payloads.
+Both processing modes use the native detector policy. The worker pads each
+axis to a multiple of 32 on the right or bottom with the mean source corner
+color. Inputs that exceed the padded detector limits are resized
+proportionally before padding. Detection boxes are mapped to the source
+raster, which also supplies recognition crops. Accuracy first uses a
+320-pixel recognition width floor. Speed
+first uses a 48-pixel width floor. Widths are aligned to 32 pixels. The host
+checks the exact runtime version during the handshake.
 
 The host sends ConfigureAcceleration immediately after Ready and when the
 preference changes. Enabling starts device discovery on a separate thread;
@@ -103,3 +108,18 @@ each line's text string, confidence `f32`, and eight quad-coordinate `f32`s.
 The parent preserves callback submission order even when local image rendering
 finishes later. It validates process generation, session operation, mapping
 generation, and image sequence before applying acknowledgements.
+
+## Independent paragraph grouping
+
+Protocol 8 adds GroupParagraphs and ParagraphsComplete. Recognition requests and
+Complete payloads do not contain paragraphs. GroupParagraphs consumes a staged
+image through the existing transfer acknowledgements and single inference
+executor, without PrepareSession or recognition models. It loads the verified
+paragraph model only for that operation and releases its request/weights afterward.
+The explicit execution target selects an already-ready GPU when requested,
+otherwise CPU; failures are returned directly without CPU retry. Cancel uses the
+grouping token and suppresses publication after inference drains.
+
+Paragraph members are original input indices. Their enumeration is not reading
+order: the host validates a complete disjoint partition and independently applies
+spatial ordering. Images and quads must describe the same source pixel space.

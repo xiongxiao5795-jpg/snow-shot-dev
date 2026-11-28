@@ -1,4 +1,5 @@
 #include "snow_shot/presentation/settings/settingsruntimesession.h"
+#include "snow_shot/storage/cloudsyncconfiguration.h"
 #include "snow_shot/proxyconfiguration.h"
 #if SNOW_SHOT_ENABLE_API_CONFIGURATION
 #include "snow_shot/serverconfiguration.h"
@@ -203,6 +204,14 @@ QStringList SettingsRuntimeSession::dirtyFieldIds() const {
 
 bool SettingsRuntimeSession::submitDraft(const QString& fieldId, const QVariant& value) {
     return submitDraftInternal(fieldId, value, false);
+}
+
+bool SettingsRuntimeSession::submitExplicitDraft(const QString& fieldId, const QVariant& value) {
+    const auto* descriptor = descriptorFor(fieldId);
+    // An explicit assignment can replace an unset or reset cloud operation even when
+    // the accepted value is already displayed locally.
+    return submitDraftInternal(
+        fieldId, value, descriptor && storage::cloudSettingSupported(descriptor->configurationKey));
 }
 
 bool SettingsRuntimeSession::submitDraftInternal(const QString& fieldId, const QVariant& value,
@@ -999,6 +1008,8 @@ QVariant SettingsRuntimeSession::readValue(const SettingsFieldDescriptor& descri
             } else if constexpr (std::is_same_v<Payload, SettingsLocalShortcutDefinition>) {
                 return shortcutListVariant(
                     m_backend.localShortcuts(payload.scope, payload.shortcutId));
+            } else if constexpr (std::is_same_v<Payload, SettingsMouseOperationDefinition>) {
+                return mouse::encode(m_backend.mouseBindings().get(payload.action));
             } else if constexpr (std::is_same_v<Payload, SettingsGlobalMouseActionDefinition>) {
                 return globalMouseCombinationVariant(
                     m_backend.globalMouseCombination(payload.action));
@@ -1013,6 +1024,7 @@ QVariant SettingsRuntimeSession::readValue(const SettingsFieldDescriptor& descri
                 case SettingsCustomRenderer::QuickAnnotationOptions:
                 case SettingsCustomRenderer::QuickAnnotationToolbarOptions:
                 case SettingsCustomRenderer::McpStatus:
+                case SettingsCustomRenderer::CloudSettingsSync:
                 case SettingsCustomRenderer::PermissionScreenRecording:
                 case SettingsCustomRenderer::PermissionAccessibility:
                 case SettingsCustomRenderer::PermissionInputMonitoring:
@@ -1098,6 +1110,9 @@ bool SettingsRuntimeSession::writeValue(const SettingsFieldDescriptor& descripto
             } else if constexpr (std::is_same_v<Payload, SettingsLocalShortcutDefinition>) {
                 return m_backend.applyLocalShortcuts(payload.scope, payload.shortcutId,
                                                      shortcutListValue(value));
+            } else if constexpr (std::is_same_v<Payload, SettingsMouseOperationDefinition>) {
+                const auto binding = mouse::decode(QJsonValue::fromVariant(value));
+                return binding && m_backend.applyMouseOperation(payload.action, *binding);
             } else if constexpr (std::is_same_v<Payload, SettingsGlobalMouseActionDefinition>) {
                 if (!value.canConvert<SettingsGlobalMouseCombination>()) {
                     return false;
@@ -1110,6 +1125,7 @@ bool SettingsRuntimeSession::writeValue(const SettingsFieldDescriptor& descripto
                 case SettingsCustomRenderer::QuickAnnotationOptions:
                 case SettingsCustomRenderer::QuickAnnotationToolbarOptions:
                 case SettingsCustomRenderer::McpStatus:
+                case SettingsCustomRenderer::CloudSettingsSync:
                 case SettingsCustomRenderer::PermissionScreenRecording:
                 case SettingsCustomRenderer::PermissionAccessibility:
                 case SettingsCustomRenderer::PermissionInputMonitoring:
@@ -1195,12 +1211,14 @@ bool SettingsRuntimeSession::isPending(const SettingsFieldDescriptor& descriptor
                 payload.binding == SettingsIntegerBinding::HistoryMaxEntries ||
                 payload.binding == SettingsIntegerBinding::HistoryMaxDiskMiB);
     }
+    if (const auto* select = std::get_if<SettingsSelectDefinition>(&descriptor.definition->payload))
+        return status.historyPolicyUpdating &&
+               select->binding == SettingsSelectBinding::HistoryRetentionMode;
     if (std::holds_alternative<SettingsSwitchDefinition>(descriptor.definition->payload)) {
         const auto binding =
             std::get<SettingsSwitchDefinition>(descriptor.definition->payload).binding;
         return status.historyPolicyUpdating &&
-               (binding == SettingsSwitchBinding::HistoryEnabled ||
-                binding == SettingsSwitchBinding::HistoryKeepPermanently);
+               binding == SettingsSwitchBinding::HistoryKeepPermanently;
     }
     return false;
 }
@@ -1262,8 +1280,14 @@ bool SettingsRuntimeSession::valuesEqual(const SettingsFieldDescriptor& descript
         std::holds_alternative<SettingsShortcutActionDefinition>(descriptor.definition->payload)) {
         return shortcutListValue(first) == shortcutListValue(second);
     }
-    if (std::holds_alternative<SettingsMultiSelectDefinition>(descriptor.definition->payload)) {
-        return stringListValue(first) == stringListValue(second);
+    if (const auto* multi =
+            std::get_if<SettingsMultiSelectDefinition>(&descriptor.definition->payload)) {
+        const auto firstValues = stringListValue(first);
+        const auto secondValues = stringListValue(second);
+        if (exportTriggerForBinding(multi->binding))
+            return std::is_permutation(firstValues.cbegin(), firstValues.cend(),
+                                       secondValues.cbegin(), secondValues.cend());
+        return firstValues == secondValues;
     }
     if (std::holds_alternative<SettingsCustomDefinition>(descriptor.definition->payload)) {
         const auto& custom = std::get<SettingsCustomDefinition>(descriptor.definition->payload);
@@ -1293,6 +1317,7 @@ bool SettingsRuntimeSession::isReadOnly(const SettingsFieldDescriptor& descripto
     if (const auto* custom = std::get_if<SettingsCustomDefinition>(&descriptor.definition->payload);
         custom != nullptr &&
         (custom->renderer == SettingsCustomRenderer::StorageStatus ||
+         custom->renderer == SettingsCustomRenderer::CloudSettingsSync ||
          custom->renderer == SettingsCustomRenderer::PermissionScreenRecording ||
          custom->renderer == SettingsCustomRenderer::PermissionAccessibility ||
          custom->renderer == SettingsCustomRenderer::PermissionInputMonitoring ||
@@ -1659,6 +1684,11 @@ bool SettingsRuntimeSession::applyLocalShortcuts(SettingsLocalShortcutScope scop
     return descriptor != nullptr && submitDraft(descriptor->id, shortcutListVariant(shortcuts));
 }
 
+bool SettingsRuntimeSession::applyContextMenuShortcutBatch(
+    const QMap<QString, QJsonValue>& changes) {
+    return m_backend.applyContextMenuShortcutBatch(changes);
+}
+
 quint64 SettingsRuntimeSession::suspendGlobalShortcuts() {
     return m_backend.suspendGlobalShortcuts();
 }
@@ -1763,6 +1793,17 @@ void SettingsRuntimeSession::refreshStorageStatus() {
 
 void SettingsRuntimeSession::refreshStorageStatusIfStale() {
     m_backend.refreshStorageStatusIfStale();
+}
+
+const CloudSettingsSyncState& SettingsRuntimeSession::cloudSettingsSyncState() const {
+    return m_cloudSettingsSyncState;
+}
+
+void SettingsRuntimeSession::setCloudSettingsSyncState(CloudSettingsSyncState state) {
+    if (m_cloudSettingsSyncState == state)
+        return;
+    m_cloudSettingsSyncState = std::move(state);
+    emit cloudSettingsSyncStateChanged();
 }
 
 } // namespace snow_shot::presentation::settings

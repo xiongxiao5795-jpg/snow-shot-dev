@@ -56,9 +56,13 @@ enum class PinnedWindowCreationSource {
 enum class PinnedWindowCloseIntent { Preserve, Hide, Close, Destroy };
 
 enum class PinnedTextType { RecognitionResults, TranslationResults };
+enum class PinnedTransparentLayerMode { ClickThrough, KeepTransparent, Checkerboard };
 
 // These limits govern ignored records only.
-using PinnedWindowPolicy = CaptureHistoryPolicy;
+struct PinnedWindowPolicy : HistoryRetentionLimits {
+    bool enabled = true;
+    friend bool operator==(const PinnedWindowPolicy&, const PinnedWindowPolicy&) = default;
+};
 
 struct PinnedWindowRecord final {
     PinnedSourceIdentity sourceIdentity;
@@ -77,6 +81,8 @@ struct PinnedWindowRecord final {
     bool animationPlaying = true;
     QString originalFilePath;
     QString originalFileName;
+    // A pending imported file can be written or restored without its decoded raster.
+    QByteArray originalFileBytes{};
     QString originalHtml;
     QString originalText;
     PinnedTextFormat textFormat = PinnedTextFormat::PlainText;
@@ -117,6 +123,7 @@ struct PinnedWindowRecord final {
     bool alwaysOnTop = true;
     bool showBorder = true;
     bool showShadow = false;
+    std::optional<PinnedTransparentLayerMode> transparentLayerMode;
     std::optional<PinnedBorderAppearance> borderAppearance;
     std::optional<bool> checkerboardEnabled;
     QRect preThumbnailNativeGeometry;

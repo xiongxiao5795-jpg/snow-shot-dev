@@ -1,5 +1,11 @@
 #include "snow_shot/app/edition.h"
 #include "snow_shot/app/applicationcontroller.h"
+#ifdef Q_OS_WIN
+#include "snow_shot/platform/windows/shellbatchfile.h"
+#include "snow_shot/platform/windows/shellcontextmenuregistration.h"
+#include "snow_shot/app/supportedpinfiles.h"
+#include <QTextStream>
+#endif
 #include "snow_shot/app/distribution.h"
 #include "snow_shot/app/storeupdatelifecycle.h"
 #include "snow_shot/app/shellimagelaunch.h"
@@ -23,6 +29,9 @@
 #include "snow_shot/translation/translationservice.h"
 #include "snow_shot/app/accountsessionservice.h"
 #endif
+#if !SNOW_SHOT_EDITION_MINI
+#include "snow_shot/app/cloudsettingssyncservice.h"
+#endif
 #include "snow_shot/presentation/languagemanager.h"
 #include "snow_shot/presentation/styles/thememanager.h"
 #include "theme/theme_manager.h"
@@ -32,8 +41,9 @@
 #include "snow_shot/presentation/collagewindowcoordinator.h"
 #include "snow_shot/presentation/imagesplitwindow.h"
 #include "snow_shot/presentation/imageeditingwindow.h"
+#include "snow_shot/presentation/imagecompressionwindow.h"
 #include "snow_shot/presentation/screenshotexportartifact.h"
-#include "snow_shot/presentation/screenshotexportcache.h"
+#include "../presentation/pinned/screenshotpinneddragexport.h"
 
 #include "snow_shot/presentation/globalshortcutmanager.h"
 #include "snow_shot/presentation/globalcanvascontroller.h"
@@ -116,6 +126,10 @@ const QString kTrayIconKey = QStringLiteral("tray/icon");
 const QString kTrayCustomIconKey = QStringLiteral("tray/custom_icon");
 const QString kTrayDarkIconKey = QStringLiteral("tray/dark_icon");
 const QString kTrayDarkCustomIconKey = QStringLiteral("tray/dark_custom_icon");
+#if SNOW_SHOT_ENABLE_EXTENDED_FEATURES
+const QString kTranslationPageEnabledKey =
+    QStringLiteral("extended_features/translation_page_enabled");
+#endif
 const QString kTrayLeftClickActionKey = QStringLiteral("tray/left_click_action");
 const QString kTrayMiddleClickActionKey = QStringLiteral("tray/middle_click_action");
 const QString kTrayMenuOptionsKey = QStringLiteral("tray/menu_options");
@@ -123,8 +137,6 @@ const QString kScreenshotDelaySecondsKey = QStringLiteral("screenshot/delay_seco
 const QString kFullscreenSuppressionKey =
     QStringLiteral("global_shortcuts/disable_on_focused_fullscreen_window");
 const QString kOcrModelTypeKey = QStringLiteral("text_recognition/model_type");
-const QString kOcrDetectorResizePolicyKey =
-    QStringLiteral("text_recognition/detector_resize_policy");
 const QString kOcrTextDetectionProcessingKey =
     QStringLiteral("text_recognition/text_detection_processing");
 const QString kMcpEnabledKey = QStringLiteral("mcp/enabled");
@@ -347,8 +359,14 @@ class ApplicationController::Impl {
                                      },
                                      [this, event] { dispatchGlobalMouseEvent(event); },
                                      [this, event] {
-                                         return allowPermissions(presentation::requiredPermissions(
-                                             event.action, permissions.microphoneEnabled()));
+                                         using Admission =
+                                             presentation::AppPermissionService::Admission;
+                                         return allowPermissions(
+                                             presentation::requiredPermissions(
+                                                 event.action, permissions.microphoneEnabled()),
+                                             event.fromSettingsButton
+                                                 ? Admission::CheckedAtGesturePress
+                                                 : Admission::Fresh);
                                      }));
                                  return;
                              }
@@ -388,6 +406,11 @@ class ApplicationController::Impl {
         // instances receive a consumer of this service instead of creating a
         // second child process for each controller.
         ScreenshotOcrRecognitionService::Options ocrOptions;
+#if !SNOW_SHOT_EDITION_MINI
+        deferSynchronizedOcrModel = CloudSettingsSyncService::shouldDeferOcrModelDownload(
+            applicationStorage.configuration());
+        ocrOptions.tryCachedFallbackAtStartup = deferSynchronizedOcrModel;
+#endif
         ocrOptions.offlineRoot =
             QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("assets/ocr"));
         if (applicationStorage.isInitialized() &&
@@ -399,8 +422,6 @@ class ApplicationController::Impl {
             applicationStorage.configuration()
                 .value(QStringLiteral("text_recognition/model_type"))
                 .toString());
-        ocrOptions.detectorResizePolicy = screenshotOcrDetectorResizePolicyFromValue(
-            applicationStorage.configuration().value(kOcrDetectorResizePolicyKey).toString());
         ocrOptions.textDetectionProcessing = screenshotOcrTextDetectionProcessingFromValue(
             applicationStorage.configuration().value(kOcrTextDetectionProcessingKey).toString());
         ocrRecognition = std::make_unique<ScreenshotOcrRecognitionService>(ocrOptions, &q);
@@ -507,7 +528,7 @@ class ApplicationController::Impl {
         QObject::connect(&applicationStorage, &storage::ApplicationStorage::directoryChangeFinished,
                          &q, [this] {
                              const auto intent = shellLaunches.takeStorage();
-                             if (intent.paths.isEmpty())
+                             if (intent.fileArguments.isEmpty())
                                  return;
                              q.handleLaunchRequest(intent.replayArguments());
                          });
@@ -629,7 +650,7 @@ class ApplicationController::Impl {
                                   kTrayLeftClickActionKey);
         applyRuntimeConfiguration(configuration.value(kTrayMiddleClickActionKey),
                                   kTrayMiddleClickActionKey);
-        applyRuntimeConfiguration(configuration.value(kTrayMenuOptionsKey), kTrayMenuOptionsKey);
+        systemTray.setMenuOptions(stringList(configuration.value(kTrayMenuOptionsKey)));
         applyRuntimeConfiguration(configuration.value(kScreenshotDelaySecondsKey),
                                   kScreenshotDelaySecondsKey);
         applyRuntimeConfiguration(configuration.value(kFullscreenSuppressionKey),
@@ -638,9 +659,52 @@ class ApplicationController::Impl {
                          [this](const QString& key, const QJsonValue& value) {
                              applyRuntimeConfiguration(value, key);
                          });
+        QObject::connect(
+            &configuration, &storage::ConfigurationStore::valuesCommitted, &q,
+            [this, &configuration](storage::ConfigurationWriteOrigin origin, const auto& before,
+                                   const auto& values) {
+                const bool trayMenuChanged =
+                    values.contains(kTrayMenuOptionsKey) &&
+                    values.value(kTrayMenuOptionsKey) != before.value(kTrayMenuOptionsKey);
+                bool translationAvailabilityChanged = false;
+#if SNOW_SHOT_ENABLE_EXTENDED_FEATURES
+                translationAvailabilityChanged = values.contains(kTranslationPageEnabledKey) &&
+                                                 values.value(kTranslationPageEnabledKey) !=
+                                                     before.value(kTranslationPageEnabledKey);
+#endif
+                if (trayMenuChanged || translationAvailabilityChanged) {
+                    systemTray.setMenuOptions(stringList(configuration.value(kTrayMenuOptionsKey)),
+                                              translationAvailabilityChanged ||
+                                                  origin ==
+                                                      storage::ConfigurationWriteOrigin::Remote);
+                }
+                const bool modelChanged = values.contains(kOcrModelTypeKey);
+                if (modelChanged)
+                    deferSynchronizedOcrModel = origin == storage::ConfigurationWriteOrigin::Remote;
+                if (started &&
+                    (modelChanged || values.contains(kOcrTextDetectionProcessingKey) ||
+                     values.contains(QStringLiteral("text_recognition/resident_process")) ||
+                     values.contains(QStringLiteral("text_recognition/model_hot_start")) ||
+                     values.contains(QStringLiteral("text_recognition/hardware_acceleration")))) {
+                    applyOcrConfiguration();
+                }
+            });
+#if !SNOW_SHOT_EDITION_MINI
+        CloudSettingsSyncService::Options syncOptions;
+#ifdef Q_OS_WIN
+        syncOptions.commitMenuSettings = [](const auto& values, const auto& commit) {
+            const platform::windows::ShellContextMenuRegistration registration;
+            return registration.change(registration.preferences(values), commit).success;
+        };
+#endif
+        cloudSettingsSync = std::make_unique<CloudSettingsSyncService>(
+            *accountSession, configuration, std::move(syncOptions), &q);
+#endif
         mcpLifecycle = std::make_unique<mcp::McpRuntimeLifecycle>(mcp::McpRuntimeLifecycle::Hooks{
             [this] { return startMcp(); }, [this](auto done) { mcpGraph.drain(std::move(done)); },
             [this] { mcpGraph.stop(); }});
+        QObject::connect(&app, &QCoreApplication::aboutToQuit, &imageCompression,
+                         &presentation::ImageCompressionWindowCoordinator::shutdown);
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &q, [this] {
             shuttingDown = true;
             deferredStartup.stop();
@@ -668,12 +732,6 @@ class ApplicationController::Impl {
                        .toString() == QStringLiteral("smart_control");
         };
         memoryOptions.safe = [this] { return memoryTrimmingIsSafe(); };
-        memoryOptions.trim = [nativeTrim = std::move(memoryOptions.trim)] {
-            ScreenshotExportCache::pinnedPixels().clear();
-            ScreenshotExportCache::encodedBytes().clear();
-            ScreenshotExportCache::encodedFiles().clear();
-            return nativeTrim();
-        };
         memoryOptimization = std::make_unique<runtime::MemoryOptimizationController>(
             runtime::RuntimeActivityTracker::shared(), std::move(memoryOptions), &q);
 #endif
@@ -969,8 +1027,8 @@ class ApplicationController::Impl {
 #ifdef Q_OS_WIN
         const auto intent = shellLaunches.takeUpdate();
         updates->clearRelaunchArguments();
-        if (!intent.paths.isEmpty())
-            pinShellFiles(intent.paths);
+        if (!intent.fileArguments.isEmpty())
+            dispatchShellFiles(intent.fileArguments);
         if (intent.foreground)
             showMainWindow();
 #endif
@@ -991,15 +1049,81 @@ class ApplicationController::Impl {
     }
 
 #ifdef Q_OS_WIN
-    void pinShellFiles(QStringList paths, std::function<void()> finished = {}) {
-        if (!actionGate.dispatch([this, paths = std::move(paths), finished]() mutable {
-                if (auto* controller = ensureScreenshotController())
-                    controller->pinFilesToScreen(std::move(paths), std::move(finished));
-                else if (finished)
-                    finished();
-            }) &&
-            finished)
-            finished();
+    void dispatchShellFiles(const QStringList& arguments, std::function<void()> finished = {}) {
+        using platform::windows::ShellAction;
+        ShellLaunchCoordinator::FirstFileCompletion completion(std::move(finished));
+        QStringList plainPins;
+        auto dispatch = [&](ShellAction action, QStringList paths) {
+            if (paths.isEmpty())
+                return;
+            auto ready = completion.take();
+            if (!actionGate.dispatch([this, action, paths = std::move(paths), ready]() mutable {
+                    switch (action) {
+                    case ShellAction::Pin:
+                    case ShellAction::Annotate:
+                        if (auto* controller = ensureScreenshotController()) {
+                            controller->pinFilesToScreen(std::move(paths), std::move(ready),
+                                                         action == ShellAction::Annotate);
+                            return;
+                        }
+                        break;
+                    case ShellAction::Stitch:
+                        ensureImageStitchingWindowCoordinator().presentFiles(paths, true);
+                        break;
+                    case ShellAction::Split:
+                        ensureImageSplitWindowCoordinator().presentFiles(paths, true);
+                        break;
+                    case ShellAction::Edit:
+                        ensureImageEditingWindowCoordinator().presentFiles(paths, true);
+                        break;
+                    case ShellAction::Compress:
+                        imageCompression.presentFiles(paths);
+                        break;
+                    }
+                    if (ready)
+                        ready();
+                }) &&
+                ready)
+                ready();
+        };
+        for (qsizetype i = 0; i + 1 < arguments.size(); i += 2) {
+            const auto operand = arguments.at(i + 1);
+            if (arguments.at(i) == u"--edit-with-snow-shot") {
+                plainPins.append(operand);
+                continue;
+            }
+            dispatch(ShellAction::Pin, std::exchange(plainPins, {}));
+            const auto directory = platform::windows::shellBatchDirectory(
+                edition::isMini, distribution::isStoreManaged());
+            if (directory.empty())
+                continue;
+            QFile file(directory / operand.toStdWString());
+            if (!file.open(QIODevice::ReadOnly))
+                continue;
+            QTextStream stream(&file);
+            stream.setEncoding(QStringConverter::Utf16LE);
+            const auto header = stream.readLine();
+            bool valid = false;
+            const auto index = header.toUInt(&valid);
+            if (!valid || index >= platform::windows::shellActionIds.size()) {
+                file.remove();
+                continue;
+            }
+            const auto action = static_cast<ShellAction>(index);
+            const auto formats = platform::windows::acceptsDocuments(action)
+                                     ? supportedPinFileExtensions()
+                                     : image::supportedImageFileExtensions();
+            QStringList paths;
+            while (!stream.atEnd()) {
+                const auto path = stream.readLine();
+                const QFileInfo info(path);
+                if (info.isAbsolute() && formats.contains(info.suffix().toLower()))
+                    paths.append(path);
+            }
+            file.remove();
+            dispatch(action, std::move(paths));
+        }
+        dispatch(ShellAction::Pin, std::move(plainPins));
     }
 
     void preserveShellLaunchForUpdate(const ShellLaunchCoordinator::Request& request) {
@@ -1007,7 +1131,7 @@ class ApplicationController::Impl {
         // Transport admission checked the cumulative intent before its receipt. Retain
         // accepted paths until helper acknowledgement or normal replay after failure.
         updates->setRelaunchArguments(
-            update::startupUpdateRelaunchArguments(intent.foreground, intent.paths));
+            update::startupUpdateShellArguments(intent.foreground, intent.fileArguments));
     }
 #endif
 
@@ -1017,14 +1141,13 @@ class ApplicationController::Impl {
         const auto& configuration = storage::ApplicationStorage::instance().configuration();
         ocrRecognition->setRuntimeConfiguration(
             {screenshotOcrModelTypeFromValue(configuration.value(kOcrModelTypeKey).toString()),
-             screenshotOcrDetectorResizePolicyFromValue(
-                 configuration.value(kOcrDetectorResizePolicyKey).toString()),
              configuration.value(QStringLiteral("text_recognition/resident_process")).toBool(),
              configuration.value(QStringLiteral("text_recognition/model_hot_start")).toBool(),
              screenshotOcrTextDetectionProcessingFromValue(
                  configuration.value(kOcrTextDetectionProcessingKey).toString()),
              configuration.value(QStringLiteral("text_recognition/hardware_acceleration"))
-                 .toBool()});
+                 .toBool()},
+            deferSynchronizedOcrModel);
     }
 
     void reconcileMcpConfiguration() {
@@ -1164,11 +1287,11 @@ class ApplicationController::Impl {
                 return false;
             return true;
         };
-        appPorts.historyAction = [controller](const QString& id, const QString& action) {
+        appPorts.historyAction = [this, controller](const QString& id, const QString& action) {
             if (controller->blocksApplicationUpdate())
                 return false;
             if (action == u"edit")
-                controller->editHistoryRecord(id);
+                return editHistoryRecord(id);
             else if (action == u"pin")
                 controller->pinHistoryRecord(id);
             else
@@ -1238,7 +1361,21 @@ class ApplicationController::Impl {
             }
             return entry;
         };
-        documentPorts.present = [controller, historyEntryFromSource](auto source, auto done) {
+        documentPorts.present = [this, controller, historyEntryFromSource](auto source, auto done) {
+            if (source.presentInImageEditing) {
+                if (!actionsAvailable() || source.images.size() != 1)
+                    return false;
+                // Image editing owns the full base and its editable annotations. The screenshot
+                // selection describes an export region within that document.
+                presentation::ImageEditingSource edited;
+                edited.canvasRect = source.images.front().canvasRect;
+                edited.image = std::move(source.images.front().image);
+                edited.canvasSession = std::move(source.documentSession);
+                edited.canvasHistory = std::move(source.documentHistory);
+                edited.recognition = std::move(source.recognitionResults);
+                return ensureImageEditingWindowCoordinator().presentDocument(std::move(edited),
+                                                                             std::move(done));
+            }
             return controller->mcpPresentDocument(historyEntryFromSource(std::move(source)),
                                                   std::move(done));
         };
@@ -1315,11 +1452,13 @@ class ApplicationController::Impl {
 #ifdef Q_OS_MACOS
         permissions.setMicrophoneEnabled(storage::RecordingSettings().microphoneEnabled());
         globalMouseManager.usePermissionSnapshot(false, false);
-        QObject::connect(&permissions, &presentation::AppPermissionService::refreshed, &q, [this] {
+        QObject::connect(&permissions, &presentation::AppPermissionService::changed, &q, [this] {
             const auto& snapshot = permissions.snapshot();
             globalMouseManager.usePermissionSnapshot(
                 snapshot.granted(presentation::AppPermission::InputMonitoring),
                 snapshot.granted(presentation::AppPermission::Accessibility));
+        });
+        QObject::connect(&permissions, &presentation::AppPermissionService::refreshed, &q, [this] {
             const auto missing = permissions.takeStartupMissing();
             if (!missing.isEmpty())
                 ensureMainWindow().showAppPermissions(
@@ -1434,6 +1573,14 @@ class ApplicationController::Impl {
             screenshotController = std::make_unique<ScreenshotController>(
                 &q, &groupManager, ocrRecognition.get(), apiClient());
             screenshotController->setCaptureSuspended(applicationSuspended());
+            screenshotController->setGlobalMouseActivationModifiersQuery(
+                [this] { return globalMouseManager.heldActivationModifiers(); });
+            QObject::connect(
+                &globalMouseManager, &presentation::GlobalMouseManager::dragUpdatePending,
+                screenshotController.get(), &ScreenshotController::requestGlobalMouseFrame);
+            QObject::connect(screenshotController.get(),
+                             &ScreenshotController::globalMouseSampleRequested, &globalMouseManager,
+                             &presentation::GlobalMouseManager::deliverPendingDrag);
 #ifdef Q_OS_MACOS
             screenshotController->setCaptureBackgroundWindow(mainWindow);
 #endif
@@ -1441,9 +1588,18 @@ class ApplicationController::Impl {
                              &ScreenshotController::recordingExportNotificationRequested,
                              &systemTray,
                              &presentation::SystemTrayController::showRecordingExportMessage);
+            QObject::connect(
+                screenshotController.get(), &ScreenshotController::exportTaskFailed, &systemTray,
+                [this](const QString& message) { systemTray.showCaptureMessage(message, true); });
+            screenshotController->setPrepareCaptureAcquisition([this] {
+                return floatingToolbar.beginCaptureActivity(QStringLiteral("selection"));
+            });
             QObject::connect(screenshotController.get(),
                              &ScreenshotController::captureActivityChanged, &floatingToolbar,
-                             &presentation::FloatingToolbarController::setCaptureActive);
+                             [this](const QString& source, bool active) {
+                                 if (!active || source != u"selection")
+                                     floatingToolbar.setCaptureActive(source, active);
+                             });
 #if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
             QObject::connect(screenshotController.get(),
                              &ScreenshotController::captureActivityChanged, &q,
@@ -1463,6 +1619,12 @@ class ApplicationController::Impl {
                     required.append(presentation::AppPermission::InputMonitoring);
                 return notify ? allowPermissions(required) : permissions.allow(required);
             });
+            screenshotController->setRecordingPreviewPermissionSnapshot(permissions.snapshot());
+            QObject::connect(&permissions, &presentation::AppPermissionService::changed,
+                             screenshotController.get(), [this] {
+                                 screenshotController->setRecordingPreviewPermissionSnapshot(
+                                     permissions.snapshot());
+                             });
 #else
             screenshotController->setRecordingPermissionCheck(
                 [](bool, bool, bool) { return true; });
@@ -1502,6 +1664,13 @@ class ApplicationController::Impl {
                                  }));
                              });
             QObject::connect(screenshotController.get(),
+                             &ScreenshotController::imageCompressionRequested, &q,
+                             [this](const ScreenshotPinnedImageSnapshot& snapshot) {
+                                 static_cast<void>(actionGate.dispatch([this, snapshot] {
+                                     imageCompression.presentSnapshot(snapshot);
+                                 }));
+                             });
+            QObject::connect(screenshotController.get(),
                              &ScreenshotController::pinnedImageEditingRequested, &q,
                              [this](const QString& id) {
                                  static_cast<void>(actionGate.dispatch([this, id] {
@@ -1530,13 +1699,6 @@ class ApplicationController::Impl {
             memoryOptimization->synchronizePolicy();
         if (key == QStringLiteral("screen_recording/enable_microphone"))
             permissions.setMicrophoneEnabled(value.toBool());
-#if SNOW_SHOT_ENABLE_EXTENDED_FEATURES
-        if (key == QStringLiteral("extended_features/translation_page_enabled")) {
-            systemTray.setMenuOptions(
-                stringList(storage::ApplicationStorage::instance().configuration().value(
-                    kTrayMenuOptionsKey)));
-        }
-#endif
         if (key == u"updates/mode" && updates != nullptr) {
             updates->setMode(value.toString());
         } else if ((key == u"network/proxy" || key == u"network/http_proxy") &&
@@ -1587,21 +1749,12 @@ class ApplicationController::Impl {
             systemTray.setLeftClickAction(value.toString(QStringLiteral("screenshot")));
         } else if (key == kTrayMiddleClickActionKey) {
             systemTray.setMiddleClickAction(value.toString(QStringLiteral("screenshot_fixed")));
-        } else if (key == kTrayMenuOptionsKey) {
-            systemTray.setMenuOptions(stringList(value));
         } else if (key == kScreenshotDelaySecondsKey) {
             systemTray.setScreenshotDelaySeconds(value.toInt(3));
         } else if (key == kFullscreenSuppressionKey) {
             systemTray.setQuickActionChecked(
                 presentation::GlobalShortcutAction::ToggleDisableOnFocusedFullscreenWindow,
                 value.toBool());
-        } else if (key == kOcrModelTypeKey || key == kOcrDetectorResizePolicyKey ||
-                   key == kOcrTextDetectionProcessingKey ||
-                   key == QStringLiteral("text_recognition/resident_process") ||
-                   key == QStringLiteral("text_recognition/model_hot_start") ||
-                   key == QStringLiteral("text_recognition/hardware_acceleration")) {
-            if (started)
-                applyOcrConfiguration();
         }
     }
 
@@ -1635,14 +1788,31 @@ class ApplicationController::Impl {
                                 action, permissions.microphoneEnabled()));
                         }));
                 });
+            auto* recordDrag = new ScreenshotPinnedDragExport(mainWindow);
+            QObject::connect(
+                mainWindow, &MainWindow::imageDragRequested, recordDrag,
+                [this, recordDrag](QObject* gesture, const QImage& image) {
+                    auto artifact = std::make_shared<ScreenshotExportArtifact>(
+                        ScreenshotExportSource::fromImage(image));
+                    recordDrag->start(
+                        std::move(artifact),
+                        [this](QString error) {
+                            if (error.isEmpty())
+                                return;
+                            adqt::widgets::AdMessage::Request message;
+                            message.content =
+                                QCoreApplication::translate("ScreenshotController",
+                                                            "The screenshot could not be saved: %1")
+                                    .arg(error);
+                            adqt::widgets::AdMessageService::error(std::move(message), mainWindow);
+                        },
+                        [] { return QApplication::mouseButtons().testFlag(Qt::LeftButton); },
+                        gesture);
+                });
             QObject::connect(mainWindow, &MainWindow::screenshotHistoryEditRequested, &q,
                              [this](const QString& recordId) {
-                                 static_cast<void>(actionGate.dispatch([this, recordId]() {
-                                     if (ScreenshotController* controller =
-                                             ensureScreenshotController()) {
-                                         controller->editHistoryRecord(recordId);
-                                     }
-                                 }));
+                                 static_cast<void>(actionGate.dispatch(
+                                     [this, recordId]() { editHistoryRecord(recordId); }));
                              });
             QObject::connect(mainWindow, &MainWindow::screenshotHistoryPinRequested, &q,
                              [this](const QString& recordId) {
@@ -1671,6 +1841,11 @@ class ApplicationController::Impl {
                                      ensureImageEditingWindowCoordinator().presentHistory(record);
                                  }));
                              });
+            QObject::connect(mainWindow, &MainWindow::screenshotHistoryImageCompressionRequested,
+                             &q, [this](const storage::CaptureHistoryRecord& record) {
+                                 static_cast<void>(actionGate.dispatch(
+                                     [this, record] { imageCompression.presentHistory(record); }));
+                             });
             QObject::connect(mainWindow, &MainWindow::pinnedWindowStitchImagesRequested, &q,
                              [this](const QStringList& recordIds) {
                                  static_cast<void>(actionGate.dispatch([this, recordIds] {
@@ -1692,6 +1867,12 @@ class ApplicationController::Impl {
                                          recordId);
                                  }));
                              });
+            QObject::connect(mainWindow, &MainWindow::pinnedWindowImageCompressionRequested, &q,
+                             [this](const QString& recordId) {
+                                 static_cast<void>(actionGate.dispatch([this, recordId] {
+                                     imageCompression.presentPinnedRecord(recordId);
+                                 }));
+                             });
         }
         return *mainWindow;
     }
@@ -1711,15 +1892,39 @@ class ApplicationController::Impl {
         if (runtimeSession == nullptr) {
             runtimeSession = std::make_unique<presentation::settings::SettingsRuntimeSession>(
                 *settingsRegistry, *settingsBackend);
+#if !SNOW_SHOT_EDITION_MINI
+            using Session = presentation::settings::SettingsRuntimeSession;
+            auto publishSyncState = [this] {
+                runtimeSession->setCloudSettingsSyncState(
+                    {cloudSettingsSync->signedIn(), cloudSettingsSync->enabled(),
+                     cloudSettingsSync->lastSuccessfulSync()});
+            };
+            QObject::connect(cloudSettingsSync.get(), &CloudSettingsSyncService::changed,
+                             runtimeSession.get(), publishSyncState);
+            QObject::connect(runtimeSession.get(), &Session::cloudSettingsSyncEnabledRequested,
+                             cloudSettingsSync.get(), &CloudSettingsSyncService::setEnabled);
+            QObject::connect(runtimeSession.get(), &Session::cloudSettingsSyncRequested,
+                             cloudSettingsSync.get(), &CloudSettingsSyncService::syncNow);
+            QObject::connect(runtimeSession.get(), &Session::cloudSettingsSyncCheckRequested,
+                             cloudSettingsSync.get(), &CloudSettingsSyncService::settingsOpened);
+            publishSyncState();
+#endif
         }
     }
 
-    bool allowPermissions(const presentation::AppPermissions& requirements) {
+    bool allowPermissions(const presentation::AppPermissions& requirements,
+                          presentation::AppPermissionService::Admission admission =
+                              presentation::AppPermissionService::Admission::Fresh) {
 #ifdef Q_OS_MACOS
-        return permissions.allow(requirements, [this](const presentation::AppPermissions& missing) {
-            ensureMainWindow().showAppPermissions(presentation::appPermissionId(missing.first()));
-        });
+        return permissions.allow(
+            requirements,
+            [this](const presentation::AppPermissions& missing) {
+                ensureMainWindow().showAppPermissions(
+                    presentation::appPermissionId(missing.first()));
+            },
+            admission);
 #else
+        Q_UNUSED(admission);
         Q_UNUSED(requirements);
 #endif
         return true;
@@ -1867,6 +2072,12 @@ class ApplicationController::Impl {
                     controller->captureForAction(ScreenshotController::CaptureAction::QuickSave));
             }
             break;
+        case presentation::GlobalShortcutAction::ScreenshotPinWindowToScreen:
+            if (ScreenshotController* controller = ensureScreenshotController()) {
+                static_cast<void>(
+                    controller->captureForAction(ScreenshotController::CaptureAction::PinWindow));
+            }
+            break;
         case presentation::GlobalShortcutAction::ScreenshotFullScreen:
             ensureDirectCaptureController().captureCurrentMonitor();
             break;
@@ -1959,6 +2170,12 @@ class ApplicationController::Impl {
             ensureImageEditingWindowCoordinator().presentSelectedFiles(std::move(backend), target);
             break;
         }
+        case presentation::GlobalShortcutAction::CompressSelectedImages: {
+            auto backend = platform::createSelectedFileBackend();
+            const auto target = backend->captureTarget();
+            imageCompression.presentSelectedFiles(std::move(backend), target);
+            break;
+        }
         case presentation::GlobalShortcutAction::OpenPinToScreenManagement:
             ensureMainWindow().showPinToScreenManagement();
             break;
@@ -2027,6 +2244,25 @@ class ApplicationController::Impl {
                 complete(std::nullopt);
             }
         };
+    }
+
+    bool editHistoryRecord(const QString& id) {
+        const auto records = storage::ApplicationStorage::instance().captureHistory().records();
+        const auto found = std::find_if(records.cbegin(), records.cend(),
+                                        [&id](const auto& record) { return record.id == id; });
+        if (found == records.cend())
+            return false;
+        if (found->contentKind == storage::CaptureHistoryContentKind::ScreenshotSession) {
+            if (auto* controller = ensureScreenshotController()) {
+                controller->editHistoryRecord(id);
+                return true;
+            }
+            return false;
+        }
+        if (!found->result)
+            return false;
+        ensureImageEditingWindowCoordinator().presentHistory(*found);
+        return true;
     }
 
     presentation::ImageEditingWindowCoordinator& ensureImageEditingWindowCoordinator() {
@@ -2117,6 +2353,11 @@ class ApplicationController::Impl {
     presentation::DirectCaptureController& ensureDirectCaptureController() {
         if (!directCaptureController) {
             directCaptureController = std::make_unique<presentation::DirectCaptureController>(&q);
+            QObject::connect(directCaptureController.get(),
+                             &presentation::DirectCaptureController::pinRequested, &q,
+                             [this](const QImage& image, const QRect& bounds) {
+                                 ensureScreenshotController()->pinDirectCapture(image, bounds);
+                             });
             QObject::connect(directCaptureController.get(),
                              &presentation::DirectCaptureController::captureActivityChanged,
                              &floatingToolbar,
@@ -2227,7 +2468,11 @@ class ApplicationController::Impl {
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
     translation::TranslationService* translationService = nullptr;
 #endif
+#if !SNOW_SHOT_EDITION_MINI
+    std::unique_ptr<CloudSettingsSyncService> cloudSettingsSync;
+#endif
     std::unique_ptr<ScreenshotOcrRecognitionService> ocrRecognition;
+    bool deferSynchronizedOcrModel = false;
     std::unique_ptr<ScreenshotController> screenshotController;
     std::unique_ptr<presentation::GlobalCanvasController> globalCanvasController;
 #if SNOW_SHOT_ENABLE_QUICK_ANNOTATION
@@ -2243,6 +2488,8 @@ class ApplicationController::Impl {
     mcp::McpRuntimeGraph mcpGraph{&q};
     std::unique_ptr<mcp::McpRuntimeLifecycle> mcpLifecycle;
     std::unique_ptr<presentation::ImageStitchingWindowCoordinator> imageStitchingWindowCoordinator;
+    presentation::ImageCompressionWindowCoordinator imageCompression{
+        pinnedImageSnapshotRequest(ScreenshotPinnedRenderMode::SourceResolution)};
     std::unique_ptr<presentation::ImageSplitWindowCoordinator> imageSplitWindowCoordinator;
     std::unique_ptr<presentation::ImageEditingWindowCoordinator> imageEditingWindowCoordinator;
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
@@ -2285,7 +2532,7 @@ bool ApplicationController::acceptsLaunchRequest(const QStringList& arguments) c
             ShellLaunchCoordinator::parse(arguments), m_impl->updates->acceptsRelaunchArguments({}),
             [this](const auto& intent) {
                 return m_impl->updates->acceptsRelaunchArguments(
-                    update::startupUpdateRelaunchArguments(intent.foreground, intent.paths));
+                    update::startupUpdateShellArguments(intent.foreground, intent.fileArguments));
             });
     }
 #else
@@ -2309,9 +2556,6 @@ void ApplicationController::handleLaunchRequest(const QStringList& arguments,
             m_impl->reportSelectedFilePinFailure(tr("The selected file path is invalid"));
             return;
         }
-        for (const QString& path : request.unsupportedPaths)
-            m_impl->reportSelectedFilePinFailure(
-                tr("Could not open the selected file: %1").arg(path));
         if (storage::ApplicationStorage::instance().directoryChanging() ||
             (m_impl->migrationInput && m_impl->migrationInput->active)) {
             m_impl->shellLaunches.retainStorage(request);
@@ -2319,8 +2563,8 @@ void ApplicationController::handleLaunchRequest(const QStringList& arguments,
                    (m_impl->handoffInput && m_impl->handoffInput->active)) {
             m_impl->preserveShellLaunchForUpdate(request);
         } else {
-            if (!request.paths.isEmpty())
-                m_impl->pinShellFiles(request.paths, completion.take());
+            if (!request.fileArguments.isEmpty())
+                m_impl->dispatchShellFiles(request.fileArguments, completion.take());
             if (request.foreground)
                 m_impl->showMainWindow();
         }

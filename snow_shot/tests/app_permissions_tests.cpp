@@ -48,6 +48,8 @@ class FakePermissions final : public AppPermissionBackend {
     }
     AppPermissionSnapshot value;
     int queries = 0;
+    int screenRecordingQueries = 0;
+    AppPermissions queriedPermissions;
     int requests = 0;
     int opens = 0;
     bool canOpen = true;
@@ -58,6 +60,12 @@ class FakePermissions final : public AppPermissionBackend {
     AppPermissionSnapshot query() override {
         ++queries;
         return value;
+    }
+    AppPermissionStatus queryPermission(AppPermission permission) override {
+        queriedPermissions.push_back(permission);
+        if (permission == P::ScreenRecording)
+            ++screenRecordingQueries;
+        return value.status(permission);
     }
     void request(P permission, std::function<void()> done) override {
         ++requests;
@@ -251,6 +259,50 @@ void freshAdmissionAndRequests() {
     require(native->requests == 1 && service.snapshot().granted(P::Microphone),
             "external grant prevents a redundant permission prompt");
 }
+void selectiveAdmissionAndFullRefresh() {
+    auto fake = std::make_unique<FakePermissions>();
+    auto* native = fake.get();
+    AppPermissionService service(std::move(fake));
+    int changes = 0;
+    int fullRefreshes = 0;
+    QObject::connect(&service, &AppPermissionService::changed, [&] { ++changes; });
+    QObject::connect(&service, &AppPermissionService::refreshed, [&] { ++fullRefreshes; });
+    require(service.allow({P::ScreenRecording}) && native->queries == 1 &&
+                native->screenRecordingQueries == 0 && changes == 1 && fullRefreshes == 1,
+            "first admission must initialize all permission states");
+
+    native->value.statuses[1] = S::Denied;
+    require(service.allow({P::ScreenRecording}) && native->queries == 1 &&
+                native->screenRecordingQueries == 1 && service.snapshot().granted(P::Accessibility),
+            "screenshot admission may query only its own permission");
+    native->value.statuses[0] = S::Missing;
+    require(!service.allow({P::ScreenRecording}) && native->screenRecordingQueries == 2 &&
+                changes == 2 && fullRefreshes == 1,
+            "selective admission must still detect revoked screen access immediately");
+
+    service.refresh();
+    require(!service.allow({P::ScreenRecording}) && native->queries == 2 && changes == 3 &&
+                fullRefreshes == 2 && service.snapshot().status(P::Accessibility) == S::Denied,
+            "admission must honor a pending full permission refresh");
+    flush();
+    require(native->queries == 2 && fullRefreshes == 2,
+            "admission consumes the queued full refresh");
+
+    const auto gesture =
+        requiredPermissions(settings::SettingsGlobalMouseAction::Screenshot, false);
+    native->value.statuses.fill(S::Granted);
+    native->queriedPermissions.clear();
+    require(service.allow(gesture) && native->queriedPermissions == gesture,
+            "gesture admission must query precisely the three required grants");
+    using Admission = AppPermissionService::Admission;
+    require(service.allow(gesture, {}, Admission::CheckedAtGesturePress) &&
+                native->queriedPermissions == gesture,
+            "one settings press checks its grants once");
+    native->value.statuses[2] = S::Denied;
+    service.refresh();
+    require(!service.allow(gesture, {}, Admission::CheckedAtGesturePress),
+            "a queued revocation must defeat a grant from the same press");
+}
 void freshSettingsActions() {
     auto fake = std::make_unique<FakePermissions>();
     auto* native = fake.get();
@@ -277,8 +329,8 @@ void routingPolicy() {
     for (auto action :
          {A::Screenshot, A::ScreenshotDelay, A::ScreenshotPinToScreen, A::ScreenshotOcr,
           A::ScreenshotOcrCopy, A::ScreenshotTranslation, A::ScreenshotScrolling, A::ScreenshotCopy,
-          A::ScreenshotSave, A::ScreenshotQuickSave, A::ScreenshotFullScreen,
-          A::ScreenshotFocusedWindow})
+          A::ScreenshotSave, A::ScreenshotQuickSave, A::ScreenshotPinWindowToScreen,
+          A::ScreenshotFullScreen, A::ScreenshotFocusedWindow})
         require(requiredPermissions(action, true) == AppPermissions{P::ScreenRecording},
                 "capture must not require optional smart-selection access");
     for (auto action : {A::ScreenRecord, A::ScreenRecordCopy}) {
@@ -303,6 +355,7 @@ void routingPolicy() {
                         A::StitchSelectedImages,
                         A::SplitSelectedImages,
                         A::EditSelectedImages,
+                        A::CompressSelectedImages,
                         A::OpenSettings,
                         A::PinClipboardContent,
                         A::PinSelectedFiles,
@@ -352,8 +405,9 @@ void routingPolicy() {
                           }))
             static_cast<void>(actionGate.dispatch([&] { ++dispatched; }));
     }
-    require(blocked == 100 && dispatched == 0 && native->queries == 101,
-            "each action checks current permissions before feature dispatch");
+    require(blocked == 100 && dispatched == 0 && native->queries == 1 &&
+                native->screenRecordingQueries == 100,
+            "each screenshot checks current screen recording permission before feature dispatch");
     native->value.statuses[0] = S::Granted;
     service.refresh();
     flush();
@@ -654,6 +708,7 @@ int main(int argc, char** argv) {
     permissionDiagnostics();
     snapshotsAndLifecycle();
     freshAdmissionAndRequests();
+    selectiveAdmissionAndFullRefresh();
     routingPolicy();
     pageAndAlerts();
     std::cout << "App permission tests passed\n";

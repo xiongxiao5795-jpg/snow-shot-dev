@@ -1,9 +1,11 @@
 #include "snow_shot/presentation/components/settingspagewidget.h"
+#include "snow_shot/presentation/components/windowconfirmation.h"
 
 #include "snow_shot/presentation/components/pagecontainerwidget.h"
 #include "snow_shot/presentation/apppermissionservice.h"
 #include "widgets/alert.h"
 #include "snow_shot/presentation/components/globalmouserow.h"
+#include "snow_shot/presentation/components/mouseoperationrow.h"
 #include "snow_shot/presentation/components/sectionheaderwidget.h"
 #include "snow_shot/presentation/components/settingscustomwidget.h"
 #include "snow_shot/presentation/components/formfields.h"
@@ -102,6 +104,7 @@ permissionForRenderer(settings::SettingsCustomRenderer renderer) {
     case Renderer::TextTranslationConfigurations:
     case Renderer::CustomAiModels:
     case Renderer::McpStatus:
+    case Renderer::CloudSettingsSync:
     case Renderer::StorageStatus:
     case Renderer::QuickAnnotationToolbarEditor:
     case Renderer::DrawingToolbarEditor:
@@ -128,6 +131,7 @@ class SettingsPageWidget::Impl {
         QLabel* description = nullptr;
         settings::SettingsFormField* formField = nullptr;
         ShortcutKeyRow* shortcutControl = nullptr;
+        MouseOperationRow* mouseOperationControl = nullptr;
         GlobalMouseRow* globalMouseControl = nullptr;
         adqt::widgets::AdButton* actionControl = nullptr;
         adqt::widgets::AdButton* permissionControl = nullptr;
@@ -623,6 +627,16 @@ class SettingsPageWidget::Impl {
                                 }
                             });
                     } else if constexpr (std::is_same_v<
+                                             Payload, settings::SettingsMouseOperationDefinition>) {
+                        auto* control = new MouseOperationRow(payload.action, runtimeSession,
+                                                              colorScheme, list);
+                        control->setObjectName(settings::generatedObjectName(
+                            QStringLiteral("settings-item"), definition.id));
+                        runtime.mouseOperationControl = control;
+                        runtime.focusTarget = control;
+                        runtime.anchor = control;
+                        addItemWidget(control);
+                    } else if constexpr (std::is_same_v<
                                              Payload,
                                              settings::SettingsGlobalMouseActionDefinition>) {
                         auto* control =
@@ -736,7 +750,12 @@ class SettingsPageWidget::Impl {
                             return;
                         }
                         auto* control = createSettingsCustomWidget(
-                            payload.renderer, registry, definition, runtimeSession, list);
+                            payload.renderer, registry, definition, runtimeSession, list, [this] {
+                                settings::SettingsCommand command;
+                                command.kind = settings::SettingsCommandKind::Navigate;
+                                command.location = {QStringLiteral("account"), {}, {}};
+                                emit q.commandRequested(command);
+                            });
                         Q_ASSERT(control != nullptr);
                         if (control == nullptr) {
                             return;
@@ -973,29 +992,25 @@ class SettingsPageWidget::Impl {
     void confirmItemAction(RuntimeItem& item,
                            const settings::SettingsConfirmationDefinition& confirmation,
                            const std::function<void()>& acceptedAction) {
-        auto* modal = new adqt::widgets::AdModal(&q);
+        auto* modal = snow_shot::presentation::modal_window::createConfirmation(&q, q.window());
         item.modal = modal;
         modal->setObjectName(
             settings::generatedObjectName(QStringLiteral("settings-modal"), item.definition->id));
-        modal->setMode(adqt::widgets::AdModal::Mode::Window);
-        modal->setOwnerWindow(q.window());
-        modal->setPreset(adqt::widgets::AdModal::Preset::Confirm);
+
         modal->setWindowTitle(confirmation.title.translated());
         modal->setText(confirmation.message.translated());
         modal->setAcceptText(confirmation.acceptText.translated());
         modal->setRejectText(confirmation.rejectText.translated());
         modal->setAcceptAccentRole(adqt::widgets::AdButton::AccentRole::Danger);
-        modal->setStandardButtons(adqt::widgets::AdModal::StandardButton::Ok |
-                                  adqt::widgets::AdModal::StandardButton::Cancel);
         QObject::connect(modal, &adqt::widgets::AdModal::accepted, &q, acceptedAction);
-        QObject::connect(modal, &adqt::widgets::AdModal::finished, &q,
-                         [this, itemId = item.definition->id](adqt::widgets::AdModal::DialogCode) {
-                             RuntimeItem* finishedItem = runtimeItem(itemId);
-                             if (finishedItem != nullptr && finishedItem->modal != nullptr) {
-                                 finishedItem->modal->deleteLater();
-                                 finishedItem->modal = nullptr;
-                             }
-                         });
+        QObject::connect(
+            modal, &adqt::widgets::AdModal::finished, &q,
+            [this, modal, itemId = item.definition->id](adqt::widgets::AdModal::DialogCode) {
+                RuntimeItem* finishedItem = runtimeItem(itemId);
+                if (finishedItem != nullptr && finishedItem->modal == modal) {
+                    finishedItem->modal = nullptr;
+                }
+            });
         modal->setOpen(true);
     }
 
@@ -1070,6 +1085,8 @@ class SettingsPageWidget::Impl {
                     runtime.shortcutControl->setEnabled(fieldEnabled);
                 }
             }
+            if (runtime.mouseOperationControl)
+                runtime.mouseOperationControl->refresh();
             if (runtime.globalMouseControl != nullptr) {
                 const auto* definition = std::get_if<settings::SettingsGlobalMouseActionDefinition>(
                     &runtime.definition->payload);
@@ -1329,6 +1346,8 @@ class SettingsPageWidget::Impl {
             if (runtime.shortcutControl != nullptr && !initializing) {
                 runtime.shortcutControl->applyTheme(scheme);
             }
+            if (runtime.mouseOperationControl && !initializing)
+                runtime.mouseOperationControl->applyTheme(scheme);
             if (runtime.globalMouseControl != nullptr && !initializing) {
                 runtime.globalMouseControl->applyTheme(scheme);
             }
@@ -1734,6 +1753,9 @@ void SettingsPageWidget::changeEvent(QEvent* event) {
 
 void SettingsPageWidget::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
+#if !SNOW_SHOT_EDITION_MINI
+    emit m_impl->runtimeSession.cloudSettingsSyncCheckRequested();
+#endif
     m_impl->runtimeSession.refreshPlatformSettings();
     m_impl->observePermissionPage(true);
     m_impl->requestVisibleSectionSync();

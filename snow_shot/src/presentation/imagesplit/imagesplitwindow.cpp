@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "snow_shot/presentation/imagesplitwindow.h"
+#include "snow_shot/presentation/components/windowconfirmation.h"
 #include "snow_shot/presentation/collagedocument.h"
 #include "snow_shot/presentation/components/imagespliteditorwidget.h"
 #include "snow_shot/presentation/components/icons/snowshoticons.h"
@@ -189,6 +190,31 @@ ScreenshotExportTaskResult prepareImage(QImage image, const std::shared_ptr<Load
                               "The image is too large or there is not enough memory to load it");
     return {};
 }
+ScreenshotExportCoordinator::Work readSplitFile(const QString& path,
+                                                const ImageSplitWindowServices& services,
+                                                const std::shared_ptr<LoadedImage>& loaded) {
+    return [path, loaded,
+            reader = services.readFile](const ScreenshotExportCancellation& cancellation) {
+        const auto cancelled = [&cancellation] { return cancellation.isCancellationRequested(); };
+        QImage image;
+        if (reader) {
+            image = reader(path, cancelled).value_or(QImage());
+        } else {
+            QString error;
+            loaded->reservation = reserveImageStitchingImport(0, &error);
+            if (loaded->reservation)
+                image = readImageImportFile(path, std::nullopt, cancelled,
+                                            [loaded, &error](qint64 bytes) {
+                                                return loaded->reservation->resize(bytes, &error);
+                                            });
+            if (image.isNull() && !error.isEmpty())
+                return loadingFailure(
+                    loaded, ScreenshotExportFailureStage::Source,
+                    "The image is too large or there is not enough memory to load it");
+        }
+        return prepareImage(std::move(image), loaded, cancellation);
+    };
+}
 } // namespace
 
 struct ImageSplitWindow::Impl final {
@@ -298,7 +324,7 @@ struct ImageSplitWindow::Impl final {
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(
             styles::ThemeManager::instance().themeColorScheme().metricAlias.marginXS);
-        layout->addWidget(editor->outputDescriptionWidget(), 1);
+        layout->addWidget(editor->outputDescriptionWidget(), 1, Qt::AlignVCenter);
         editor->outputDescriptionWidget()->show();
         cancel->setObjectName(QStringLiteral("imageSplitCancel"));
         save->setObjectName(QStringLiteral("imageSplitSaveAll"));
@@ -307,7 +333,7 @@ struct ImageSplitWindow::Impl final {
         save->setAccentRole(AdButton::AccentRole::Primary);
         for (auto* button : {cancel, stitch, save}) {
             button->setFocusPolicy(Qt::StrongFocus);
-            layout->addWidget(button);
+            layout->addWidget(button, 0, Qt::AlignVCenter);
         }
         modal->setFooterWidget(footer);
         QObject::connect(save, &AdButton::clicked, &q, &ImageSplitWindow::saveAll);
@@ -316,8 +342,7 @@ struct ImageSplitWindow::Impl final {
         QObject::connect(modal, &AdModal::closeRequested, &q,
                          [this](AdModal::CloseReason) { q.requestClose(); });
         QObject::connect(modal, &AdModal::finished, &q, [this](AdModal::DialogCode) {
-            closing = true;
-            cancelWork();
+            endSession();
             emit q.closed();
         });
         QObject::connect(editor, &components::ImageSplitEditorWidget::reloadRequested, &q,
@@ -490,13 +515,10 @@ struct ImageSplitWindow::Impl final {
             services.confirm(editor->window(), replace, std::move(done));
             return;
         }
-        auto* dialog = new AdModal(&q);
+        auto* dialog = modal_window::createConfirmation(&q, editor->window());
         confirmation = dialog;
         dialog->setObjectName(QStringLiteral("imageSplitConfirmation"));
-        dialog->setMode(AdModal::Mode::Window);
-        dialog->setOwnerWindow(editor->window());
-        dialog->setWindowModality(Qt::WindowModal);
-        dialog->setPreset(AdModal::Preset::Confirm);
+
         translateConfirmation();
         dialog->setAcceptAccentRole(replace ? AdButton::AccentRole::Primary
                                             : AdButton::AccentRole::Danger);
@@ -504,7 +526,6 @@ struct ImageSplitWindow::Impl final {
                          [done = std::move(done)](AdModal::DialogCode code) mutable {
                              done(code == AdModal::DialogCode::Accepted);
                          });
-        QObject::connect(dialog, &AdModal::finished, dialog, &QObject::deleteLater);
         dialog->present();
     }
     void clearSplitStatus() {
@@ -651,8 +672,12 @@ struct ImageSplitWindow::Impl final {
         }
         showStatus();
     }
-    void cancelWork() {
+    void endSession() {
+        if (closing)
+            return;
+        closing = true;
         cancelSplit();
+        splitJob = {};
         ++generation;
         job.cancel();
         job = {};
@@ -670,6 +695,9 @@ struct ImageSplitWindow::Impl final {
             fileDialog->reject();
         if (confirmation)
             confirmation->reject();
+        if (!document->image().isNull())
+            document->setImage({});
+        imageReservation.reset();
     }
     void beginLoading() {
         cancelSplit();
@@ -726,8 +754,9 @@ struct ImageSplitWindow::Impl final {
                                                 .toLocalTime()
                                                 .toString(QStringLiteral("yyyyMMdd-HHmmss")))
                                  : stem;
-                if (!loaded->prepared || !document->setPreparedImage(loaded->image, loaded->preview,
-                                                                     *loaded->prepared)) {
+                if (!loaded->prepared ||
+                    !document->setPreparedImage(std::move(loaded->image),
+                                                std::move(loaded->preview), *loaded->prepared)) {
                     loadingErrorSource = "Image processing failed. Try again";
                     error = splitText(loadingErrorSource);
                     status = Status::LoadError;
@@ -736,7 +765,7 @@ struct ImageSplitWindow::Impl final {
                     emit q.imageLoaded(false);
                     return;
                 }
-                imageReservation = loaded->reservation;
+                imageReservation = std::move(loaded->reservation);
                 editor->canvas()->fitToCanvas();
             }
             updateActions();
@@ -1003,51 +1032,53 @@ void ImageSplitWindow::loadSource(ImageSplitSource source, quint64 token) {
     auto& d = *m_impl;
     auto loaded = std::make_shared<LoadedImage>();
     loaded->initialDirection = source.initialDirection;
+    loaded->originalFileName = std::move(source.originalFileName);
+    loaded->createdUtc = source.createdUtc;
+    const auto finish = [this, loaded, token](ScreenshotExportTaskResult result) {
+        m_impl->finishLoading(loaded, loaded->originalFileName, loaded->createdUtc, false, token,
+                              std::move(result));
+    };
     if (!source.error.isEmpty() || !source.source.isValid()) {
         if (source.error == imageMemoryError())
             loaded->errorSource = "The image is too large or there is not enough memory to load it";
-        d.finishLoading(loaded, source.originalFileName, source.createdUtc, false, token,
-                        ScreenshotExportTaskResult::failure(ScreenshotExportFailureStage::Source,
-                                                            source.error));
+        finish(ScreenshotExportTaskResult::failure(ScreenshotExportFailureStage::Source,
+                                                   std::move(source.error)));
         return;
     }
     if (!source.outputSize.isEmpty() &&
         !reserveImage(source.outputSize, loaded, 0, source.renderingBytes)) {
-        d.finishLoading(
-            loaded, source.originalFileName, source.createdUtc, false, token,
-            loadingFailure(loaded, ScreenshotExportFailureStage::Source,
-                           "The image is too large or there is not enough memory to load it"));
+        finish(loadingFailure(loaded, ScreenshotExportFailureStage::Source,
+                              "The image is too large or there is not enough memory to load it"));
         return;
     }
-    d.artifact = std::make_shared<ScreenshotExportArtifact>(source.source);
-    if (!d.artifact->requestImage(this, [this, loaded, source,
-                                         token](ScreenshotExportImageResult image) {
-            auto& impl = *m_impl;
-            if (impl.closing || token != impl.generation)
-                return;
-            if (!image.succeeded()) {
-                impl.finishLoading(loaded, source.originalFileName, source.createdUtc, false, token,
-                                   ScreenshotExportTaskResult::failure(
-                                       ScreenshotExportFailureStage::Render, image.error));
-                return;
-            }
-            impl.job = ScreenshotExportCoordinator::shared().submit(
-                this, ScreenshotExportCoordinator::Priority::Background,
-                [pixels = std::move(image.image), loaded](const auto& cancellation) {
-                    return prepareImage(pixels, loaded, cancellation);
-                },
-                [this, loaded, source, token](ScreenshotExportTaskResult result) {
-                    m_impl->finishLoading(loaded, source.originalFileName, source.createdUtc, false,
-                                          token, std::move(result));
-                });
-            if (!impl.job.isValid())
-                impl.finishLoading(loaded, source.originalFileName, source.createdUtc, false, token,
-                                   loadingFailure(loaded, ScreenshotExportFailureStage::Queue,
-                                                  "Image loading could not be started. Try again"));
-        }))
-        d.finishLoading(loaded, source.originalFileName, source.createdUtc, false, token,
-                        loadingFailure(loaded, ScreenshotExportFailureStage::Queue,
-                                       "Image loading could not be started. Try again"));
+    // A loader may deliver immediately. Keep the artifact alive through requestImage itself.
+    const auto rendering = std::make_shared<ScreenshotExportArtifact>(std::move(source.source));
+    d.artifact = rendering;
+    if (!rendering->requestImage(
+            this, [this, loaded, token, finish](ScreenshotExportImageResult image) {
+                auto& impl = *m_impl;
+                if (impl.closing || token != impl.generation)
+                    return;
+                // Preview preparation only needs the rendered pixels. Release the render plan and
+                // its input snapshots before submitting the next job.
+                impl.artifact.reset();
+                if (!image.succeeded()) {
+                    finish(ScreenshotExportTaskResult::failure(ScreenshotExportFailureStage::Render,
+                                                               std::move(image.error)));
+                    return;
+                }
+                impl.job = ScreenshotExportCoordinator::shared().submit(
+                    this, ScreenshotExportCoordinator::Priority::Background,
+                    [pixels = std::move(image.image), loaded](const auto& cancellation) mutable {
+                        return prepareImage(std::move(pixels), loaded, cancellation);
+                    },
+                    finish);
+                if (!impl.job.isValid())
+                    finish(loadingFailure(loaded, ScreenshotExportFailureStage::Queue,
+                                          "Image loading could not be started. Try again"));
+            }))
+        finish(loadingFailure(loaded, ScreenshotExportFailureStage::Queue,
+                              "Image loading could not be started. Try again"));
 }
 
 void ImageSplitWindow::presentImage(QImage image, QString originalFileName, QDateTime createdUtc) {
@@ -1068,31 +1099,9 @@ void ImageSplitWindow::replaceFile(const QString& path) {
     d.beginLoading();
     const auto token = d.generation;
     auto loaded = std::make_shared<LoadedImage>();
-    const auto reader = d.services.readFile;
     d.job = ScreenshotExportCoordinator::shared().submit(
         this, ScreenshotExportCoordinator::Priority::Background,
-        [path, loaded, reader](const ScreenshotExportCancellation& cancellation) {
-            const auto cancelled = [&cancellation] {
-                return cancellation.isCancellationRequested();
-            };
-            QImage image;
-            if (reader) {
-                image = reader(path, cancelled).value_or(QImage());
-            } else {
-                QString error;
-                loaded->reservation = reserveImageStitchingImport(0, &error);
-                if (loaded->reservation)
-                    image = readImageImportFile(
-                        path, std::nullopt, cancelled, [loaded, &error](qint64 bytes) {
-                            return loaded->reservation->resize(bytes, &error);
-                        });
-                if (image.isNull() && !error.isEmpty())
-                    return loadingFailure(
-                        loaded, ScreenshotExportFailureStage::Source,
-                        "The image is too large or there is not enough memory to load it");
-            }
-            return prepareImage(std::move(image), loaded, cancellation);
-        },
+        readSplitFile(path, d.services, loaded),
         [this, path, loaded, token](ScreenshotExportTaskResult result) {
             m_impl->finishLoading(loaded, QFileInfo(path).fileName(), {}, true, token,
                                   std::move(result));
@@ -1185,11 +1194,8 @@ void ImageSplitWindow::requestClose() {
     if (m_impl->closing || m_impl->confirming)
         return;
     const auto close = [this](bool accepted) {
-        if (accepted) {
-            m_impl->closing = true;
-            m_impl->cancelWork();
-            m_impl->modal->reject();
-        }
+        if (accepted)
+            shutdown();
     };
     if (m_impl->document->image().isNull())
         close(true);
@@ -1199,8 +1205,7 @@ void ImageSplitWindow::requestClose() {
 void ImageSplitWindow::shutdown() {
     if (!m_impl || m_impl->closing)
         return;
-    m_impl->closing = true;
-    m_impl->cancelWork();
+    m_impl->endSession();
     m_impl->modal->reject();
 }
 bool ImageSplitWindow::busy() const {
@@ -1251,13 +1256,38 @@ void ImageSplitWindowCoordinator::presentSource(ImageSplitSource source) {
         window->presentSource(std::move(source));
 }
 
-void ImageSplitWindowCoordinator::presentFiles(const QStringList& paths) {
+void ImageSplitWindowCoordinator::presentFiles(const QStringList& paths, bool skipUnreadable) {
+    if (m_shutdown)
+        return;
     for (const auto& path : paths) {
-        auto* window = createWindow();
-        if (!window)
+        if (!skipUnreadable) {
+            auto* window = createWindow();
+            if (!window)
+                break;
+            window->m_impl->present();
+            window->replaceFile(path);
+            continue;
+        }
+        auto loaded = std::make_shared<LoadedImage>();
+        if (!m_fileImports.enqueue(
+                ScreenshotExportCoordinator::Priority::Background,
+                readSplitFile(path, m_services, loaded), [this, path, loaded](auto result) {
+                    if (!result.succeeded())
+                        return;
+                    const QPointer<ImageSplitWindow> window = createWindow();
+                    if (!window)
+                        return;
+                    auto& impl = *window->m_impl;
+                    impl.finishLoading(loaded, QFileInfo(path).fileName(), {}, false,
+                                       impl.generation, std::move(result));
+                    if (window && !window->document()->image().isNull())
+                        impl.present();
+                    else if (window) {
+                        m_windows.removeAll(window);
+                        window->deleteLater();
+                    }
+                }))
             break;
-        window->m_impl->present();
-        window->replaceFile(path);
     }
 }
 
@@ -1345,6 +1375,7 @@ void ImageSplitWindowCoordinator::presentPinnedRecord(const QString& recordId) {
 }
 void ImageSplitWindowCoordinator::shutdown() {
     m_shutdown = true;
+    m_fileImports.cancel();
     const auto active = m_windows;
     for (const auto& window : active)
         if (window)

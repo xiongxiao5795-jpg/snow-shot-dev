@@ -109,7 +109,9 @@ QTimer* translationUpdateTimer(const ScreenshotRecognitionSessionController& con
 
 void configureTranslation(bool overlay = true, const QString& model = QStringLiteral("model-a")) {
     const snow_shot::storage::ScreenshotTranslationSettings settings;
-    require(settings.setOriginalImageTranslationEnabled(overlay), "set translation display mode");
+    require(settings.setOriginalImageTranslationEnabled(overlay) &&
+                settings.setCopyTranslationResultsAsImage(false),
+            "set translation display mode and use text for clipboard assertions");
     require(settings.setConfiguration({QStringLiteral("en"), QStringLiteral("zh-Hans"), model,
                                        QStringLiteral("original")}),
             "set translation languages and model");
@@ -280,7 +282,30 @@ class TranslationServer final : public QObject {
     int orderedStreams = 0;
 };
 
+class ParagraphFixture final : public ScreenshotOcrRecognitionPort {
+  public:
+    RequestToken requests = 0;
+    RequestToken recognize(ScreenshotOcrRequest, QObject*, Completion) override {
+        return 0;
+    }
+    RequestToken groupParagraphs(ScreenshotOcrParagraphRequest request, QObject* receiver,
+                                 ParagraphCompletion completion) override {
+        QVector<int> group;
+        for (int i = static_cast<int>(request.quads.size()) - 1; i >= 0; --i)
+            group.push_back(i);
+        QTimer::singleShot(0, receiver, [completion = std::move(completion), group] {
+            completion({{group}, {}});
+        });
+        return ++requests;
+    }
+    void cancel(RequestToken) override {}
+    bool reprioritize(RequestToken, ScreenshotOcrRequestPriority) override {
+        return true;
+    }
+};
+
 struct SessionProbe {
+    ParagraphFixture paragraphFixture;
     std::shared_ptr<ScreenshotOcrPresentation> source =
         std::make_shared<ScreenshotOcrPresentation>();
     std::shared_ptr<ScreenshotOcrPresentation> displayed;
@@ -351,8 +376,8 @@ struct SessionProbe {
                 require(!undo && !redo && !reset, "overlay translation has no editing history");
             }
         };
-        controller = std::make_unique<ScreenshotRecognitionSessionController>(ocr, nullptr, api,
-                                                                              std::move(actions));
+        controller = std::make_unique<ScreenshotRecognitionSessionController>(
+            ocr ? ocr : &paragraphFixture, nullptr, api, std::move(actions));
         const int imageHeight = std::max(240, boxes * 25);
         source->selection = QRect(0, 0, 160, imageHeight);
         for (int index = 0; index < boxes; ++index) {
@@ -385,8 +410,9 @@ struct SessionProbe {
 
 void translationImageCopyHonorsSelectionAndSnapshots() {
     const snow_shot::storage::ScreenshotTranslationSettings settings;
-    const auto restore =
-        qScopeGuard([&] { static_cast<void>(settings.setCopyTranslationResultsAsImage(false)); });
+    const bool previousCopy = settings.copyTranslationResultsAsImage();
+    const auto restore = qScopeGuard(
+        [&] { static_cast<void>(settings.setCopyTranslationResultsAsImage(previousCopy)); });
     for (const bool overlay : {true, false}) {
         configureTranslation(overlay);
         TranslationServer server;
@@ -549,23 +575,29 @@ void smartLayoutStreamsParagraphsAndSwitchesModes() {
                 session.source->lines.size() == 3 &&
                 session.source->lines[0].text == QStringLiteral("source 0"),
             "Smart Merge sends one paragraph with combined geometry and preserves original OCR");
-    const auto paragraphCap = session.displayed->lines[0].fontSizeCapRatio;
-    const auto paragraphMetrics = session.displayed->lines[0].sourceTextMetrics;
-    require(paragraphCap && paragraphMetrics && !session.source->lines[0].fontSizeCapRatio &&
-                !session.source->lines[0].sourceTextMetrics,
-            "merged translations capture typography from the original OCR lines");
+    const auto paragraphQuad = session.displayed->lines[0].quad;
+    const auto sourceQuads = session.displayed->lines[0].sourceLineQuads;
+    require(session.displayed->lines[0].smartMergeTranslation &&
+                session.displayed->lines[0].fontSizeCapRatio &&
+                session.displayed->lines[0].sourceTextMetrics &&
+                session.displayed->lines[0].sourceTextMetrics->inkThicknessEm > 0 &&
+                !session.source->lines[0].smartMergeTranslation,
+            "the Smart Merge overlay retains the rendered OCR metrics for streaming");
     server.delta(0, QStringLiteral("partial paragraph"));
     waitUntil([&]() { return session.textUpdates == 1; },
               "merged paragraph streams into its block");
-    require(session.displayed->lines[0].fontSizeCapRatio == paragraphCap &&
-                session.displayed->lines[0].sourceTextMetrics == paragraphMetrics,
-            "streaming updates preserve the original paragraph typography");
+    require(session.displayed->lines[0].smartMergeTranslation &&
+                session.displayed->lines[0].quad == paragraphQuad &&
+                session.displayed->lines[0].sourceLineQuads == sourceQuads,
+            "streaming updates preserve original paragraph and source row geometry");
     require(settings.setLayoutProcessing(QStringLiteral("original")),
             "switch layout while streaming");
     server.waitForStreams(4);
     waitUntil([&]() { return server.disconnected(0); },
               "layout change cancels stale paragraph request");
     require(session.displayed->lines.size() == 3 &&
+                !session.displayed->lines[0].smartMergeTranslation &&
+                session.displayed->lines[0].fontSizeCapRatio &&
                 session.displayed->lines[0].text == QStringLiteral("source 0") &&
                 server.streams[1].text == QStringLiteral("source 0") &&
                 server.streams[3].text == QStringLiteral("source 2"),
@@ -593,8 +625,41 @@ void smartLayoutStreamsParagraphsAndSwitchesModes() {
     require(session.displayed->lines[0].text == QStringLiteral("finished paragraph") &&
                 session.source->lines[2].text == QStringLiteral("source 2"),
             "merged output and original remain independent");
-    require(session.displayed->lines[0].fontSizeCapRatio == paragraphCap,
-            "layout changes and retries must derive caps from original text");
+    require(session.displayed->lines[0].smartMergeTranslation &&
+                session.displayed->lines[0].quad == paragraphQuad &&
+                session.displayed->lines[0].sourceLineQuads == sourceQuads,
+            "layout changes and retries must recover the same paragraph fit geometry");
+}
+
+void smartLayoutTranslatesVerticalColumnsInReadingOrder() {
+    configureTranslation();
+    const snow_shot::storage::ScreenshotTranslationSettings settings;
+    require(settings.setLayoutProcessing(QStringLiteral("smart_merge")), "enable Smart Merge");
+    TranslationServer server;
+    SnowShotApiClient api(server.url());
+    SessionProbe session(&api, 3);
+    const QVector<QRectF> boxes{{20, 0, 14, 110}, {43, 68, 14, 48}, {42, 12, 14, 48}};
+    for (int i = 0; i < boxes.size(); ++i) {
+        auto& line = session.source->lines[i];
+        const auto& bounds = boxes[i];
+        line.quad = {bounds.topLeft(), bounds.topRight(), bounds.bottomRight(),
+                     bounds.bottomLeft()};
+        line.direction = ScreenshotOcrTextDirection::Vertical;
+    }
+    session.source->prepareForRendering();
+
+    session.controller->beginTextTranslation();
+    server.waitForStreams(1);
+    require(server.streams[0].text == QStringLiteral("source 2 source 1 source 0") &&
+                session.displayed->lines.size() == 1 &&
+                session.displayed->lines[0].direction == ScreenshotOcrTextDirection::Vertical &&
+                session.displayed->lines[0].sourceLineIndices == QVector<int>{2, 1, 0},
+            "Smart Merge sends the full right column before the left column");
+    server.delta(0, QStringLiteral("translated vertical paragraph"));
+    server.finish(0);
+    waitUntil([&] { return !session.streaming; }, "vertical translation finishes");
+    require(session.displayed->lines[0].text == QStringLiteral("translated vertical paragraph"),
+            "the translated text streams back into the vertical paragraph");
 }
 
 void sourceSelectionSurvivesOriginalImageTranslation() {
@@ -751,6 +816,41 @@ void sourceSelectionSurvivesOriginalImageTranslation() {
             "reinstalling an explicitly cleared model cannot revive its retired character gesture");
 }
 
+void fontChangesRefitStreamingAndCompletedTranslations() {
+    configureTranslation();
+    const QFont original = QApplication::font();
+    const auto restore = qScopeGuard([&] { QApplication::setFont(original); });
+    auto wide = original;
+    wide.setStretch(150);
+    auto narrow = original;
+    narrow.setStretch(65);
+    QApplication::setFont(wide);
+    TranslationServer server;
+    SnowShotApiClient api(server.url());
+    SessionProbe session(&api, 1, QStringLiteral("font-change"), false, nullptr, nullptr, nullptr,
+                         {QStringLiteral("WWWWWWWWWWWWWWWWWWWW")});
+    session.controller->beginTextTranslation();
+    server.waitForStreams(1);
+    server.delta(0, QStringLiteral("字"));
+    waitUntil([&] { return session.textUpdates == 1; }, "receive the translated prefix");
+    const auto frozen = session.controller->recognitionResultsSnapshot().translatedText;
+    const auto oldSize = renderedFontSize(session.source->lines.first());
+    QApplication::setFont(narrow);
+    const auto newSize = renderedFontSize(session.source->lines.first());
+    const auto& live = session.displayed->lines.first();
+    require(newSize > oldSize * 1.2 && std::abs(renderedFontSize(live) - newSize) < 0.01 &&
+                live.translationStreaming && frozen &&
+                frozen->lines.first().fontSizeCapRatio != live.fontSizeCapRatio,
+            "a font change must remeasure the live OCR source while preserving a frozen snapshot");
+    server.finish(0);
+    waitUntil([&] { return !session.streaming; }, "complete the same translation request");
+    QApplication::setFont(wide);
+    require(std::abs(renderedFontSize(session.displayed->lines.first()) - oldSize) < 0.01 &&
+                session.displayed->lines.first().text == QStringLiteral("字") &&
+                server.streams.size() == 1,
+            "a completed overlay must follow the font without translating its text again");
+}
+
 void streamsIndividualBoxesAndKeepsOriginals() {
     configureTranslation();
     TranslationServer server;
@@ -785,7 +885,9 @@ void streamsIndividualBoxesAndKeepsOriginals() {
     require(snapshot.text.has_value() &&
                 snapshot.text->presentation->lines[2].text == QStringLiteral("source 2"),
             "pin snapshots must retain source OCR independently of displayed translation");
-    require(snapshot.translatedText != nullptr && snapshot.translatedText != session.displayed &&
+    require(snapshot.translatedText != nullptr && !snapshot.translatedTextComplete &&
+                session.controller->cachedCompletedTranslationText().isEmpty() &&
+                snapshot.translatedText != session.displayed &&
                 snapshot.translatedText->lines[2].text == QStringLiteral("third") &&
                 snapshot.translatedText->lines[1].text == QStringLiteral("source 1"),
             "a pin snapshot must freeze partial translation and untouched source boxes");
@@ -1564,7 +1666,9 @@ void runOriginalImageTranslationTests() {
     translationSettingsSwitchKeepsReadableSize();
     confirmingTranslationDisplayModeRestartsTranslation();
     smartLayoutStreamsParagraphsAndSwitchesModes();
+    smartLayoutTranslatesVerticalColumnsInReadingOrder();
     sourceSelectionSurvivesOriginalImageTranslation();
+    fontChangesRefitStreamingAndCompletedTranslations();
     streamsIndividualBoxesAndKeepsOriginals();
     fourBoxesAndOwnerClosure();
     partialFailuresRetryOnlyFailedBoxes();
@@ -1636,14 +1740,31 @@ void runPinnedOriginalImageTranslationTests() {
             require(actual.text == expected.text && actual.quad == expected.quad &&
                         actual.paragraph == expected.paragraph &&
                         actual.sourceLineQuads == expected.sourceLineQuads &&
+                        actual.sourceLineIndices == expected.sourceLineIndices &&
                         actual.direction == expected.direction,
                     "pin persistence must retain paragraph geometry and rendering metadata");
-            require(actual.fontSizeCapRatio && expected.fontSizeCapRatio &&
-                        std::abs(*actual.fontSizeCapRatio - *expected.fontSizeCapRatio) < 0.0001 &&
-                        actual.sourceTextMetrics &&
-                        actual.sourceTextMetrics == expected.sourceTextMetrics,
-                    "pin restoration reconstructs the original typography from saved OCR");
+            require(actual.smartMergeTranslation && expected.smartMergeTranslation &&
+                        actual.sourceTextMetrics == expected.sourceTextMetrics &&
+                        actual.fontSizeCapRatio == expected.fontSizeCapRatio &&
+                        std::abs(renderedFontSize(actual) - renderedFontSize(expected)) < 0.0001,
+                    "pin restoration reconstructs the source metrics and Smart Merge fit");
             auto* content = window->findChild<ScreenshotRecognitionWindow*>();
+            require(content != nullptr, "the merged pin must have a visible recognition view");
+            {
+                const auto savedFont = QApplication::font();
+                const auto resetFont = qScopeGuard([&] { QApplication::setFont(savedFont); });
+                QFont changed = savedFont;
+                changed.setStretch(savedFont.stretch() == 150 ? 80 : 150);
+                QApplication::setFont(changed);
+                const auto displayed =
+                    content->imageSnapshot(image, mergedConfig.canvasSourceRect, {}, {}, {});
+                require(displayed && displayed->lines.size() == 1 &&
+                            displayed->lines.first().sourceTextMetrics &&
+                            displayed->lines.first().sourceTextMetrics->measuredFont ==
+                                QApplication::font() &&
+                            displayed->lines.first().text == expected.text,
+                        "the mapped pin display and export must use the current font metrics");
+            }
             auto* layer =
                 content == nullptr
                     ? nullptr
@@ -1820,11 +1941,16 @@ void runPinnedOriginalImageTranslationTests() {
         const auto before = displayed();
         require(before && before->lines[1].text == QStringLiteral("vertical result"),
                 "the displayed pin still contains the previous text");
+        const auto output =
+            controller->imageExportSnapshot(background, config.canvasSourceRect, {}, {});
+        require(output && output->lines[1].text == QStringLiteral("vertical result") &&
+                    displayed()->lines[1].text == QStringLiteral("vertical result"),
+                "image output freezes the visible translation while a later delta is queued");
         const auto artifact = pinned->fileSaveArtifact();
         const auto after = displayed();
         require(artifact && after &&
                     after->lines[1].text == QStringLiteral("vertical result queued for save"),
-                "pinned image save flushes the received text before capturing the overlay");
+                "the legacy viewport source publishes the queued translation");
     }
     server.finish(0);
     server.finish(1);
@@ -1870,6 +1996,9 @@ void runPinnedOriginalImageTranslationTests() {
                         QStringLiteral("translated"),
                 "restoration must retain separate original OCR and frozen partial translation");
         const auto restoredResults = session->recognitionResultsSnapshot();
+        require(!restoredResults.translatedTextComplete &&
+                    session->cachedCompletedTranslationText().isEmpty(),
+                "restored partial and legacy overlays are available for display only");
         for (int index = 0; index < restoredResults.translatedText->lines.size(); ++index) {
             const auto& line = restoredResults.translatedText->lines[index];
             require(line.fontSizeCapRatio &&

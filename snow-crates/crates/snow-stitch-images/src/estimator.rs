@@ -5,6 +5,11 @@ use std::{
 
 use rayon::prelude::*;
 
+mod registration;
+use registration::{Registration, RegistrationSearch};
+#[cfg(test)]
+mod table_tests;
+
 use crate::{
     CandidateDiagnostics, Frame, Geometry, MotionDiagnostics, MotionEstimate,
     MotionEstimatorOptions, MotionStage, PixelFormat, StitchAxis, StitchError,
@@ -78,18 +83,14 @@ impl EvaluatedMotion {
     }
 
     fn needs_full_resolution(&self) -> bool {
-        !matches!(self.estimate.outcome, crate::MotionOutcome::Motion { .. })
-            || self.margin <= 0.0
-            || !self
-                .estimate
-                .diagnostics
-                .candidates
-                .first()
-                .is_some_and(|candidate| {
-                    candidate
-                        .precise_alignment_error
-                        .is_some_and(|error| error < 1.0)
-                })
+        let Some(best) = self.estimate.diagnostics.candidates.first() else {
+            return true;
+        };
+        let precise = best
+            .precise_alignment_error
+            .is_some_and(|error| error < 1.0);
+        self.estimate.offset().is_none()
+            || !(best.overlap_blocks.is_some() || (self.margin > 0.0 && precise))
     }
 }
 
@@ -287,23 +288,50 @@ unsafe fn nearest_two_neon(
             distance: u32::MAX,
         };
         let mut second = first;
-        for (train_index, candidate) in train.iter().enumerate() {
+        let counts = |candidate: &BinaryFeature| {
             let low = vcntq_u8(veorq_u8(query_low, vld1q_u8(candidate.descriptor.as_ptr())));
             let high = vcntq_u8(veorq_u8(
                 query_high,
                 vld1q_u8(candidate.descriptor.as_ptr().add(16)),
             ));
-            let distance = u32::from(vaddlvq_u8(vaddq_u8(low, high)));
-            let matched = DescriptorMatch {
-                train_index,
-                distance,
+            vaddq_u8(low, high)
+        };
+        let retain =
+            |first: &mut DescriptorMatch, second: &mut DescriptorMatch, train_index, distance| {
+                // Candidates arrive in index order. Earlier entries win equal distances.
+                let matched = DescriptorMatch {
+                    train_index,
+                    distance,
+                };
+                if distance < first.distance {
+                    *second = *first;
+                    *first = matched;
+                } else if distance < second.distance {
+                    *second = matched;
+                }
             };
-            if (distance, train_index) < (first.distance, first.train_index) {
-                second = first;
-                first = matched;
-            } else if (distance, train_index) < (second.distance, second.train_index) {
-                second = matched;
+        let mut blocks = train.chunks_exact(4);
+        for (index, block) in blocks.by_ref().enumerate() {
+            let a = vpaddq_u8(counts(&block[0]), counts(&block[1]));
+            let b = vpaddq_u8(counts(&block[2]), counts(&block[3]));
+            // Each lane sums all 256 descriptor bits. Widen before the final reductions.
+            let distances = vpaddlq_u16(vpaddlq_u8(vpaddq_u8(a, b)));
+            if vminvq_u32(distances) < second.distance {
+                let mut lanes = [0; 4];
+                vst1q_u32(lanes.as_mut_ptr(), distances);
+                for (lane, distance) in lanes.into_iter().enumerate() {
+                    retain(&mut first, &mut second, index * 4 + lane, distance);
+                }
             }
+        }
+        let remainder = blocks.remainder();
+        for (lane, candidate) in remainder.iter().enumerate() {
+            retain(
+                &mut first,
+                &mut second,
+                train.len() - remainder.len() + lane,
+                u32::from(vaddlvq_u8(counts(candidate))),
+            );
         }
         #[cfg(test)]
         NEON_MATCHES.fetch_add(train.len(), std::sync::atomic::Ordering::Relaxed);
@@ -344,12 +372,114 @@ fn match_descriptors(
     match_descriptors_portable(queries, train)
 }
 
+fn beats_lowe_ratio(distance: u32, alternative: u32) -> bool {
+    (distance as f32) < LOWE_RATIO * alternative as f32
+}
+
 fn passes_ratio(matches: [DescriptorMatch; 2]) -> Option<DescriptorMatch> {
     let first = matches[0];
     let second = matches[1];
     (first.distance as f32 <= MAX_HAMMING_DISTANCE
-        && (first.distance as f32) < LOWE_RATIO * second.distance as f32)
-        .then_some(first)
+        && beats_lowe_ratio(first.distance, second.distance))
+    .then_some(first)
+}
+
+fn prune_reverse_candidates(forward: &mut [Option<DescriptorMatch>], incoming_count: usize) {
+    // The reverse winner must beat even the other references that chose the same
+    // incoming feature. Reuse those distances to leave at most one full scan per feature.
+    let mut nearest = vec![[u32::MAX; 2]; incoming_count];
+    for matched in forward.iter().flatten() {
+        let [best, second] = &mut nearest[matched.train_index];
+        if matched.distance < *best {
+            *second = *best;
+            *best = matched.distance;
+        } else {
+            *second = (*second).min(matched.distance);
+        }
+    }
+    for matched in forward {
+        if matched.is_some_and(|candidate| {
+            let [best, second] = nearest[candidate.train_index];
+            candidate.distance != best || !beats_lowe_ratio(best, second)
+        }) {
+            *matched = None;
+        }
+    }
+}
+
+fn match_with_exact_lookup(
+    reference: &[BinaryFeature],
+    incoming: &[BinaryFeature],
+    axis: StitchAxis,
+) -> Vec<Option<DescriptorMatch>> {
+    if incoming.len() < 32 || reference.len() < 32 {
+        return match_descriptors(reference, incoming);
+    }
+    // A zero-distance descriptor wins the ratio test exactly when it is unique.
+    // Keep all incoming rivals for the remaining queries' nearest-two search.
+    let mut exact = std::collections::HashMap::with_capacity(incoming.len());
+    for (i, feature) in incoming.iter().enumerate() {
+        exact
+            .entry(&feature.descriptor)
+            .and_modify(|index| *index = None)
+            .or_insert(Some(i));
+    }
+    let coordinate = |feature: &BinaryFeature| match axis {
+        StitchAxis::Vertical => round_coordinate(feature.x),
+        StitchAxis::Horizontal => round_coordinate(feature.y),
+    };
+    let mut ordered: Vec<_> = incoming
+        .iter()
+        .enumerate()
+        .map(|(i, feature)| (coordinate(feature), i))
+        .collect();
+    ordered.sort_unstable();
+    reference
+        .par_iter()
+        .map(|feature| {
+            if let Some(index) = exact.get(&feature.descriptor) {
+                // Off-axis exact matches can still veto duplicate reference descriptors
+                // during reverse pruning.
+                return index.map(|train_index| DescriptorMatch {
+                    train_index,
+                    distance: 0,
+                });
+            }
+            let cross = coordinate(feature);
+            let start =
+                ordered.partition_point(|&(x, _)| x < cross.saturating_sub(MAX_CROSS_AXIS_DELTA));
+            let end =
+                ordered.partition_point(|&(x, _)| x <= cross.saturating_add(MAX_CROSS_AXIS_DELTA));
+            let (distance, train_index) = ordered[start..end]
+                .iter()
+                .map(|&(_, i)| {
+                    (
+                        hamming_distance(&feature.descriptor, &incoming[i].descriptor),
+                        i,
+                    )
+                })
+                .min()?;
+            if distance as f32 > MAX_HAMMING_DISTANCE {
+                return None;
+            }
+            // Only an on-axis winner can contribute motion, but every descriptor,
+            // including off-axis rivals, must still lose the original ratio test.
+            incoming
+                .iter()
+                .enumerate()
+                .all(|(i, rival)| {
+                    i == train_index
+                        || beats_lowe_ratio(
+                            distance,
+                            hamming_distance(&feature.descriptor, &rival.descriptor),
+                        )
+                })
+                .then_some(DescriptorMatch {
+                    train_index,
+                    distance,
+                })
+        })
+        .collect()
 }
 
 fn mutual_observations_rust(
@@ -357,55 +487,51 @@ fn mutual_observations_rust(
     incoming: &[BinaryFeature],
     layout: TileLayout,
     axis: StitchAxis,
-    parallel_work: bool,
 ) -> Vec<MatchObservation> {
-    let (reverse_best, forward_best) = if parallel_work {
-        rayon::join(
-            || match_descriptors(incoming, reference),
-            || match_descriptors(reference, incoming),
-        )
-    } else {
-        (
-            match_descriptors(incoming, reference),
-            match_descriptors(reference, incoming),
-        )
-    };
-    let mut observations = Vec::new();
-    for (reference_index, matched) in forward_best.into_iter().enumerate() {
-        let Some(matched) = matched else {
-            continue;
-        };
-        let incoming_index = matched.train_index;
-        if reverse_best
-            .get(incoming_index)
-            .and_then(|matched| *matched)
-            .map(|matched| matched.train_index)
-            != Some(reference_index)
-        {
-            continue;
-        }
-        let feature = reference[reference_index];
-        let incoming_feature = incoming[incoming_index];
-        let dx = round_coordinate(incoming_feature.x) - round_coordinate(feature.x);
-        let dy = round_coordinate(incoming_feature.y) - round_coordinate(feature.y);
-        if axis.cross_delta(dx, dy).abs() > MAX_CROSS_AXIS_DELTA {
-            continue;
-        }
-        let Some(reference_tile) = layout.index(feature.x, feature.y) else {
-            continue;
-        };
-        observations.push(MatchObservation {
-            distance: matched.distance as f32,
-            reference_x: feature.x,
-            reference_y: feature.y,
-            incoming_x: incoming_feature.x,
-            incoming_y: incoming_feature.y,
-            reference_tile,
-            dx,
-            dy,
-        });
+    if reference.len() < 2 || incoming.len() < 2 {
+        return Vec::new();
     }
-    observations
+    let mut forward = match_with_exact_lookup(reference, incoming, axis);
+    prune_reverse_candidates(&mut forward, incoming.len());
+    forward
+        .into_par_iter()
+        .enumerate()
+        .filter_map(|(reference_index, matched)| {
+            let matched = matched?;
+            let feature = &reference[reference_index];
+            let incoming_feature = &incoming[matched.train_index];
+            let dx = round_coordinate(incoming_feature.x) - round_coordinate(feature.x);
+            let dy = round_coordinate(incoming_feature.y) - round_coordinate(feature.y);
+            if axis.cross_delta(dx, dy).abs() > MAX_CROSS_AXIS_DELTA {
+                return None;
+            }
+            let reference_tile = layout.index(feature.x, feature.y)?;
+            // References that did not choose this incoming feature can still rule it out.
+            // Identical references choose the same unique incoming descriptor and
+            // were already removed as ties by prune_reverse_candidates.
+            if matched.distance != 0
+                && reference.iter().enumerate().any(|(index, other)| {
+                    index != reference_index
+                        && !beats_lowe_ratio(
+                            matched.distance,
+                            hamming_distance(&incoming_feature.descriptor, &other.descriptor),
+                        )
+                })
+            {
+                return None;
+            }
+            Some(MatchObservation {
+                distance: matched.distance as f32,
+                reference_x: feature.x,
+                reference_y: feature.y,
+                incoming_x: incoming_feature.x,
+                incoming_y: incoming_feature.y,
+                reference_tile,
+                dx,
+                dy,
+            })
+        })
+        .collect()
 }
 
 fn detect_balanced_rust(
@@ -506,13 +632,8 @@ fn pure_rust_feature_evidence(
         .expect("prepared reference features");
     feature_perf.finish();
     let _perf = crate::perf::Scope::new(crate::perf::Stage::DescriptorMatching);
-    let observations = mutual_observations_rust(
-        reference_features,
-        &incoming_features,
-        layout,
-        axis,
-        parallel_work,
-    );
+    let observations =
+        mutual_observations_rust(reference_features, &incoming_features, layout, axis);
 
     let evidence = FeatureEvidence {
         reference_features: reference_features.len() as u32,
@@ -701,9 +822,16 @@ fn score_candidate(
         spatial_coverage,
         alignment_error,
         precise_alignment_error: None,
+        overlap_blocks: None,
         residual_gain,
         score,
     }
+}
+
+fn has_motion_support(candidate: &CandidateDiagnostics) -> bool {
+    candidate.raw_inliers >= MIN_INLIER_MATCHES
+        && candidate.inlier_tiles >= MIN_INLIER_TILES
+        && candidate.residual_gain >= MIN_RESIDUAL_GAIN
 }
 
 fn luminance_at(frame: &Frame, x: u32, y: u32) -> u8 {
@@ -1049,48 +1177,95 @@ impl VerticalMotionEstimator {
             cache.full_reference_features = previous_full_features;
         }
 
-        let (previous_gray, incoming_gray) = {
-            let _perf = crate::perf::Scope::new(crate::perf::Stage::Grayscale);
-            (
-                match previous_gray {
-                    Some(gray) => gray,
-                    None => Arc::new(GrayImage::from_frame(previous_raw)?),
-                },
-                GrayImage::from_frame(incoming)?,
+        let prepare_maps = || -> Result<_, StitchError> {
+            let (previous_gray, incoming_gray) = {
+                let _perf = crate::perf::Scope::new(crate::perf::Stage::Grayscale);
+                (
+                    match previous_gray {
+                        Some(gray) => gray,
+                        None => Arc::new(GrayImage::from_frame(previous_raw)?),
+                    },
+                    GrayImage::from_frame(incoming)?,
+                )
+            };
+            let direct = {
+                let _perf = crate::perf::Scope::new(crate::perf::Stage::SimilarityMaps);
+                SimilarityMap::between(&previous_gray, &incoming_gray, self.layout, self.axis, 0)
+            };
+            // Release the previous raw planes once the direct map is complete.
+            let same_reference = cache
+                .reference_gray
+                .as_ref()
+                .is_some_and(|gray| Arc::ptr_eq(gray, &previous_gray));
+            drop(previous_gray);
+            if cache.reference_gray.is_none() {
+                let _perf = crate::perf::Scope::new(crate::perf::Stage::Grayscale);
+                cache.reference_gray = Some(Arc::new(GrayImage::from_frame(motion_reference)?));
+            }
+            let reference_gray = cache
+                .reference_gray
+                .as_ref()
+                .expect("prepared reference grayscale");
+            // Both maps compare with the same incoming planes at offset zero.
+            let separate_zero = if same_reference {
+                None
+            } else {
+                let _perf = crate::perf::Scope::new(crate::perf::Stage::SimilarityMaps);
+                Some(SimilarityMap::between(
+                    reference_gray,
+                    &incoming_gray,
+                    self.layout,
+                    self.axis,
+                    0,
+                ))
+            };
+            Ok((incoming_gray, direct, separate_zero))
+        };
+        let max_features = self.options.max_features as usize;
+        let mut detect = || {
+            pure_rust_feature_evidence(
+                motion_reference,
+                incoming,
+                self.layout,
+                max_features,
+                self.axis,
+                self.parallel_work,
+                &self.pyramid_plan,
+                Some(&self.sampling),
+                &mut cache.reference_features,
             )
         };
-        let direct = {
-            let _perf = crate::perf::Scope::new(crate::perf::Stage::SimilarityMaps);
-            SimilarityMap::between(&previous_gray, &incoming_gray, self.layout, self.axis, 0)
+        let primary_extent = self
+            .axis
+            .primary_extent(self.geometry.width, self.geometry.height);
+        let maximum_shift = (primary_extent as f32 * self.options.max_motion_ratio).floor() as i32;
+        // Registration samples native pixels independently of ORB and the similarity maps.
+        // Build its proposals while the feature and map workers have the same frames hot.
+        let prepare_search = || {
+            (maximum_shift > 0).then(|| {
+                let _scope = crate::perf::Scope::new(crate::perf::Stage::CandidateScoring);
+                RegistrationSearch::new(
+                    motion_reference,
+                    previous_raw,
+                    incoming,
+                    self.axis,
+                    maximum_shift,
+                    self.options.min_confidence,
+                )
+            })
         };
-        // The raw comparison is complete. Release its planes before ORB unless
-        // they are shared with the cached motion reference.
-        drop(previous_gray);
-        if cache.reference_gray.is_none() {
-            let _perf = crate::perf::Scope::new(crate::perf::Stage::Grayscale);
-            cache.reference_gray = Some(Arc::new(GrayImage::from_frame(motion_reference)?));
-        }
+        let (maps, ((evidence, incoming_features), mut search)) =
+            if self.parallel_work && self.sampling.reduced() {
+                crate::perf::join(prepare_maps, || crate::perf::join(detect, prepare_search))
+            } else {
+                (prepare_maps(), (detect(), prepare_search()))
+            };
+        let (incoming_gray, direct, separate_zero) = maps?;
+        let zero_alignment = separate_zero.as_ref().unwrap_or(&direct);
         let reference_gray = cache
             .reference_gray
             .as_ref()
             .expect("prepared reference grayscale");
-        let zero_alignment = {
-            let _perf = crate::perf::Scope::new(crate::perf::Stage::SimilarityMaps);
-            SimilarityMap::between(reference_gray, &incoming_gray, self.layout, self.axis, 0)
-        };
-
-        let max_features = self.options.max_features as usize;
-        let (evidence, incoming_features) = pure_rust_feature_evidence(
-            motion_reference,
-            incoming,
-            self.layout,
-            max_features,
-            self.axis,
-            self.parallel_work,
-            &self.pyramid_plan,
-            Some(&self.sampling),
-            &mut cache.reference_features,
-        );
         cache.previous_features = Some(incoming_features);
         let images = EvaluationImages {
             reference: motion_reference,
@@ -1098,9 +1273,9 @@ impl VerticalMotionEstimator {
             reference_gray,
             incoming_gray: &incoming_gray,
             direct: &direct,
-            zero_alignment: &zero_alignment,
+            zero_alignment,
         };
-        let mut evaluated = self.evaluate(&images, evidence);
+        let mut evaluated = self.evaluate(&images, evidence, maximum_shift, search.as_mut());
         if self.sampling.reduced() && evaluated.needs_full_resolution() {
             let pyramid = self.full_pyramid_plan.get_or_init(|| {
                 crate::orb::PyramidPlan::new(
@@ -1120,7 +1295,7 @@ impl VerticalMotionEstimator {
                 &mut cache.full_reference_features,
             );
             cache.previous_full_features = Some(incoming_features);
-            evaluated = self.evaluate(&images, evidence);
+            evaluated = self.evaluate(&images, evidence, maximum_shift, search.as_mut());
         }
         cache.previous_raw = Some(Arc::new(incoming_gray));
         Ok(self.commit_evaluation(evaluated))
@@ -1144,6 +1319,8 @@ impl VerticalMotionEstimator {
         &self,
         images: &EvaluationImages<'_>,
         evidence: FeatureEvidence,
+        maximum_shift: i32,
+        search: Option<&mut RegistrationSearch<'_>>,
     ) -> EvaluatedMotion {
         let EvaluationImages {
             reference: motion_reference,
@@ -1154,58 +1331,51 @@ impl VerticalMotionEstimator {
             zero_alignment,
         } = *images;
         let direct_similarity = direct.mean();
-        let primary_extent = self
-            .axis
-            .primary_extent(self.geometry.width, self.geometry.height);
-        let maximum_shift = (primary_extent as f32 * self.options.max_motion_ratio)
-            .floor()
-            .clamp(0.0, i32::MAX as f32) as i32;
         let mut diagnostics = MotionDiagnostics::at(MotionStage::EmptyDescriptors);
         diagnostics.reference_keypoints = evidence.reference_features;
         diagnostics.incoming_keypoints = evidence.incoming_features;
         diagnostics.direct_similarity = direct_similarity;
-        if evidence.observations.is_empty() {
-            return EvaluatedMotion::rejected(direct_similarity < 0.6, 0.0, diagnostics);
-        }
-
         let observations = evidence.observations;
         diagnostics.mutual_matches = observations.len() as u32;
-        if observations.is_empty() {
-            diagnostics.stage = MotionStage::NoMatches;
-            return EvaluatedMotion::rejected(direct_similarity < 0.6, 0.0, diagnostics);
-        }
-
-        let scoring_perf = crate::perf::Scope::new(crate::perf::Stage::CandidateScoring);
         let candidates = candidate_offsets(&observations, self.axis, maximum_shift);
-        if candidates.is_empty() {
-            diagnostics.stage = MotionStage::NoCandidates;
+        let scoring_perf = crate::perf::Scope::new(crate::perf::Stage::CandidateScoring);
+        let registration = search.map_or(Registration::Unavailable, |search| {
+            search.register(&candidates)
+        });
+        if let Registration::Ambiguous(aliases) = registration {
+            diagnostics.stage = MotionStage::LowConfidence;
+            diagnostics.ambiguous_offsets = aliases;
+            return EvaluatedMotion::rejected(false, 0.0, diagnostics);
+        }
+        if observations.is_empty() && matches!(registration, Registration::Unavailable) {
             return EvaluatedMotion::rejected(direct_similarity < 0.6, 0.0, diagnostics);
         }
-
-        let mut scored = candidates
-            .into_iter()
-            .map(|offset| {
-                let compensated = if offset == 0 {
-                    None
-                } else {
-                    Some(SimilarityMap::between(
-                        reference_gray,
-                        incoming_gray,
-                        self.layout,
-                        self.axis,
-                        offset,
-                    ))
-                };
-                score_candidate(
-                    offset,
+        let score = |offset| {
+            let compensated = if offset == 0 {
+                None
+            } else {
+                Some(SimilarityMap::between(
+                    reference_gray,
+                    incoming_gray,
+                    self.layout,
                     self.axis,
-                    &observations,
-                    direct,
-                    zero_alignment,
-                    compensated.as_ref().unwrap_or(zero_alignment),
-                )
-            })
-            .collect::<Vec<_>>();
+                    offset,
+                ))
+            };
+            score_candidate(
+                offset,
+                self.axis,
+                &observations,
+                direct,
+                zero_alignment,
+                compensated.as_ref().unwrap_or(zero_alignment),
+            )
+        };
+        let mut scored: Vec<_> = if self.parallel_work {
+            candidates.into_par_iter().map(score).collect()
+        } else {
+            candidates.into_iter().map(score).collect()
+        };
         scored.sort_by(|left, right| {
             right
                 .score
@@ -1215,6 +1385,30 @@ impl VerticalMotionEstimator {
         });
 
         scoring_perf.finish();
+        if let Registration::Verified {
+            offset,
+            confidence,
+            error,
+            blocks,
+        } = registration
+        {
+            let index = scored.iter().position(|c| c.offset == offset);
+            let mut verified = index.map_or_else(|| score(offset), |i| scored[i].clone());
+            if let Some(i) = index {
+                scored.remove(i);
+            }
+            verified.overlap_blocks = Some(blocks);
+            verified.precise_alignment_error = Some(error);
+            scored.insert(0, verified);
+            diagnostics.stage = MotionStage::Selected;
+            diagnostics.selected_offset = Some(offset);
+            diagnostics.candidates = scored;
+            return EvaluatedMotion {
+                estimate: MotionEstimate::motion(offset, confidence, diagnostics),
+                scene_cut: false,
+                margin: confidence,
+            };
+        }
         let strongest_mode = scored[0].offset;
         if strongest_mode != 0 {
             let _perf = crate::perf::Scope::new(crate::perf::Stage::Refinement);
@@ -1226,30 +1420,12 @@ impl VerticalMotionEstimator {
                 maximum_shift,
                 &observations,
             );
-            let mut refined = if let Some(index) = scored
+            let mut candidate = scored
                 .iter()
-                .position(|candidate| candidate.offset == refined_offset)
-            {
-                scored.remove(index)
-            } else {
-                let compensated = SimilarityMap::between(
-                    reference_gray,
-                    incoming_gray,
-                    self.layout,
-                    self.axis,
-                    refined_offset,
-                );
-                score_candidate(
-                    refined_offset,
-                    self.axis,
-                    &observations,
-                    direct,
-                    zero_alignment,
-                    &compensated,
-                )
-            };
-            refined.precise_alignment_error = Some(precise_error);
-            scored.insert(0, refined);
+                .position(|c| c.offset == refined_offset)
+                .map_or_else(|| score(refined_offset), |i| scored.remove(i));
+            candidate.precise_alignment_error = Some(precise_error);
+            scored.insert(0, candidate);
         }
 
         let best_score = scored[0].score;
@@ -1282,10 +1458,7 @@ impl VerticalMotionEstimator {
             };
         }
 
-        let accepted = best.raw_inliers >= MIN_INLIER_MATCHES
-            && best.inlier_tiles >= MIN_INLIER_TILES
-            && best.residual_gain >= MIN_RESIDUAL_GAIN
-            && confidence >= self.options.min_confidence;
+        let accepted = has_motion_support(best) && confidence >= self.options.min_confidence;
         if accepted {
             let selected_offset = best.offset;
             diagnostics.stage = MotionStage::Selected;
@@ -1619,6 +1792,7 @@ mod tests {
                 spatial_coverage: 1.0,
                 alignment_error: 0.0,
                 precise_alignment_error: Some(1.0),
+                overlap_blocks: None,
                 residual_gain: 1.0,
                 score: 1.0,
             });
@@ -1788,6 +1962,183 @@ mod tests {
         assert_eq!(round_coordinate(1.5) - round_coordinate(0.49), 2);
     }
 
+    #[test]
+    fn off_axis_rivals_still_veto_spatially_eligible_matches() {
+        let layout = TileLayout::new(128, 128, 32);
+        for axis in [StitchAxis::Vertical, StitchAxis::Horizontal] {
+            let feature = |cross, along, bits| {
+                let (x, y) = match axis {
+                    StitchAxis::Vertical => (cross, along),
+                    StitchAxis::Horizontal => (along, cross),
+                };
+                let mut descriptor = [0; 32];
+                descriptor[0] = bits;
+                BinaryFeature { x, y, descriptor }
+            };
+            let filler = BinaryFeature {
+                descriptor: [255; 32],
+                ..feature(90.0, 90.0, 0)
+            };
+            let mut reference = vec![filler; 40];
+            let mut incoming = vec![filler; 40];
+            reference[0] = feature(20.0, 52.0, 0);
+            incoming[0] = feature(24.0, 40.0, 0b111);
+            incoming[1] = feature(25.0, 40.0, 0b1011);
+            assert!(mutual_observations_rust(&reference, &incoming, layout, axis).is_empty());
+
+            incoming[1].descriptor[0] = 0b1111;
+            let matches = mutual_observations_rust(&reference, &incoming, layout, axis);
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].distance, 3.0);
+
+            incoming[0].descriptor[0] = 0;
+            reference[1] = feature(72.0, 61.0, 0);
+            assert!(mutual_observations_rust(&reference, &incoming, layout, axis).is_empty());
+        }
+    }
+
+    #[test]
+    fn exact_lookup_preserves_duplicates_unmatched_queries_and_ratio_ties() {
+        let feature = |i: u8| BinaryFeature {
+            x: f32::from(i),
+            y: 5.0,
+            descriptor: std::array::from_fn(|j| {
+                i.wrapping_mul(73).wrapping_add((j as u8).wrapping_mul(7))
+            }),
+        };
+        let mut train: Vec<_> = (0..67).map(feature).collect();
+        train[61] = train[3];
+        let mut queries = train.clone();
+        for q in queries.iter_mut().skip(10).step_by(2) {
+            q.descriptor[0] ^= 9;
+        }
+        queries[57] = feature(200);
+        assert_eq!(
+            match_with_exact_lookup(&queries, &train, StitchAxis::Horizontal),
+            match_descriptors_portable(&queries, &train)
+        );
+    }
+
+    #[test]
+    fn mutual_matches_agree_with_two_exhaustive_ratio_searches() {
+        let features = (0..32)
+            .map(|i| BinaryFeature {
+                x: (i * 7) as f32,
+                y: (i * 5) as f32,
+                descriptor: std::array::from_fn(|byte| ((i * 73 + byte * 19) ^ (i + byte)) as u8),
+            })
+            .collect::<Vec<_>>();
+        let mut incoming = features.clone();
+        for (i, feature) in incoming.iter_mut().enumerate() {
+            if i % 2 == 1 {
+                feature.descriptor[0] ^= 1;
+            }
+            if i % 3 == 0 {
+                feature.x += 5.0;
+            }
+        }
+        incoming[3].descriptor = incoming[2].descriptor;
+        let mut reference = features;
+        reference[5].descriptor = reference[6].descriptor;
+        let layout = TileLayout::new(256, 180, 32);
+        for axis in [StitchAxis::Vertical, StitchAxis::Horizontal] {
+            for count in [0, 1, 2, reference.len()] {
+                let reference = &reference[..count];
+                let reverse = match_descriptors_portable(&incoming, reference);
+                let expected = match_descriptors_portable(reference, &incoming)
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, m)| {
+                        let m = m?;
+                        let a = &reference[i];
+                        let b = &incoming[m.train_index];
+                        let dx = round_coordinate(b.x) - round_coordinate(a.x);
+                        let dy = round_coordinate(b.y) - round_coordinate(a.y);
+                        (reverse[m.train_index]?.train_index == i
+                            && axis.cross_delta(dx, dy).abs() <= MAX_CROSS_AXIS_DELTA)
+                            .then_some((a.x, b.x, m.distance))
+                    })
+                    .collect::<Vec<_>>();
+                let actual = mutual_observations_rust(reference, &incoming, layout, axis);
+                assert_eq!(
+                    actual
+                        .into_iter()
+                        .map(|m| (m.reference_x, m.incoming_x, m.distance as u32))
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_forward_matches_leave_at_most_one_reverse_candidate() {
+        let feature = |descriptor, y| BinaryFeature {
+            x: 16.0,
+            y,
+            descriptor,
+        };
+        let incoming = [feature([0; 32], 12.0), feature([255; 32], 12.0)];
+        let mut repeated = [0; 32];
+        repeated[..25].fill(1);
+        let mut reference = vec![feature([0xAA; 32], 36.0); 512];
+        reference.resize(1024, feature(repeated, 36.0));
+        let layout = TileLayout::new(96, 96, 16);
+
+        // An equal distance and a distance exactly at the ratio threshold both fail.
+        for (distance, expected) in [(25, None), (20, None), (19, Some(19))] {
+            let mut descriptor = repeated;
+            descriptor[distance..].fill(0);
+            reference[1023] = feature(descriptor, 64.0);
+            let mut forward = match_descriptors(&reference, &incoming);
+            assert_eq!(forward.iter().flatten().count(), 512);
+            prune_reverse_candidates(&mut forward, incoming.len());
+            let count = usize::from(expected.is_some());
+            assert_eq!(forward.iter().flatten().count(), count);
+            assert_eq!(forward[1023].map(|matched| matched.distance), expected);
+
+            let observations =
+                mutual_observations_rust(&reference, &incoming, layout, StitchAxis::Vertical);
+            assert_eq!(observations.len(), count);
+            assert_eq!(
+                observations
+                    .first()
+                    .map(|matched| (matched.dy, matched.distance)),
+                expected.map(|distance| (-52, distance as f32))
+            );
+        }
+    }
+
+    #[test]
+    fn reverse_ratio_still_compares_references_that_chose_another_feature() {
+        let zero = BinaryFeature {
+            x: 16.0,
+            y: 12.0,
+            descriptor: [0; 32],
+        };
+        let mut other = zero;
+        other.descriptor[..3].fill(255);
+        let incoming = [zero, other];
+
+        let mut first = zero;
+        first.y = 24.0;
+        first.descriptor[3..6].copy_from_slice(&[255, 255, 15]);
+        other.y = 36.0;
+        let reference = [first, other];
+        let mut forward = match_descriptors(&reference, &incoming);
+        prune_reverse_candidates(&mut forward, incoming.len());
+        assert_eq!(forward[0].unwrap().train_index, 0);
+        assert_eq!(forward[1].unwrap().train_index, 1);
+
+        // The first reference is 20 bits from zero. The other reference is 24
+        // bits away, close enough to reject the first under the reverse ratio.
+        let layout = TileLayout::new(96, 96, 16);
+        let observations =
+            mutual_observations_rust(&reference, &incoming, layout, StitchAxis::Vertical);
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].reference_y, other.y);
+    }
+
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[test]
     fn popcnt_matcher_matches_portable_results() {
@@ -1877,6 +2228,14 @@ mod tests {
             unsafe { nearest_two_neon(&zero, &[full, zero]) }.unwrap()[1].distance,
             256
         );
+        // Exercise the widening reduction at distance 256 and equal best matches
+        // on opposite sides of a four-descriptor block boundary.
+        for candidates in [[full; 8], [full, full, full, zero, zero, full, full, full]] {
+            assert_eq!(
+                unsafe { nearest_two_neon(&zero, &candidates) },
+                nearest_two(&zero, &candidates)
+            );
+        }
         assert!(NEON_MATCHES.load(std::sync::atomic::Ordering::Relaxed) > before);
     }
 

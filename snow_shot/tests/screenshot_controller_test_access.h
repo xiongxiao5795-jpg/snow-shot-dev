@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "snow_shot/app/edition.h"
 #include "snow_shot/presentation/screenshotcontroller.h"
 #include <QImage>
+#include <functional>
 #ifdef Q_OS_MACOS
 #include "snow_shot/platform/macos/screenshotsessionfocus.h"
 #endif
@@ -16,7 +18,22 @@ class SnowCanvasRuntime;
 class ScreenshotToolbarCommandSink;
 class ScreenshotScrollingCaptureController;
 class ScreenshotScrollingSnapshot;
+class ScreenshotHistoryService;
+class ScreenshotQrRecognitionPort;
 struct ScreenshotSelectionParams;
+
+namespace snow_shot::presentation {
+class DirectCaptureController;
+struct DirectCaptureFrame;
+struct DirectCaptureRequest;
+
+class DirectCaptureControllerTestAccess {
+  public:
+    static void
+    setFrameAcquirer(DirectCaptureController& controller,
+                     std::function<DirectCaptureFrame(const DirectCaptureRequest&)> acquire);
+};
+} // namespace snow_shot::presentation
 
 // Implemented only in test builds, where the controller's private implementation is complete.
 class ScreenshotControllerTestAccess {
@@ -30,18 +47,30 @@ class ScreenshotControllerTestAccess {
     static ScreenshotIntelligentSelectionModel&
     intelligentSelection(ScreenshotController& controller);
     static ScreenshotOverlayWindow* presentSelection(ScreenshotController& controller);
+    static void prepareGlobalMouseSelection(ScreenshotController& controller,
+                                            ScreenshotController::CaptureAction action, quint64 id,
+                                            const QPointF& start);
     static void confirmCaptureSelection(ScreenshotController& controller,
                                         ScreenshotController::CaptureAction action);
+    [[nodiscard]] static ScreenshotController::CaptureAction
+    pendingCaptureAction(const ScreenshotController& controller);
     [[nodiscard]] static bool exportActive(const ScreenshotController& controller);
     [[nodiscard]] static bool clipboardFormulaPending(const ScreenshotController& controller);
     [[nodiscard]] static quint64 clipboardPinGeneration(const ScreenshotController& controller);
     static void setDisplayScale(ScreenshotController& controller, qreal scale);
+    static void prepareRecaptureInput(ScreenshotController& controller, QWidget& hiddenWindow,
+                                      bool& inputTransparent);
     static void prepareScrollingSnapshot(ScreenshotController& controller,
                                          ScreenshotScrollingSnapshot snapshot);
     static void prepareScrollingSnapshot(ScreenshotScrollingCaptureController& controller,
                                          ScreenshotScrollingSnapshot snapshot, QRect selection,
                                          ScreenshotOverlayWindow* overlay);
+    static ScreenshotHistoryService& history(ScreenshotController& controller);
     static ScreenshotToolbarCommandSink& commands(ScreenshotController& controller);
+#if SNOW_SHOT_ENABLE_QR_RECOGNITION
+    static void setQrRecognition(ScreenshotController& controller,
+                                 std::unique_ptr<ScreenshotQrRecognitionPort> recognition);
+#endif
 #ifdef Q_OS_MACOS
     static void
     installSessionFocus(ScreenshotController& controller,

@@ -13,7 +13,6 @@ use snow_stitch_images::{
     StitchError, StitchOptions, Stitcher, TiledCanvasSnapshot,
 };
 
-#[cfg(target_os = "macos")]
 mod execution;
 
 // Snow Shot streams snapshots through Snow Image. Standalone clients retain
@@ -416,6 +415,7 @@ struct FrameOutcome {
 struct StitchSession {
     config: StitchConfig,
     stitcher: Stitcher,
+    execution: execution::Execution,
 }
 
 impl StitchSession {
@@ -429,6 +429,7 @@ impl StitchSession {
                 record_decisions: true,
                 ..StitchOptions::default()
             })?,
+            execution: execution::Execution::default(),
         })
     }
 
@@ -442,10 +443,13 @@ impl StitchSession {
     ) -> Result<FrameOutcome, StitchError> {
         let frame = frame?;
         let initial = self.stitcher.input_count() == 0;
-        #[cfg(target_os = "macos")]
-        let decision = execution::install(|| self.stitcher.push(frame))??;
-        #[cfg(not(target_os = "macos"))]
-        let decision = self.stitcher.push(frame)?;
+        // The seed frame only initializes the canvas. Start workers when
+        // motion estimation can first use them.
+        let decision = if initial {
+            self.stitcher.push(frame)?
+        } else {
+            self.execution.install(|| self.stitcher.push(frame))??
+        };
         let (width, height) = self
             .stitcher
             .image_dimensions()
@@ -1564,6 +1568,7 @@ mod tests {
             mutual_matches: 0,
             direct_similarity: 0.0,
             selected_offset: None,
+            ambiguous_offsets: Vec::new(),
             candidates: Vec::new(),
         };
         assert!(matches!(

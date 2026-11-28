@@ -187,10 +187,11 @@ bool ScreenshotPinnedWindow::liveFrameAvailable() const {
 bool ScreenshotPinnedWindow::liveCommandAllowed(const QString& command) const {
     if (!isLiveWindow())
         return true;
-    if (command == u"apply_crop")
-        return cropApplyAllowed();
+    if (command == u"apply_crop" || command == u"cancel_crop")
+        return cropActionsAllowed();
     if (command == u"copy_to_clipboard" || command == u"save_as_file" ||
-        command == u"convert_to_image" || command == u"split_image" || command == u"image_editing")
+        command == u"convert_to_image" || command == u"split_image" ||
+        command == u"image_editing" || command == u"image_compression")
         return liveFrameAvailable();
     static const QStringList commands{
         QStringLiteral("increase_opacity"), QStringLiteral("decrease_opacity"),
@@ -226,6 +227,7 @@ bool ScreenshotPinnedWindow::initializeLivePresentation(QString* error) {
     connect(m_liveSource.get(), &LiveWindowSource::nativePresentationChanged, this,
             [this](bool native) {
                 m_liveNativePresentation = native;
+                updateTransparentLayer();
                 updateLiveState();
             });
     connect(qApp, &QCoreApplication::aboutToQuit, this, &ScreenshotPinnedWindow::closeLiveWindow);
@@ -273,7 +275,11 @@ bool ScreenshotPinnedWindow::synchronizeLivePresentation(QString* error) {
         presentation.backgroundColor = palette().color(QPalette::Window);
     presentation.backgroundColor.setAlpha(255);
     const bool result = m_liveSource->setPresentation(presentation, error);
-    m_liveNativePresentation = m_liveSource->usesNativePresentation();
+    const bool native = m_liveSource->usesNativePresentation();
+    if (m_liveNativePresentation != native) {
+        m_liveNativePresentation = native;
+        updateTransparentLayer();
+    }
     if (m_canvas)
         m_canvas->setVisible(liveFrameAvailable() && !m_liveNativePresentation);
     update();
@@ -563,7 +569,8 @@ void ScreenshotPinnedWindow::convertLiveToImage() {
 void ScreenshotPinnedWindow::finishLiveConversion(QImage image) {
     if (image.isNull() || !isLiveWindow() || m_closing)
         return;
-    endCropSelection(true);
+    cancelCropInteraction();
+    cancelCropPreparation();
     if (m_interactionCropRect)
         endControlledInteraction(false);
     const QRect geometry = authoritativeContentNativeGeometry();
@@ -601,7 +608,6 @@ void ScreenshotPinnedWindow::finishLiveConversion(QImage image) {
         m_liveStatusView->hide();
     m_canvas->show();
     m_persistenceEnabled = true;
-    m_editingEnabled = m_staticEditingEnabled;
     m_automaticTextRecognition = false;
     m_ocrSupported = screenshotOcrImageWithinPixelLimit(m_originalPixelSize);
     m_firstContentFramePublished = true;

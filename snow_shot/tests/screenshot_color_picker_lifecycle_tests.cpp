@@ -32,6 +32,7 @@
 #include "widgets/button.h"
 #include "widgets/color_picker.h"
 #include "widgets/modal.h"
+#include "widgets/detail/window_modality.h"
 #include "widgets/popup_interaction_host.h"
 #include "widgets/detail/overlay_popup_surface.h"
 
@@ -673,25 +674,21 @@ class StyleToolbarCommands final : public ScreenshotToolbarCommandSink,
     void setMoveTool() override {
         ++moveToolCount;
     }
-    void setSelectTool() override {
-        ++selectToolCount;
+    void setCanvasTool(SnowCanvasTool tool) override {
+        switch (tool) {
+        case SnowCanvasTool::Select:
+            ++selectToolCount;
+            break;
+        case SnowCanvasTool::Shape:
+            ++shapeToolCount;
+            break;
+        default:
+            break;
+        }
     }
-    void setShapeTool() override {
-        ++shapeToolCount;
-    }
-    void setArrowTool() override {}
-    void setLineTool() override {}
-    void setBrushTool() override {}
-    void setHighlightTool() override {}
-    void setBrushHighlightTool() override {}
-    void setEraserTool() override {}
-    void setFilterTool() override {}
-    void setWatermarkTool() override {}
     void setWatermarkConfigFromToolbar(const SnowCanvasWatermarkConfig&) override {}
     void previewWatermarkFromToolbar(const SnowCanvasWatermarkConfig&) override {}
     void setFilterStyleFromToolbar(const SnowCanvasFilterStyle&, quint32) override {}
-    void setTextTool() override {}
-    void setSequenceNumberTool() override {}
     void setOcrTool() override {}
     void startScrollingScreenshot() override {}
     void pinSelectionToScreen() override {}
@@ -2141,8 +2138,11 @@ void exitConfirmationStacksAbovePicker() {
                         surface->windowFlags().testFlag(Qt::WindowStaysOnTopHint) &&
                         surface->windowHandle()->transientParent() == owner.windowHandle(),
                     "confirmation must join the screenshot owner's topmost native window stack");
-            require(modal->windowModality() == Qt::WindowModal,
-                    "confirmation must block the screenshot owner while open");
+            require(adqt::widgets::detail::blockingModalWindow(owner.windowHandle()) ==
+                            surface->windowHandle() &&
+                        adqt::widgets::detail::blockingModalWindow(picker.windowHandle()) ==
+                            surface->windowHandle(),
+                    "the exit confirmation must block both the screenshot owner and magnifier");
             picker.updatePicker(QPoint(241, 161), QPointF(241, 161), true);
             QCoreApplication::processEvents();
 #ifdef Q_OS_WIN

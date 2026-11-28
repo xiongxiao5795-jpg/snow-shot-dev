@@ -143,29 +143,6 @@ bool validSize(QSize size) {
     return size.width() > 0 && size.height() > 0 &&
            static_cast<qint64>(size.width()) * size.height() <= kMaximumPixels;
 }
-const QHash<QString, SnowCanvasTool> kCanvasTools{
-    {QStringLiteral("select"), SnowCanvasTool::Select},
-    {QStringLiteral("rectangle"), SnowCanvasTool::Shape},
-    {QStringLiteral("speech_bubble"), SnowCanvasTool::SpeechBubble},
-    {QStringLiteral("arrow"), SnowCanvasTool::Arrow},
-    {QStringLiteral("distance"), SnowCanvasTool::Distance},
-    {QStringLiteral("angle"), SnowCanvasTool::Angle},
-    {QStringLiteral("bracket"), SnowCanvasTool::Bracket},
-    {QStringLiteral("magnifier"), SnowCanvasTool::Magnifier},
-    {QStringLiteral("line"), SnowCanvasTool::Line},
-    {QStringLiteral("freehand"), SnowCanvasTool::FreeDraw},
-    {QStringLiteral("rectangle_highlight"), SnowCanvasTool::RectangleHighlight},
-    {QStringLiteral("pen_highlight"), SnowCanvasTool::PenHighlight},
-    {QStringLiteral("eraser"), SnowCanvasTool::Eraser},
-    {QStringLiteral("rectangle_eraser"), SnowCanvasTool::RectangleEraser},
-    {QStringLiteral("brush_eraser"), SnowCanvasTool::BrushEraser},
-    {QStringLiteral("rectangle_filter"), SnowCanvasTool::RectangleFilter},
-    {QStringLiteral("pen_filter"), SnowCanvasTool::PenFilter},
-    {QStringLiteral("text"), SnowCanvasTool::Text},
-    {QStringLiteral("serial_number"), SnowCanvasTool::SerialNumber},
-    {QStringLiteral("watermark"), SnowCanvasTool::Watermark},
-    {QStringLiteral("spotlight"), SnowCanvasTool::Spotlight},
-    {QStringLiteral("auto_filter"), SnowCanvasTool::AutoFilter}};
 qint64 sourceAuxiliaryBytes(const McpDocumentService::Source& source) {
     qint64 bytes = 2LL * (source.originalContent.text.size() + source.originalContent.html.size() +
                           source.originalContent.localFilePath.size()) +
@@ -226,6 +203,7 @@ qint64 sourceAuxiliaryBytes(const McpDocumentService::Source& source) {
 }
 struct Document {
     quint64 owner = 0;
+    bool presentInImageEditing = false;
     QString id;
     quint64 revision = 1;
     QList<CanvasExportSource> sources;
@@ -439,6 +417,7 @@ class DocumentWorker final : public QObject {
         document->canvasBounds = source.canvasBounds;
         document->sourceBytes = bytes;
         document->historyCharge = inputCharge;
+        document->presentInImageEditing = source.presentInImageEditing;
         document->metadata = std::move(source.metadata);
         document->originalContent = std::move(source.originalContent);
         document->recognitionResults = std::move(source.recognitionResults);
@@ -513,6 +492,7 @@ class DocumentWorker final : public QObject {
             reservation->consumed = true;
         document.sourceBytes = bytes;
         document.sources = std::move(source.images);
+        document.presentInImageEditing = source.presentInImageEditing;
         document.metadata = std::move(source.metadata);
         document.originalContent = std::move(source.originalContent);
         document.recognitionResults = {};
@@ -661,6 +641,7 @@ class DocumentWorker final : public QObject {
         if (method == QStringLiteral("snow_shot_document_present") ||
             method == QStringLiteral("snow_shot_document_pin")) {
             McpDocumentService::Source source;
+            source.presentInImageEditing = document.presentInImageEditing;
             source.images = document.sources;
             source.canvasBounds = document.canvasBounds;
             source.documentSession = document.runtime.serializeDocumentSession();
@@ -706,13 +687,13 @@ class DocumentWorker final : public QObject {
         }
         if (method == QStringLiteral("snow_shot_document_set_tool")) {
             const auto tool = params.value(QStringLiteral("tool")).toString();
-            if (!kCanvasTools.contains(tool))
+            if (!mcpCanvasTools().contains(tool))
                 return {
                     failure(request, QStringLiteral("invalid_parameters"), QStringLiteral("tool")),
                     {}};
             if (tool != document.tool) {
                 SnowCanvasRuntimeEditor editor(document.runtime);
-                if (!editor.isValid() || !editor.setActiveTool(kCanvasTools.value(tool)))
+                if (!editor.isValid() || !editor.setActiveTool(mcpCanvasTools().value(tool)))
                     return {failure(request, QStringLiteral("action_unavailable")), {}};
                 document.tool = tool;
                 ++document.revision;
@@ -721,7 +702,7 @@ class DocumentWorker final : public QObject {
         }
         if (method == QStringLiteral("snow_shot_document_set_tool_style")) {
             const auto target = params.value(QStringLiteral("target")).toString();
-            if (!kCanvasTools.contains(target))
+            if (!mcpCanvasTools().contains(target))
                 return {failure(request, QStringLiteral("invalid_parameters"),
                                 QStringLiteral("target")),
                         {}};
@@ -731,11 +712,11 @@ class DocumentWorker final : public QObject {
             const auto history = document.runtime.serializeDocumentHistory();
             bool ok;
             {
-                SnowCanvasRuntimeEditor editor(document.runtime, kCanvasTools.value(target));
+                SnowCanvasRuntimeEditor editor(document.runtime, mcpCanvasTools().value(target));
                 ok =
                     editor.isValid() && mcpStylePatch(editor, editor, params) && editor.succeeded();
                 if (ok)
-                    ok = editor.setActiveTool(kCanvasTools.value(document.tool));
+                    ok = editor.setActiveTool(mcpCanvasTools().value(document.tool));
             }
             if (!ok) {
                 static_cast<void>(document.runtime.restoreDocumentSession(session));
@@ -888,6 +869,7 @@ class DocumentWorker final : public QObject {
             McpDocumentService::Source input;
             input.images = source->sources;
             input.canvasBounds = source->canvasBounds;
+            input.presentInImageEditing = source->presentInImageEditing;
             input.metadata = source->metadata;
             input.originalContent = source->originalContent;
             input.recognitionResults = source->recognitionResults;
@@ -1100,7 +1082,7 @@ class DocumentWorker final : public QObject {
             if (present && !editor.fillAutoFilterCategory(value.toString()))
                 return {failure(request, QStringLiteral("output_failed")), {}};
         }
-        if (!editor.setActiveTool(kCanvasTools.value(document.tool)))
+        if (!editor.setActiveTool(mcpCanvasTools().value(document.tool)))
             return {failure(request, QStringLiteral("output_failed")), {}};
         ++document.revision;
         document.historyCharge += charge;

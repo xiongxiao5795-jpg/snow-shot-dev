@@ -1,6 +1,7 @@
 #include "snow_shot/platform/focusedfullscreenwindow.h"
 #include "snow_shot/presentation/globalshortcutmanager.h"
 #include "snow_shot/storage/applicationstorage.h"
+#include "snow_shot/storage/cloudsyncconfiguration.h"
 #include "snow_shot/storage/settingsadapters.h"
 
 #include <QCoreApplication>
@@ -44,6 +45,7 @@ constexpr std::array ALL_ACTIONS{
     GlobalShortcutAction::ScreenshotCopy,
     GlobalShortcutAction::ScreenshotSave,
     GlobalShortcutAction::ScreenshotQuickSave,
+    GlobalShortcutAction::ScreenshotPinWindowToScreen,
     GlobalShortcutAction::ScreenshotFullScreen,
     GlobalShortcutAction::ScreenshotFocusedWindow,
     GlobalShortcutAction::ScreenRecord,
@@ -63,6 +65,7 @@ constexpr std::array ALL_ACTIONS{
     GlobalShortcutAction::StitchSelectedImages,
     GlobalShortcutAction::SplitSelectedImages,
     GlobalShortcutAction::EditSelectedImages,
+    GlobalShortcutAction::CompressSelectedImages,
     GlobalShortcutAction::SwitchWindowGroup,
     GlobalShortcutAction::OpenSettings,
     GlobalShortcutAction::PinClipboardContent,
@@ -335,16 +338,60 @@ void quickAnnotationShortcutsRespectGates() {
     clearAll(manager);
 }
 #endif
+void remoteBindingsReconcileAsOneConfiguration() {
+    constexpr auto first = GlobalShortcutAction::Screenshot;
+    constexpr auto second = GlobalShortcutAction::ScreenshotCopy;
+    const QString firstKey = QStringLiteral("global_shortcuts/screenshot");
+    const QString secondKey = QStringLiteral("global_shortcuts/screenshot_copy");
+    const shortcuts::ShortcutBindingList firstBindings{QStringLiteral("Ctrl+Shift+F15")};
+    const shortcuts::ShortcutBindingList secondBindings{QStringLiteral("Ctrl+Shift+F16")};
+    auto backend = std::make_unique<FakeBackend>();
+    auto* native = backend.get();
+    GlobalShortcutManager manager(std::move(backend), nullptr, [] { return false; });
+    manager.initialize();
+    clearAll(manager);
+    require(manager.setShortcuts(first, firstBindings) &&
+                manager.setShortcuts(second, secondBindings),
+            "establish both shortcut owners before a swap");
+
+    auto& store = snow_shot::storage::ApplicationStorage::instance().configuration();
+    const auto firstValue = shortcuts::shortcutBindingsToJson(firstBindings);
+    const auto secondValue = shortcuts::shortcutBindingsToJson(secondBindings);
+    const QMap<QString, QJsonValue> swap{{firstKey, secondValue}, {secondKey, firstValue}};
+    require(!snow_shot::storage::cloudSettingShortcutChangesValid(store.snapshot(),
+                                                                  {{firstKey, secondValue}}) &&
+                snow_shot::storage::cloudSettingShortcutChangesValid(store.snapshot(), swap),
+            "shortcut conflict validation uses the final assignment of the whole swap");
+
+    manager.setGlobalShortcutsEnabled(false);
+    const int disabledRegistrationCalls = native->registerCalls;
+    require(store.setCloudSyncState({}, swap) && native->registerCalls == disabledRegistrationCalls,
+            "remote bindings stay unregistered while global shortcuts are disabled");
+    requireDisabled(manager, first, secondBindings);
+    requireDisabled(manager, second, firstBindings);
+
+    native->failures.insert(secondBindings.front().portableText,
+                            {false, GlobalShortcutFailureReason::AlreadyInUse, 1});
+    manager.setGlobalShortcutsEnabled(true);
+    require(manager.state(first).shortcuts == secondBindings &&
+                !manager.state(first).bindings.front().registered &&
+                store.value(firstKey) == secondValue &&
+                manager.state(second).status == GlobalShortcutStatus::Registered,
+            "external ownership leaves the cloud binding configured and independent bindings live");
+    clearAll(manager);
+}
 
 void screenshotQuickActionShortcutsRegisterActivateAndPersist() {
     const std::array actions{GlobalShortcutAction::ScreenshotScrolling,
                              GlobalShortcutAction::ScreenshotSave,
-                             GlobalShortcutAction::ScreenshotQuickSave};
+                             GlobalShortcutAction::ScreenshotQuickSave,
+                             GlobalShortcutAction::ScreenshotPinWindowToScreen};
     const std::array bindings{
         shortcuts::ShortcutBindingList{QStringLiteral("Ctrl+Alt+F9"), QStringLiteral("Shift+F9")},
         shortcuts::ShortcutBindingList{QStringLiteral("Ctrl+Alt+F10"), QStringLiteral("Shift+F10")},
-        shortcuts::ShortcutBindingList{QStringLiteral("Ctrl+Alt+F11"),
-                                       QStringLiteral("Shift+F11")}};
+        shortcuts::ShortcutBindingList{QStringLiteral("Ctrl+Alt+F11"), QStringLiteral("Shift+F11")},
+        shortcuts::ShortcutBindingList{QStringLiteral("Ctrl+Alt+F12"),
+                                       QStringLiteral("Shift+F12")}};
     {
         auto backend = std::make_unique<FakeBackend>();
         auto* input = backend.get();
@@ -377,7 +424,8 @@ void screenshotQuickActionShortcutsRegisterActivateAndPersist() {
     const snow_shot::storage::ShortcutSettings settings;
     require(settings.screenshotScrolling() == bindings[0] &&
                 settings.screenshotSave() == bindings[1] &&
-                settings.screenshotQuickSave() == bindings[2],
+                settings.screenshotQuickSave() == bindings[2] &&
+                settings.screenshotPinWindowToScreen() == bindings[3],
             "screenshot actions persist under distinct settings keys");
     for (std::size_t i = 0; i < actions.size(); ++i) {
         require(restored.state(actions[i]).shortcuts == bindings[i] &&
@@ -670,7 +718,9 @@ void selectedImagesShortcutsRegisterAndPersist(GlobalShortcutAction action) {
         require(manager.setShortcuts(action, bindings) &&
                     manager.state(action).status == GlobalShortcutStatus::Registered &&
                     input->registrations.size() == 2 &&
-                    (action == GlobalShortcutAction::EditSelectedImages
+                    (action == GlobalShortcutAction::CompressSelectedImages
+                         ? snow_shot::storage::ShortcutSettings().compressSelectedImages()
+                     : action == GlobalShortcutAction::EditSelectedImages
                          ? snow_shot::storage::ShortcutSettings().editSelectedImages()
                      : action == GlobalShortcutAction::SplitSelectedImages
                          ? snow_shot::storage::ShortcutSettings().splitSelectedImages()
@@ -2085,6 +2135,7 @@ int main(int argc, char** argv) {
     }
 #endif
     screenshotQuickActionShortcutsRegisterActivateAndPersist();
+    remoteBindingsReconcileAsOneConfiguration();
     switchGroupShortcutPersistsAndReportsBinding();
 #ifdef Q_OS_WIN
     nativeGroupKeyStateUsesEveryShortcutKey();
@@ -2095,6 +2146,7 @@ int main(int argc, char** argv) {
     selectedImagesShortcutsRegisterAndPersist(GlobalShortcutAction::StitchSelectedImages);
     selectedImagesShortcutsRegisterAndPersist(GlobalShortcutAction::SplitSelectedImages);
     selectedImagesShortcutsRegisterAndPersist(GlobalShortcutAction::EditSelectedImages);
+    selectedImagesShortcutsRegisterAndPersist(GlobalShortcutAction::CompressSelectedImages);
     globalCanvasFullscreenGateTracksSession();
     backendAvailabilityInvalidatesOwnershipAndRecovers();
 #ifdef Q_OS_MACOS

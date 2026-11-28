@@ -1,4 +1,5 @@
 #include "snow_shot/presentation/components/historypagecommon.h"
+#include "snow_shot/presentation/components/pagecontainerwidget.h"
 
 #include "widgets/button.h"
 #include "widgets/date_picker.h"
@@ -105,6 +106,7 @@ void configureSelectionAction(adqt::widgets::AdButton* button, bool destructive)
     button->setButtonStyle(adqt::widgets::AdButton::ButtonStyle::Link);
     button->setAccentRole(destructive ? adqt::widgets::AdButton::AccentRole::Danger
                                       : adqt::widgets::AdButton::AccentRole::Primary);
+    button->setContentPaddingEnabled(false);
 }
 
 void configureDeleteConfirmation(adqt::widgets::AdPopconfirm* confirmation) {
@@ -127,10 +129,11 @@ void applyTextTheme(const TextControls& controls, const styles::ThemeColorScheme
 
     setColor(controls.title, scheme.map.colorText);
     setFont(controls.title, scheme.metricAlias.fontSizeHeading4, QFont::DemiBold);
-    for (QLabel* label : {controls.count, controls.selectionSummary}) {
-        setColor(label, scheme.map.colorTextSecondary);
-        setFont(label, scheme.metricAlias.fontSize, QFont::Normal);
-    }
+    setColor(controls.count, scheme.map.colorTextSecondary);
+    setFont(controls.count, scheme.metricAlias.fontSize, QFont::Normal);
+    setColor(controls.selectionSummary, scheme.map.colorTextTertiary);
+    setFont(controls.selectionSummary, scheme.metricAlias.fontSize, QFont::Normal);
+    controls.selectionSummary->setMinimumHeight(scheme.metricMap.font.fontHeight);
     setColor(controls.emptyTitle, scheme.map.colorText);
     setFont(controls.emptyTitle, scheme.metricAlias.fontSizeLG, QFont::DemiBold);
     setColor(controls.emptyDescription, scheme.map.colorTextSecondary);
@@ -193,6 +196,7 @@ void updateSelectionBar(const SelectionControls& controls, const QSet<QString>& 
                         const QVector<QString>& pageIds, bool canDelete, int availableWidth,
                         const QString& summary, const QString& deletePrompt) {
     const int count = static_cast<int>(selected.size());
+    PageContainerWidget::setStickyWidgetEnabled(controls.bar, count > 0);
     controls.summary->setText(summary);
     controls.bar->setAccessibleName(summary);
     controls.deleteConfirmation->setText(deletePrompt);
@@ -206,7 +210,6 @@ void updateSelectionBar(const SelectionControls& controls, const QSet<QString>& 
     controls.layout->setAlignment(controls.summary, wide ? Qt::AlignVCenter : Qt::AlignLeft);
     controls.layout->setAlignment(controls.actions, wide ? Qt::AlignRight | Qt::AlignVCenter
                                                          : Qt::AlignRight | Qt::AlignTop);
-    controls.bar->setVisible(count > 0);
 }
 
 } // namespace snow_shot::presentation::components::history_page

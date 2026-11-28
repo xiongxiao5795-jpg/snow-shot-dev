@@ -34,20 +34,12 @@
             <translation>请在“系统设置 &gt; 隐私与安全性 &gt; 自动化”中允许 Snow Shot 访问访达，然后重试</translation>
         </message>
         <message>
-            <source>Automatic screenshot saving failed: %1</source>
-            <translation>自动保存截图失败：%1</translation>
-        </message>
-        <message>
             <source>Cancel</source>
             <translation>取消</translation>
         </message>
         <message>
             <source>Could not insert the annotation template</source>
             <translation>无法插入标注模板</translation>
-        </message>
-        <message>
-            <source>Could not open the selected file: %1</source>
-            <translation>无法打开所选文件：%1</translation>
         </message>
         <message>
             <source>Could not read the selected files from Finder. Please try again</source>
@@ -176,10 +168,6 @@
         <message>
             <source>The screenshot export queue is full</source>
             <translation>截图导出队列已满</translation>
-        </message>
-        <message>
-            <source>The screenshot will be copied, but automatic saving could not be queued</source>
-            <translation>仍会复制截图，但无法将自动保存任务加入队列</translation>
         </message>
         <message>
             <source>The scrolling screenshot could not be pinned</source>

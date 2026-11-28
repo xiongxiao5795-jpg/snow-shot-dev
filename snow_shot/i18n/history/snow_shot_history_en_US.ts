@@ -15,6 +15,10 @@
     <context>
         <name>HistoryEntryWidget</name>
         <message>
+            <source>%1 x %2 px</source>
+            <translation>%1 x %2 px</translation>
+        </message>
+        <message>
             <source>%1 x %2 px  ·  %3 display(s)</source>
             <translation>%1 x %2 px  ·  %3 display(s)</translation>
         </message>
@@ -61,6 +65,10 @@
         <message>
             <source>Focused window</source>
             <translation>Focused window</translation>
+        </message>
+        <message>
+            <source>Image compression</source>
+            <translation>Image compression</translation>
         </message>
         <message>
             <source>Image editing</source>
@@ -161,10 +169,6 @@
             <translation>Could not read the selected image files. Please try again</translation>
         </message>
         <message>
-            <source>No available output filename was found</source>
-            <translation>No available output filename was found</translation>
-        </message>
-        <message>
             <source>The editing content could not be prepared for export</source>
             <translation>The editing content could not be prepared for export</translation>
         </message>
@@ -183,10 +187,6 @@
         <message>
             <source>The image is too large or there is not enough memory to load it</source>
             <translation>The image is too large or there is not enough memory to load it</translation>
-        </message>
-        <message>
-            <source>The save directory is not available</source>
-            <translation>The save directory is not available</translation>
         </message>
     </context>
     <context>
@@ -686,6 +686,10 @@
             <translation>Drag image files here, or choose add images</translation>
         </message>
         <message>
+            <source>Drag to move an image. Hold %1 to snap to other images. Drag a handle to resize around the center.</source>
+            <translation>Drag to move an image. Hold %1 to snap to other images. Drag a handle to resize around the center.</translation>
+        </message>
+        <message>
             <source>Drop images to stitch</source>
             <translation>Drop images to stitch</translation>
         </message>
@@ -700,6 +704,10 @@
         <message>
             <source>Flip vertically</source>
             <translation>Flip vertically</translation>
+        </message>
+        <message>
+            <source>Free</source>
+            <translation>Free</translation>
         </message>
         <message>
             <source>Gray</source>
@@ -780,6 +788,14 @@
         <message>
             <source>Percentage</source>
             <translation>Percentage</translation>
+        </message>
+        <message>
+            <source>Percentage of the first image’s original height after rotation</source>
+            <translation>Percentage of the first image’s original height after rotation</translation>
+        </message>
+        <message>
+            <source>Percentage of the greatest original image height after rotation</source>
+            <translation>Percentage of the greatest original image height after rotation</translation>
         </message>
         <message>
             <source>Percentage of the grid cell width</source>
@@ -1636,6 +1652,10 @@ Files:
             <translation>Hidden</translation>
         </message>
         <message>
+            <source>Image compression</source>
+            <translation>Image compression</translation>
+        </message>
+        <message>
             <source>Image editing</source>
             <translation>Image editing</translation>
         </message>
@@ -1949,6 +1969,14 @@ Files:
             <translation>Cancel</translation>
         </message>
         <message>
+            <source>Cancel crop</source>
+            <translation>Cancel crop</translation>
+        </message>
+        <message>
+            <source>Checkerboard</source>
+            <translation>Checkerboard</translation>
+        </message>
+        <message>
             <source>Click-through</source>
             <translation>Click-through</translation>
         </message>
@@ -2002,6 +2030,10 @@ Files:
         <message>
             <source>Copy original content</source>
             <translation>Copy original content</translation>
+        </message>
+        <message>
+            <source>Copy text to clipboard</source>
+            <translation>Copy text to clipboard</translation>
         </message>
         <message>
             <source>Copy to clipboard</source>
@@ -2104,6 +2136,10 @@ Files:
             <translation>Hide other windows</translation>
         </message>
         <message>
+            <source>Image compression</source>
+            <translation>Image compression</translation>
+        </message>
+        <message>
             <source>Image editing</source>
             <translation>Image editing</translation>
         </message>
@@ -2126,6 +2162,10 @@ Files:
         <message>
             <source>Increase speed</source>
             <translation>Increase speed</translation>
+        </message>
+        <message>
+            <source>Keep transparent</source>
+            <translation>Keep transparent</translation>
         </message>
         <message>
             <source>Live content is unavailable. Retrying...</source>
@@ -2178,10 +2218,6 @@ Files:
         <message>
             <source>Pause</source>
             <translation>Pause</translation>
-        </message>
-        <message>
-            <source>Pin to screen management</source>
-            <translation>Pin to screen management</translation>
         </message>
         <message>
             <source>Pinned content</source>
@@ -2299,10 +2335,6 @@ Files:
             <translation>The current window content cannot be captured</translation>
         </message>
         <message>
-            <source>The image could not be saved automatically: %1</source>
-            <translation>The image could not be saved automatically: %1</translation>
-        </message>
-        <message>
             <source>The new content could not be loaded</source>
             <translation>The new content could not be loaded</translation>
         </message>
@@ -2327,6 +2359,10 @@ Files:
             <translation>The pinned image save could not be started</translation>
         </message>
         <message>
+            <source>The pinned window could not be saved to history</source>
+            <translation>The pinned window could not be saved to history</translation>
+        </message>
+        <message>
             <source>The window changed while preparing the image. Please try again</source>
             <translation>The window changed while preparing the image. Please try again</translation>
         </message>
@@ -2347,6 +2383,10 @@ Files:
             <translation>Translation results</translation>
         </message>
         <message>
+            <source>Transparent layer</source>
+            <translation>Transparent layer</translation>
+        </message>
+        <message>
             <source>Unavailable</source>
             <translation>Unavailable</translation>
         </message>
@@ -2361,6 +2401,10 @@ Files:
         <message>
             <source>Uploading to cloud... %1%</source>
             <translation>Uploading to cloud... %1%</translation>
+        </message>
+        <message>
+            <source>Window management</source>
+            <translation>Window management</translation>
         </message>
     </context>
     <context>
@@ -2467,10 +2511,6 @@ Files:
         <message>
             <source>Save as file</source>
             <translation>Save as file</translation>
-        </message>
-        <message>
-            <source>Text files (*.txt)</source>
-            <translation>Text files (*.txt)</translation>
         </message>
         <message>
             <source>The image could not be loaded</source>
@@ -2612,6 +2652,10 @@ Files:
         <message>
             <source>Copy files to clipboard</source>
             <translation>Copy files to clipboard</translation>
+        </message>
+        <message>
+            <source>Copy text to clipboard</source>
+            <translation>Copy text to clipboard</translation>
         </message>
         <message>
             <source>Delete empty groups</source>

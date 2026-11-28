@@ -18,7 +18,7 @@ snow_require_msvc_version()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SnowWindowsArchitecture.cmake")
 snow_configure_windows_architecture()
 
-set(SNOW_SHOT_VERSION "1.5.9")
+set(SNOW_SHOT_VERSION "1.6.7")
 if(NOT SNOW_SHOT_VERSION MATCHES "^([0-9]+\\.[0-9]+\\.[0-9]+)(-[0-9A-Za-z.-]+)?$")
     message(FATAL_ERROR "SNOW_SHOT_VERSION must be a semantic version such as 0.8.0-dev")
 endif()
@@ -431,6 +431,7 @@ if(NOT TARGET snow-benchmarks)
         snow-shot-scrolling-preview-benchmark
         snow-shot-scrolling-result-async-benchmark
         snow-shot-scrolling-image-performance-benchmark
+        snow-shot-scrolling-corpus-performance-benchmark
     )
         if(TARGET ${_snow_benchmark})
             add_dependencies(snow-benchmarks ${_snow_benchmark})

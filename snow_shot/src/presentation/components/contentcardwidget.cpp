@@ -58,9 +58,11 @@ ContentCardWidget::ContentCardWidget(
         static_cast<void>(applicationStorage.initialize());
     }
     connect(&applicationStorage.configuration(),
-            &snow_shot::storage::ConfigurationStore::valueChanged, this,
-            [this](const QString& key, const QJsonValue&) {
-                if (key == QStringLiteral("extended_features/translation_page_enabled") &&
+            &snow_shot::storage::ConfigurationStore::valuesCommitted, this,
+            [this](snow_shot::storage::ConfigurationWriteOrigin origin, const auto&,
+                   const auto& values) {
+                if (origin != snow_shot::storage::ConfigurationWriteOrigin::Remote &&
+                    values.contains(QStringLiteral("extended_features/translation_page_enabled")) &&
                     m_currentLocation.pageId == QStringLiteral("translation") &&
                     !snow_shot::storage::ExtendedFeaturesSettings().translationPageEnabled()) {
                     navigateTo({QStringLiteral("text-recognition-translation"),
@@ -171,6 +173,8 @@ QWidget* ContentCardWidget::createPage(
     QWidget* page = nullptr;
     if (definition.kind == snow_shot::presentation::settings::SettingsPageKind::ScreenshotHistory) {
         auto* historyPage = new ScreenshotHistoryPageWidget(m_stack);
+        connect(historyPage, &ScreenshotHistoryPageWidget::imageDragRequested, this,
+                &ContentCardWidget::imageDragRequested);
         connect(historyPage, &ScreenshotHistoryPageWidget::editRequested, this,
                 &ContentCardWidget::screenshotHistoryEditRequested);
         connect(historyPage, &ScreenshotHistoryPageWidget::pinRequested, this,
@@ -181,16 +185,22 @@ QWidget* ContentCardWidget::createPage(
                 &ContentCardWidget::screenshotHistorySplitRequested);
         connect(historyPage, &ScreenshotHistoryPageWidget::imageEditingRequested, this,
                 &ContentCardWidget::screenshotHistoryImageEditingRequested);
+        connect(historyPage, &ScreenshotHistoryPageWidget::imageCompressionRequested, this,
+                &ContentCardWidget::screenshotHistoryImageCompressionRequested);
         page = historyPage;
     } else if (definition.kind ==
                snow_shot::presentation::settings::SettingsPageKind::PinnedWindowManagement) {
         auto* pinnedPage = new PinnedWindowManagementPageWidget(m_stack);
+        connect(pinnedPage, &PinnedWindowManagementPageWidget::imageDragRequested, this,
+                &ContentCardWidget::imageDragRequested);
         connect(pinnedPage, &PinnedWindowManagementPageWidget::stitchImagesRequested, this,
                 &ContentCardWidget::pinnedWindowStitchImagesRequested);
         connect(pinnedPage, &PinnedWindowManagementPageWidget::splitRequested, this,
                 &ContentCardWidget::pinnedWindowSplitRequested);
         connect(pinnedPage, &PinnedWindowManagementPageWidget::imageEditingRequested, this,
                 &ContentCardWidget::pinnedWindowImageEditingRequested);
+        connect(pinnedPage, &PinnedWindowManagementPageWidget::imageCompressionRequested, this,
+                &ContentCardWidget::pinnedWindowImageCompressionRequested);
         page = pinnedPage;
     } else if (definition.kind ==
                snow_shot::presentation::settings::SettingsPageKind::Translation) {

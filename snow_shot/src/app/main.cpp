@@ -15,6 +15,12 @@
 #include "snow_shot/presentation/settings/applicationpriority.h"
 #include "snow_shot/platform/windows/autostartregistration.h"
 #include "snow_shot/platform/windows/administratorlaunch.h"
+#ifdef Q_OS_WIN
+#include "snow_shot/platform/windows/processpowerqos.h"
+#include "snow_shot/platform/windows/shellbatchfile.h"
+#include <QLibrary>
+#include <bit>
+#endif
 #include "snow_shot/app/distribution.h"
 #include "snow_shot/platform/windows/shellcontextmenuregistration.h"
 #include "widgets/platform_compatibility.h"
@@ -28,7 +34,6 @@
 #include "startupregistrationreport.h"
 #include "updateprobe.h"
 #include "snow_shot/storage/settingsadapters.h"
-#include "snow_shot/presentation/capture/screenshotcapturepolicy.h"
 #include "../presentation/capture/screenshotcaptureperfinstrumentation.h"
 #include "../presentation/capture/screenshotscrollingpipeline.h"
 #include "../presentation/pinned/screenshotpintoperfinstrumentation.h"
@@ -124,6 +129,25 @@ std::optional<bool> updateTransactionPending(const QString& helperPath, const QS
 } // namespace
 
 int main(int argc, char* argv[]) {
+#ifdef Q_OS_WIN
+    if (argc > 1 && QByteArrayView(argv[1]) == "--explorer-command-server") {
+        QCoreApplication helper(argc, argv);
+        const auto arguments = helper.arguments();
+        if (arguments.size() != 4 ||
+            arguments.last().compare(QStringLiteral("-Embedding"), Qt::CaseInsensitive) != 0)
+            return 2;
+        bool valid = false;
+        const auto action = arguments.at(2).toUInt(&valid);
+        if (!valid || action >= snow_shot::platform::windows::shellActionIds.size())
+            return 2;
+        QLibrary extension(QDir(helper.applicationDirPath())
+                               .filePath(QStringLiteral("SnowShotExplorerCommand.dll")));
+        using RunServer = HRESULT(WINAPI*)(ULONG, BOOL);
+        const auto run =
+            std::bit_cast<RunServer>(extension.resolve("SnowShotRunExplorerCommandServer"));
+        return run && SUCCEEDED(run(action, snow_shot::app::edition::isMini)) ? 0 : 2;
+    }
+#endif
     if (argc > 1 && QByteArray(argv[1]) == "--distribution-probe") {
         if (argc != 2)
             return 64;
@@ -470,9 +494,10 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     // Forwarding processes need only Qt and the instance protocol. Storage probes,
     // helper processes and display discovery belong to the primary instance.
-    auto launchArguments =
+    const auto processArguments =
         applicationRestart ? snow_shot::app::normalApplicationArguments(QApplication::arguments())
                            : QApplication::arguments();
+    auto launchArguments = snow_shot::app::processLaunchOperands(processArguments);
     const bool updaterRelaunch = snow_shot::update::isStartupUpdateRelaunch(launchArguments);
     launchArguments = snow_shot::update::normalStartupArguments(std::move(launchArguments));
 #ifdef Q_OS_MACOS
@@ -612,7 +637,6 @@ int main(int argc, char* argv[]) {
             {{QStringLiteral("count"), QGuiApplication::screens().size()}});
     });
 #endif
-    static_cast<void>(snow_shot::presentation::capture::resolveAutoScreenshotApiMode());
 #if defined(SNOW_SHOT_PIN_PERF_INSTRUMENTATION)
     snow_shot::presentation::pin_perf::configureTrace(
         qEnvironmentVariable("SNOW_SHOT_PIN_PERF_TRACE"));
@@ -642,6 +666,11 @@ int main(int argc, char* argv[]) {
 #ifndef Q_OS_MACOS
     static_cast<void>(snow_shot::presentation::settings::applyConfiguredApplicationPriority());
 #endif
+#ifdef Q_OS_WIN
+    auto& applicationStorage = snow_shot::storage::ApplicationStorage::instance();
+    static_cast<void>(snow_shot::platform::windows::applyProcessPowerQoS(
+        applicationStorage.configuration().value(QStringLiteral("system/power_qos")).toString()));
+#endif
     QApplication::setQuitOnLastWindowClosed(false);
 #ifndef Q_OS_MACOS
     QApplication::setWindowIcon(
@@ -651,7 +680,6 @@ int main(int argc, char* argv[]) {
     snow_shot::presentation::LanguageManager::instance().initialize();
     snow_shot::presentation::styles::ThemeManager::instance().initialize(app);
 #ifdef Q_OS_WIN
-    auto& applicationStorage = snow_shot::storage::ApplicationStorage::instance();
     if (!snow_shot::app::distribution::isStoreManaged() && !updaterRelaunch &&
         snow_shot::update::startupUpdateMayDelayLaunch(launchArguments) &&
         applicationStorage.configuration().value(QStringLiteral("updates/mode")).toString() ==
@@ -677,11 +705,11 @@ int main(int argc, char* argv[]) {
             administratorRestart || launchArguments.contains(QStringLiteral("--show-main-window"));
         const auto initialImageRequest =
             snow_shot::app::parseShellImageLaunchRequest(launchArguments);
-        QStringList pendingImagePaths =
-            initialImageRequest.valid ? initialImageRequest.paths : QStringList{};
+        QStringList pendingFileArguments =
+            initialImageRequest.valid ? initialImageRequest.replayArguments : QStringList{};
         const auto relaunchArguments = [&] {
-            return snow_shot::update::startupUpdateRelaunchArguments(foregroundRequested,
-                                                                     pendingImagePaths);
+            return snow_shot::update::startupUpdateShellArguments(foregroundRequested,
+                                                                  pendingFileArguments);
         };
         singleInstance.setLaunchRequestAdmission([&](const QStringList& arguments) {
             if (!startupUpdate.handoffPending())
@@ -690,18 +718,18 @@ int main(int argc, char* argv[]) {
             const bool foreground =
                 foregroundRequested || arguments.contains(QStringLiteral("--show-main-window")) ||
                 (!request.requested && !arguments.contains(QStringLiteral("--autostart")));
-            auto paths = pendingImagePaths;
+            auto paths = pendingFileArguments;
             if (request.valid)
-                paths.append(request.paths);
+                paths.append(request.replayArguments);
             return startupUpdate.acceptsRelaunchArguments(
-                snow_shot::update::startupUpdateRelaunchArguments(foreground, paths));
+                snow_shot::update::startupUpdateShellArguments(foreground, paths));
         });
         const auto forwardedLaunch = QObject::connect(
             &singleInstance, &snow_shot::app::SingleInstanceCoordinator::launchRequestReceived,
             &app, [&](const QStringList& arguments) {
                 const auto imageRequest = snow_shot::app::parseShellImageLaunchRequest(arguments);
                 if (imageRequest.valid)
-                    pendingImagePaths.append(imageRequest.paths);
+                    pendingFileArguments.append(imageRequest.replayArguments);
                 foregroundRequested =
                     foregroundRequested ||
                     arguments.contains(QStringLiteral("--show-main-window")) ||
@@ -729,22 +757,14 @@ int main(int argc, char* argv[]) {
     });
     applicationController.start(launchArguments, [&] {
 #ifdef Q_OS_WIN
-        QString shellRegistrationError;
-        const snow_shot::platform::windows::ShellContextMenuRegistration shellRegistration;
-        const auto contextMenuShortcuts = snow_shot::shortcuts::shortcutBindingsFromJson(
-            snow_shot::storage::ApplicationStorage::instance().configuration().value(
-                QStringLiteral("context_menu_shortcuts/edit_with_snow_shot")),
-            false);
-        if (!shellRegistration.setMode(
-                snow_shot::platform::windows::ShellContextMenuRegistration::modeFromValue(
-                    snow_shot::storage::ApplicationStorage::instance()
-                        .configuration()
-                        .value(QStringLiteral("system/context_menu_mode"))
-                        .toString()),
-                contextMenuShortcuts.isEmpty() ? QString()
-                                               : contextMenuShortcuts.first().portableText,
-                &shellRegistrationError)) {
-            snow_shot::app::reportStartupRegistrationFailure(shellRegistrationError);
+        snow_shot::platform::windows::removeExpiredShellBatches(
+            snow_shot::platform::windows::shellBatchDirectory(
+                snow_shot::app::edition::isMini, snow_shot::app::distribution::isStoreManaged()));
+        const snow_shot::platform::windows::ShellContextMenuRegistration registration;
+        const auto result = registration.change(registration.preferences(
+            snow_shot::storage::ApplicationStorage::instance().configuration().snapshot()));
+        if (!result.success) {
+            snow_shot::app::reportStartupRegistrationFailure(result.error);
         }
 #endif
 #ifndef Q_OS_MACOS

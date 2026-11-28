@@ -84,21 +84,10 @@ class NoopToolbarCommands final : public ScreenshotToolbarCommandSink,
                                   public ScreenshotSelectionToolbarCommandSink {
   public:
     void setMoveTool() override {}
-    void setSelectTool() override {}
-    void setShapeTool() override {}
-    void setArrowTool() override {}
-    void setLineTool() override {}
-    void setBrushTool() override {}
-    void setHighlightTool() override {}
-    void setBrushHighlightTool() override {}
-    void setEraserTool() override {}
-    void setFilterTool() override {}
-    void setWatermarkTool() override {}
+    void setCanvasTool(SnowCanvasTool) override {}
     void setWatermarkConfigFromToolbar(const SnowCanvasWatermarkConfig&) override {}
     void previewWatermarkFromToolbar(const SnowCanvasWatermarkConfig&) override {}
     void setFilterStyleFromToolbar(const SnowCanvasFilterStyle&, quint32) override {}
-    void setTextTool() override {}
-    void setSequenceNumberTool() override {}
     void setOcrTool() override {}
     void startScrollingScreenshot() override {}
     void pinSelectionToScreen() override {}
@@ -288,6 +277,10 @@ class Fixture final {
         Q_UNUSED(virtualClock);
 #endif
 #if !defined(SNOW_SHOT_SELECTION_PRESENTATION_BASELINE)
+        context.sampleExternalDrag = [this] {
+            if (onSampleExternalDrag)
+                onSampleExternalDrag();
+        };
         context.frameSchedulerBackend = frameBackend;
         context.presentColorPicker = [this](ScreenshotOverlayWindow* owner,
                                             const QPointF& position) {
@@ -447,6 +440,7 @@ class Fixture final {
     std::unique_ptr<ScreenshotColorPickerController> colorPickerController;
     std::unique_ptr<ScreenshotPresentationServices> services;
     qint64 nowNanoseconds = 1000000000;
+    std::function<void()> onSampleExternalDrag;
     qint64 stateNotifications = 0;
     std::function<void()> onStateChanged;
     bool guidesEnabled = false;

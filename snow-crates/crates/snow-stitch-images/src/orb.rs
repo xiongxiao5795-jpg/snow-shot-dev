@@ -7,26 +7,26 @@ use crate::{Frame, PixelFormat};
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m128i, __m256i, _mm_loadl_epi64, _mm_loadu_si128, _mm256_add_epi32, _mm256_add_ps,
-    _mm256_and_si256, _mm256_cmpgt_epi16, _mm256_cvtepi32_ps, _mm256_cvtepu8_epi16,
-    _mm256_cvtepu8_epi32, _mm256_cvtps_epi32, _mm256_cvttps_epi32, _mm256_i32gather_epi32,
-    _mm256_loadu_ps, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_mul_ps, _mm256_mullo_epi32,
-    _mm256_or_si256, _mm256_set1_epi16, _mm256_set1_epi32, _mm256_set1_ps, _mm256_setr_epi32,
-    _mm256_setzero_si256, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256,
-    _mm256_sub_epi16, _mm256_sub_ps,
+    __m128i, __m256i, _mm_loadl_epi64, _mm256_add_epi32, _mm256_add_ps, _mm256_and_si256,
+    _mm256_cvtepi32_ps, _mm256_cvtepu8_epi32, _mm256_cvtps_epi32, _mm256_cvttps_epi32,
+    _mm256_i32gather_epi32, _mm256_loadu_ps, _mm256_loadu_si256, _mm256_mul_ps, _mm256_mullo_epi32,
+    _mm256_set1_epi32, _mm256_set1_ps, _mm256_setr_epi32, _mm256_srli_epi32, _mm256_storeu_ps,
+    _mm256_storeu_si256, _mm256_sub_ps,
 };
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
     __m128i, __m256i, _mm_cmpgt_epi16, _mm_cvtsi128_si32, _mm_loadl_epi64, _mm_loadu_si128,
     _mm_max_epi16, _mm_min_epi16, _mm_movemask_epi8, _mm_or_si128, _mm_packs_epi16, _mm_set1_epi16,
     _mm_setzero_si128, _mm_slli_si128, _mm_srli_si128, _mm_sub_epi16, _mm256_add_epi32,
-    _mm256_add_ps, _mm256_and_si256, _mm256_cmpgt_epi16, _mm256_cvtepi32_ps, _mm256_cvtepu8_epi16,
-    _mm256_cvtepu8_epi32, _mm256_cvtps_epi32, _mm256_cvttps_epi32, _mm256_i32gather_epi32,
-    _mm256_loadu_ps, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_mul_ps, _mm256_mullo_epi32,
-    _mm256_or_si256, _mm256_set1_epi16, _mm256_set1_epi32, _mm256_set1_ps, _mm256_setr_epi32,
-    _mm256_setzero_si256, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256,
-    _mm256_sub_epi16, _mm256_sub_ps,
+    _mm256_add_ps, _mm256_and_si256, _mm256_cvtepi32_ps, _mm256_cvtepu8_epi32, _mm256_cvtps_epi32,
+    _mm256_cvttps_epi32, _mm256_i32gather_epi32, _mm256_loadu_ps, _mm256_loadu_si256,
+    _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi32, _mm256_set1_ps, _mm256_setr_epi32,
+    _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_ps,
 };
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[path = "orb_avx2.rs"]
+mod avx2;
 
 #[cfg(target_arch = "aarch64")]
 #[path = "orb_neon.rs"]
@@ -109,6 +109,8 @@ struct ResizePlan {
     width: usize,
     height: usize,
     horizontal: Vec<ResizeCoefficient>,
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+    blocks: Vec<ResizeBlock>,
     vertical: Vec<ResizeCoefficient>,
 }
 
@@ -118,6 +120,35 @@ struct ResizeCoefficient {
     second: u32,
     first_weight: u16,
     second_weight: u16,
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+#[derive(Debug)]
+struct ResizeBlock {
+    start: usize,
+    first: [u8; 8],
+    second: [u8; 8],
+    weights: [u16; 8],
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+fn resize_blocks_plan(width: usize, coefficients: &[ResizeCoefficient]) -> Vec<ResizeBlock> {
+    let Some(last_load) = width.checked_sub(16) else {
+        return Vec::new();
+    };
+    coefficients
+        .chunks_exact(8)
+        .map_while(|group| {
+            // Each adjacent group in the ORB pyramid normally fits in a single 16-byte load.
+            let start = (group[0].first as usize).min(last_load);
+            ((group[7].second as usize) < start + 16).then(|| ResizeBlock {
+                start,
+                first: std::array::from_fn(|i| (group[i].first as usize - start) as u8),
+                second: std::array::from_fn(|i| (group[i].second as usize - start) as u8),
+                weights: std::array::from_fn(|i| group[i].second_weight),
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -448,9 +479,9 @@ fn score_fast_row_scalar(
     row: &mut [u8],
     y: u32,
     threshold: i16,
-    border: u32,
+    columns: std::ops::Range<u32>,
 ) {
-    for x in border..width - border {
+    for x in columns {
         if may_pass_fast_9_16(width, pixels, x, y, threshold) {
             row[x as usize] = score(circle_values(width, pixels, x, y), threshold).unwrap_or(0);
         }
@@ -472,76 +503,10 @@ fn fast_scores_scalar(
         .for_each(|(y, row)| {
             let y = y as u32;
             if (border..height - border).contains(&y) {
-                score_fast_row_scalar(width, pixels, row, y, threshold, border);
+                score_fast_row_scalar(width, pixels, row, y, threshold, border..width - border);
             }
         });
     scores
-}
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
-unsafe fn score_fast_row_avx2(
-    width: u32,
-    pixels: &[u8],
-    row: &mut [u8],
-    y: u32,
-    threshold: i16,
-    border: u32,
-) {
-    let width_usize = width as usize;
-    let threshold_vector = _mm256_set1_epi16(threshold);
-    let one = _mm256_set1_epi16(1);
-    let mut x = border as usize;
-    while x + 16 <= width_usize - border as usize {
-        let center_index = y as usize * width_usize + x;
-        let center = unsafe {
-            _mm256_cvtepu8_epi16(_mm_loadu_si128(
-                pixels.as_ptr().add(center_index).cast::<__m128i>(),
-            ))
-        };
-        let mut dark_count = _mm256_setzero_si256();
-        let mut bright_count = _mm256_setzero_si256();
-        macro_rules! count_sample {
-            ($index:expr) => {{
-                let sample = unsafe {
-                    _mm256_cvtepu8_epi16(_mm_loadu_si128(
-                        pixels.as_ptr().add($index).cast::<__m128i>(),
-                    ))
-                };
-                dark_count = _mm256_sub_epi16(
-                    dark_count,
-                    _mm256_cmpgt_epi16(_mm256_sub_epi16(center, sample), threshold_vector),
-                );
-                bright_count = _mm256_sub_epi16(
-                    bright_count,
-                    _mm256_cmpgt_epi16(_mm256_sub_epi16(sample, center), threshold_vector),
-                );
-            }};
-        }
-        count_sample!(center_index + width_usize * 3);
-        count_sample!(center_index + 3);
-        count_sample!(center_index - width_usize * 3);
-        count_sample!(center_index - 3);
-        let passes = _mm256_or_si256(
-            _mm256_cmpgt_epi16(dark_count, one),
-            _mm256_cmpgt_epi16(bright_count, one),
-        );
-        let mask = _mm256_movemask_epi8(passes) as u32;
-        for lane in 0..16 {
-            if mask & (1 << (lane * 2)) != 0 {
-                let target_x = (x + lane) as u32;
-                row[x + lane] =
-                    score(circle_values(width, pixels, target_x, y), threshold).unwrap_or(0);
-            }
-        }
-        x += 16;
-    }
-    for target_x in x as u32..width - border {
-        if may_pass_fast_9_16(width, pixels, target_x, y, threshold) {
-            row[target_x as usize] =
-                score(circle_values(width, pixels, target_x, y), threshold).unwrap_or(0);
-        }
-    }
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -559,7 +524,7 @@ unsafe fn fast_scores_avx2(
         .for_each(|(y, row)| {
             let y = y as u32;
             if (border..height - border).contains(&y) {
-                unsafe { score_fast_row_avx2(width, pixels, row, y, threshold, border) };
+                unsafe { avx2::score_fast_row(width, pixels, row, y, threshold, border) };
             }
         });
     scores
@@ -734,6 +699,8 @@ fn resize_linear_exact(source: &Image, plan: &ResizePlan) -> Image {
         return source.clone();
     }
     let source_pixels = source.pixels.as_slice();
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    let use_avx2 = std::arch::is_x86_feature_detected!("avx2");
     let mut pixels = RasterBuffer::zeroed(plan.width * plan.height);
     pixels
         .par_chunks_mut(plan.width)
@@ -742,20 +709,32 @@ fn resize_linear_exact(source: &Image, plan: &ResizePlan) -> Image {
             let vertical = plan.vertical[target_y];
             let source_y = vertical.first as usize;
             let next_y = vertical.second as usize;
-            for (target_x, &horizontal) in plan.horizontal.iter().enumerate() {
+            let top = &source_pixels[source_y * source.width..(source_y + 1) * source.width];
+            let bottom = &source_pixels[next_y * source.width..(next_y + 1) * source.width];
+            #[cfg(target_arch = "aarch64")]
+            let processed =
+                unsafe { neon::resize_blocks(&plan.blocks, vertical, top, bottom, output) };
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            let processed = if use_avx2 {
+                unsafe { avx2::resize_blocks(&plan.blocks, vertical, top, bottom, output) }
+            } else {
+                0
+            };
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
+            let processed = 0;
+            for (target, horizontal) in output[processed..]
+                .iter_mut()
+                .zip(&plan.horizontal[processed..])
+            {
                 let source_x = horizontal.first as usize;
                 let next_x = horizontal.second as usize;
-                let top_value = u32::from(source_pixels[source_y * source.width + source_x])
-                    * u32::from(horizontal.first_weight)
-                    + u32::from(source_pixels[source_y * source.width + next_x])
-                        * u32::from(horizontal.second_weight);
-                let bottom_value = u32::from(source_pixels[next_y * source.width + source_x])
-                    * u32::from(horizontal.first_weight)
-                    + u32::from(source_pixels[next_y * source.width + next_x])
-                        * u32::from(horizontal.second_weight);
+                let top_value = u32::from(top[source_x]) * u32::from(horizontal.first_weight)
+                    + u32::from(top[next_x]) * u32::from(horizontal.second_weight);
+                let bottom_value = u32::from(bottom[source_x]) * u32::from(horizontal.first_weight)
+                    + u32::from(bottom[next_x]) * u32::from(horizontal.second_weight);
                 let value = top_value * u32::from(vertical.first_weight)
                     + bottom_value * u32::from(vertical.second_weight);
-                output[target_x] = ((value + (1_u32 << 15)) >> 16) as u8;
+                *target = ((value + (1_u32 << 15)) >> 16) as u8;
             }
         });
     Image::from_buffer(plan.width, plan.height, pixels)
@@ -826,12 +805,19 @@ impl PyramidPlan {
         let levels = (1..LEVELS)
             .map(|level| {
                 let (target_width, target_height) = level_size(width, height, level);
+                let horizontal = resize_coefficients(source_width, target_width);
                 let plan = ResizePlan {
                     source_width,
                     source_height,
                     width: target_width,
                     height: target_height,
-                    horizontal: resize_coefficients(source_width, target_width),
+                    #[cfg(any(
+                        target_arch = "aarch64",
+                        target_arch = "x86",
+                        target_arch = "x86_64"
+                    ))]
+                    blocks: resize_blocks_plan(source_width, &horizontal),
+                    horizontal,
                     vertical: resize_coefficients(source_height, target_height),
                 };
                 source_width = target_width;
@@ -989,6 +975,7 @@ fn fast_atan2(y: f32, x: f32) -> f32 {
     angle
 }
 
+#[cfg(any(test, not(target_arch = "aarch64")))]
 fn orient(image: &Image, keypoint: &mut Keypoint, maximum_x: &[usize]) {
     let pixels = image.pixels.as_slice();
     let x = cv_round(keypoint.x) as usize;
@@ -997,22 +984,18 @@ fn orient(image: &Image, keypoint: &mut Keypoint, maximum_x: &[usize]) {
     let half = PATCH_SIZE / 2;
     let mut moment_y = 0_i32;
     let mut moment_x = 0_i32;
-    for horizontal in -(half as isize)..=half as isize {
-        moment_x += horizontal as i32 * i32::from(pixels[(center as isize + horizontal) as usize]);
+    for (index, &pixel) in pixels[center - half..=center + half].iter().enumerate() {
+        moment_x += (index as i32 - half as i32) * i32::from(pixel);
     }
-    for (vertical, &horizontal_maximum) in maximum_x.iter().enumerate().take(half + 1).skip(1) {
+    for (vertical, &radius) in maximum_x.iter().enumerate().take(half + 1).skip(1) {
+        let row_offset = vertical * image.width;
+        let lower = &pixels[center + row_offset - radius..=center + row_offset + radius];
+        let upper = &pixels[center - row_offset - radius..=center - row_offset + radius];
         let mut sum = 0_i32;
-        for horizontal in -(horizontal_maximum as isize)..=horizontal_maximum as isize {
-            let above = i32::from(
-                pixels[(center as isize + horizontal + vertical as isize * image.width as isize)
-                    as usize],
-            );
-            let below = i32::from(
-                pixels[(center as isize + horizontal - vertical as isize * image.width as isize)
-                    as usize],
-            );
-            sum += above - below;
-            moment_x += horizontal as i32 * (above + below);
+        for (index, (&a, &b)) in lower.iter().zip(upper).enumerate() {
+            let (a, b) = (i32::from(a), i32::from(b));
+            sum += a - b;
+            moment_x += (index as i32 - radius as i32) * (a + b);
         }
         moment_y += vertical as i32 * sum;
     }
@@ -1064,36 +1047,46 @@ fn vertical_blur_pixel(rows: &[&[f32]; 7], x: usize) -> u8 {
     cv_round(value).clamp(0, 255) as u8
 }
 
-/// A separable seven-tap blur needs seven horizontal rows, regardless of height.
-/// The slots are exclusively owned by this blur; reflected border rows can share
-/// a slot because each live source row has a distinct index modulo seven.
+/// Each stripe keeps a ring of seven horizontal rows. Reflect against the entire
+/// image so a worker boundary has exactly the same neighborhood as an interior row.
 fn blur_with_rows(
     image: &Image,
-    mut horizontal_row: impl FnMut(&mut [f32], usize),
-    mut vertical_row: impl FnMut([&[f32]; 7], &mut [u8]),
+    horizontal_row: impl Fn(&mut [f32], usize) + Sync,
+    vertical_row: impl Fn([&[f32]; 7], &mut [u8]) + Sync,
 ) -> Image {
-    let mut horizontal = RasterArray::<f32>::zeroed(image.width * 7);
-    let horizontal = &mut *horizontal;
-    let mut cached_rows = [usize::MAX; 7];
     let mut pixels = RasterBuffer::zeroed(image.pixels.len());
-    for (y, output) in pixels.as_mut_slice().chunks_mut(image.width).enumerate() {
-        let sources: [usize; 7] = std::array::from_fn(|offset| {
-            reflect_101(y as isize + offset as isize - 3, image.height)
-        });
-        for source in sources {
-            let slot = source % 7;
-            if cached_rows[slot] != source {
-                let start = slot * image.width;
-                horizontal_row(&mut horizontal[start..start + image.width], source);
-                cached_rows[slot] = source;
-            }
-        }
-        let rows = sources.map(|source| {
-            let start = source % 7 * image.width;
-            &horizontal[start..start + image.width]
-        });
-        vertical_row(rows, output);
+    if pixels.is_empty() {
+        return Image::from_buffer(image.width, image.height, pixels);
     }
+    let stripe_rows = (128 * 1024 / image.width).max(64).min(image.height);
+    pixels
+        .par_chunks_mut(image.width * stripe_rows)
+        .enumerate()
+        .for_each_init(
+            || RasterArray::<f32>::zeroed(image.width * 7),
+            |horizontal, (stripe, output)| {
+                let mut cached_rows = [usize::MAX; 7];
+                for (local_y, output_row) in output.chunks_mut(image.width).enumerate() {
+                    let y = stripe * stripe_rows + local_y;
+                    let sources: [usize; 7] = std::array::from_fn(|offset| {
+                        reflect_101(y as isize + offset as isize - 3, image.height)
+                    });
+                    for source in sources {
+                        let slot = source % 7;
+                        if cached_rows[slot] != source {
+                            let start = slot * image.width;
+                            horizontal_row(&mut horizontal[start..start + image.width], source);
+                            cached_rows[slot] = source;
+                        }
+                    }
+                    let rows = sources.map(|source| {
+                        let start = source % 7 * image.width;
+                        &horizontal[start..start + image.width]
+                    });
+                    vertical_row(rows, output_row);
+                }
+            },
+        );
     Image::from_buffer(image.width, image.height, pixels)
 }
 
@@ -1283,7 +1276,6 @@ fn orb_pattern_xy() -> &'static ([i32; 512], [i32; 512]) {
     })
 }
 
-#[cfg(any(test, not(target_arch = "aarch64")))]
 fn descriptor_scalar(image: &Image, keypoint: Keypoint) -> [u8; 32] {
     const RADIANS_PER_DEGREE: f32 = (std::f64::consts::PI / 180.0) as f32;
     let scale = 1.0_f32 / scale_for_level(keypoint.octave);
@@ -1385,6 +1377,10 @@ pub(crate) fn detect(
     let quotas = feature_quota(max_features);
     let levels = pyramid(image, pyramid_plan);
     let maximum_x = umax();
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    let weights = std::arch::is_x86_feature_detected!("avx2").then(avx2::moment_weights);
+    #[cfg(target_arch = "aarch64")]
+    let weights = neon::MomentWeights::new(&maximum_x);
     let by_level = levels
         .par_iter()
         .enumerate()
@@ -1415,6 +1411,23 @@ pub(crate) fn detect(
                 .for_each(|keypoint| harris_response(level_image, keypoint));
             retain_best(&mut keypoints, quotas[level]);
             keypoints.par_iter_mut().for_each(|keypoint| {
+                #[cfg(target_arch = "aarch64")]
+                // FAST points are inside EDGE_THRESHOLD, beyond the orientation patch.
+                unsafe {
+                    neon::orient(level_image, keypoint, &weights)
+                };
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                if let Some(weights) = weights {
+                    // The FAST border covers the 32-byte loads across the 31-pixel disc.
+                    unsafe { avx2::orient(level_image, keypoint, weights) };
+                } else {
+                    orient(level_image, keypoint, &maximum_x);
+                }
+                #[cfg(not(any(
+                    target_arch = "x86",
+                    target_arch = "x86_64",
+                    target_arch = "aarch64"
+                )))]
                 orient(level_image, keypoint, &maximum_x);
                 let scale = scale_for_level(level);
                 keypoint.x *= scale;
@@ -1429,6 +1442,64 @@ pub(crate) fn detect(
     }
 }
 
+/// Only rotated BRIEF samples need Gaussian values. Coalesce adjacent occupied
+/// blocks and include the three source pixels on each side of the convolution.
+fn blur_for_descriptors(image: &Image, points: &[(usize, usize)]) -> Image {
+    const BLOCK: usize = 48;
+    // ORB pattern coordinates lie in [-13, 13]. The farthest rotated
+    // coordinate rounds to at most 19, independently of orientation.
+    const RADIUS: usize = 19;
+    let columns = image.width.div_ceil(BLOCK);
+    let rows = image.height.div_ceil(BLOCK);
+    let mut occupied = vec![false; columns * rows];
+    for &(x, y) in points {
+        let left = x.saturating_sub(RADIUS) / BLOCK;
+        let right = (x + RADIUS).min(image.width - 1) / BLOCK;
+        let top = y.saturating_sub(RADIUS) / BLOCK;
+        let bottom = (y + RADIUS).min(image.height - 1) / BLOCK;
+        for row in top..=bottom {
+            occupied[row * columns + left..=row * columns + right].fill(true);
+        }
+    }
+    if occupied.iter().filter(|used| **used).count() * 4 >= occupied.len() * 3 {
+        return blur(image);
+    }
+    let mut pixels = RasterBuffer::zeroed(image.pixels.len());
+    pixels
+        .par_chunks_mut(BLOCK * image.width)
+        .enumerate()
+        .for_each(|(row, band)| {
+            let top = row * BLOCK;
+            let bottom = (top + BLOCK).min(image.height);
+            let used = &occupied[row * columns..(row + 1) * columns];
+            let mut cursor = 0;
+            while let Some(next) = used[cursor..].iter().position(|&value| value) {
+                let first = cursor + next;
+                cursor = first + used[first..].iter().take_while(|&&value| value).count();
+                let left = first * BLOCK;
+                let right = (cursor * BLOCK).min(image.width);
+                let x0 = left.saturating_sub(3);
+                let x1 = (right + 3).min(image.width);
+                let y0 = top.saturating_sub(3);
+                let y1 = (bottom + 3).min(image.height);
+                let stride = x1 - x0;
+                let mut patch = RasterBuffer::with_capacity(stride * (y1 - y0));
+                for y in y0..y1 {
+                    patch.extend_from_slice(
+                        &image.pixels[y * image.width + x0..y * image.width + x1],
+                    );
+                }
+                let blurred = blur(&Image::from_buffer(stride, y1 - y0, patch));
+                for (y, output) in band.chunks_exact_mut(image.width).enumerate() {
+                    let start = (top - y0 + y) * stride + left - x0;
+                    output[left..right]
+                        .copy_from_slice(&blurred.pixels[start..start + right - left]);
+                }
+            }
+        });
+    Image::from_buffer(image.width, image.height, pixels)
+}
+
 impl OrbDetection {
     pub(crate) fn keypoints(&self) -> &[Keypoint] {
         &self.keypoints
@@ -1436,9 +1507,13 @@ impl OrbDetection {
 
     pub(crate) fn compute(self, keypoints: impl IntoIterator<Item = Keypoint>) -> Vec<OrbFeature> {
         let keypoints = keypoints.into_iter().collect::<Vec<_>>();
-        let mut required = vec![false; self.levels.len()];
+        let mut required = vec![Vec::new(); self.levels.len()];
         for keypoint in &keypoints {
-            required[keypoint.octave] = true;
+            let scale = 1.0 / scale_for_level(keypoint.octave);
+            required[keypoint.octave].push((
+                cv_round(keypoint.x * scale) as usize,
+                cv_round(keypoint.y * scale) as usize,
+            ));
         }
         // Consuming the levels drops each unblurred source as soon as its output
         // is ready, instead of retaining both full pyramids during descriptors.
@@ -1446,7 +1521,10 @@ impl OrbDetection {
             .levels
             .into_par_iter()
             .enumerate()
-            .map(|(level, image)| required[level].then(|| blur(&image)))
+            .map(|(level, image)| {
+                (!required[level].is_empty())
+                    .then(|| blur_for_descriptors(&image, &required[level]))
+            })
             .collect::<Vec<_>>();
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         let use_avx2 = std::arch::is_x86_feature_detected!("avx2")
@@ -1488,6 +1566,22 @@ impl OrbDetection {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sparse_descriptor_blur_matches_full_blur_across_block_borders() {
+        let (width, height) = (503, 211);
+        let image = Image::new(width, height, random_pixels(width * height, 19));
+        let points = [(47, 48), (48, 47), (95, 96), (width - 17, height - 8)];
+        let actual = blur_for_descriptors(&image, &points);
+        let full = reference_blur(&image);
+        for (x, y) in points {
+            for row in y.saturating_sub(19)..=(y + 19).min(height - 1) {
+                let start = row * width + x.saturating_sub(19);
+                let end = row * width + (x + 20).min(width);
+                assert_eq!(actual.pixels[start..end], full.pixels[start..end]);
+            }
+        }
+    }
+
     #[test]
     fn large_grayscale_scores_and_blur_preserve_mapped_storage() {
         let mut source = RasterBuffer::zeroed(1024 * 1024 * 4);
@@ -1968,6 +2062,21 @@ mod tests {
     }
 
     #[test]
+    fn blur_stripes_match_the_full_raster_across_worker_boundaries() {
+        let empty = Image::new(17, 0, Vec::new());
+        assert_eq!(blur(&empty), empty);
+        let (width, height) = (1291, 267);
+        let image = Image::new(
+            width,
+            height,
+            (0..width * height)
+                .map(|i| ((i * 31 + i / width * 17) % 251) as u8)
+                .collect(),
+        );
+        assert_eq!(blur(&image), reference_blur(&image));
+    }
+
+    #[test]
     fn blur_interior_matches_reflected_reference() {
         let image = Image::new(
             13,
@@ -2089,8 +2198,8 @@ mod tests {
 
     #[test]
     fn fast_prefilter_keeps_every_nine_pixel_arc() {
-        const WIDTH: u32 = 7;
-        const CENTER: u32 = 3;
+        const WIDTH: u32 = 39;
+        const CENTER: u32 = WIDTH / 2;
         for sample in [0_u8, u8::MAX] {
             for start in 0..CIRCLE.len() {
                 let mut pixels = vec![128_u8; (WIDTH * WIDTH) as usize];
@@ -2117,15 +2226,19 @@ mod tests {
             return;
         }
         for seed in 0..8 {
-            for (width, height) in [(7_u32, 7_u32), (21, 13), (22, 17), (37, 29), (96, 73)] {
-                let pixels = (0..width as usize * height as usize)
-                    .map(|index| ((index * 73 + index / 7 * 19 + seed * 31 + 11) % 256) as u8)
-                    .collect::<Vec<_>>();
+            for (width, height) in [
+                (7_u32, 7_u32),
+                (37, 13),
+                (38, 17),
+                (39, 29),
+                (70, 17),
+                (96, 73),
+            ] {
+                let pixels = random_pixels(width as usize * height as usize, seed + 1);
+                let threshold = [0, 1, 20, 60, 127, 128, 254, 255][seed as usize];
                 assert_eq!(
-                    unsafe {
-                        fast_scores_avx2(width, height, &pixels, i16::from(FAST_THRESHOLD), 3)
-                    },
-                    fast_scores_scalar(width, height, &pixels, i16::from(FAST_THRESHOLD), 3),
+                    unsafe { fast_scores_avx2(width, height, &pixels, threshold, 3) },
+                    fast_scores_scalar(width, height, &pixels, threshold, 3),
                     "{width}x{height}, seed {seed}"
                 );
             }

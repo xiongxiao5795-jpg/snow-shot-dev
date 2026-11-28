@@ -1,4 +1,5 @@
 #include "snow_shot/presentation/directcaptureworkflow.h"
+#include "snow_shot/platform/screenshotwindownames.h"
 
 #include <QCoreApplication>
 #include <QPointer>
@@ -12,17 +13,19 @@ QString queueError() {
     return QCoreApplication::translate("DirectCaptureController",
                                        "The capture operation could not be queued");
 }
-} // namespace
 
-bool directCaptureAutoSaveEnabled(DirectCaptureTarget target, const QStringList& actions) {
-    switch (target) {
-    case DirectCaptureTarget::FocusedWindow:
-        return actions.contains(QStringLiteral("capture_focused_window"));
-    case DirectCaptureTarget::CurrentMonitor:
-        return actions.contains(QStringLiteral("capture_current_monitor"));
-    }
-    return false;
+storage::ScreenshotExportContext windowNamesForExport(const DirectCaptureRequest& request) {
+    const auto fields =
+        storage::screenshotWindowNameFields(request.exportDirectory, request.filenameFormat);
+    if (!fields.any())
+        return {};
+    if (request.target == DirectCaptureTarget::FocusedWindow && request.window != 0)
+        return platform::screenshotWindowNamesForWindow(request.window, fields);
+    if (request.target == DirectCaptureTarget::CurrentMonitor && !request.monitorName.isEmpty())
+        return platform::screenshotWindowNamesAtPoint(request.monitorCursor, {}, fields);
+    return {};
 }
+} // namespace
 
 DirectCaptureWorkflow::DirectCaptureWorkflow(DirectCapturePorts ports, QObject* parent)
     : QObject(parent), m_ports(std::move(ports)) {}
@@ -58,7 +61,6 @@ void DirectCaptureWorkflow::startNext() {
     if (m_phase != Phase::Idle || m_queue.empty())
         return;
     m_phase = Phase::Acquiring;
-    m_copySucceeded = false;
     const quint64 generation = ++m_generation;
     const QPointer<DirectCaptureWorkflow> self(this);
     auto complete = [self, generation](DirectCaptureFrame frame) {
@@ -80,35 +82,16 @@ void DirectCaptureWorkflow::startNext() {
         complete(DirectCaptureFrame{{}, {}, {}, 0, queueError()});
 }
 
-void DirectCaptureWorkflow::save() {
-    if (m_phase != Phase::Acquiring && m_phase != Phase::Copying)
-        return;
-    if (!m_queue.front().autoSave) {
-        publishHistory();
-        return;
-    }
-    m_phase = Phase::Saving;
-    const quint64 generation = m_generation;
-    const QPointer<DirectCaptureWorkflow> self(this);
-    auto complete = [self, generation](QString path, QString error) {
-        if (!self || self->m_generation != generation || self->m_phase != Phase::Saving)
-            return;
-        if (path.isEmpty() || !error.isEmpty()) {
-            self->report(error.isEmpty() ? queueError() : error, true);
-            if (!self || self->m_phase != Phase::Saving)
-                return;
-        }
-        self->publishHistory();
-    };
-    if (!m_ports.save(m_queue.front(), m_frame, complete))
-        complete({}, queueError());
-}
-
 void DirectCaptureWorkflow::copy() {
     m_phase = Phase::Copying;
     const quint64 generation = m_generation;
     const QPointer<DirectCaptureWorkflow> self(this);
-    auto complete = [self, generation](QString error) {
+    auto names = windowNamesForExport(m_queue.front());
+    if (!self || m_generation != generation || m_phase != Phase::Copying)
+        return;
+    m_queue.front().exportContext = std::move(names);
+
+    auto complete = [self, generation](bool published, QString error) {
         if (!self || self->m_generation != generation || self->m_phase != Phase::Copying)
             return;
         if (!error.isEmpty()) {
@@ -116,15 +99,22 @@ void DirectCaptureWorkflow::copy() {
             if (!self || self->m_generation != generation || self->m_phase != Phase::Copying)
                 return;
         }
-        self->m_copySucceeded = error.isEmpty();
-        self->save();
+        if (!published) {
+            self->finish();
+            return;
+        }
+        // Move the callback before invoking user-facing output, which may shut down the host.
+        if (auto tasks = std::move(self->m_queue.front().afterCopy))
+            tasks(self->m_frame);
+        if (self && self->m_generation == generation && self->m_phase == Phase::Copying)
+            self->publishHistory();
     };
     if (!m_ports.copy(m_queue.front(), m_frame, complete))
-        complete(queueError());
+        complete(false, queueError());
 }
 
 void DirectCaptureWorkflow::publishHistory() {
-    if (!m_copySucceeded || !m_queue.front().historyEnabled) {
+    if (m_queue.front().historyMode == storage::CaptureHistoryMode::Disabled) {
         finish();
         return;
     }

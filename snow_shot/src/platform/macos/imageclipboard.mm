@@ -6,6 +6,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QImageReader>
+#include <QMimeData>
 #include <QObject>
 #include <QPointer>
 #include <QUtiMimeConverter>
@@ -16,6 +17,7 @@
 #include <CoreGraphics/CoreGraphics.h>
 #include <ImageIO/ImageIO.h>
 
+#include <cstring>
 #include <memory>
 #include <type_traits>
 
@@ -88,24 +90,7 @@ class ImageClipboardConverter final : public QObject, public QUtiMimeConverter {
             return {};
         if (mime == QStringLiteral("image/png"))
             return data.first();
-        CfPointer<CFDataRef> bytes(data.first().toCFData(), CFRelease);
-        if (!bytes)
-            return {};
-        CfPointer<CGImageSourceRef> source(CGImageSourceCreateWithData(bytes.get(), nullptr),
-                                           CFRelease);
-        if (!source)
-            return {};
-        CfPointer<CGImageRef> image(CGImageSourceCreateImageAtIndex(source.get(), 0, nullptr),
-                                    CFRelease);
-        // ImageIO accepts native TIFF variants without requiring a Qt TIFF
-        // plugin. Decode the PNG directly into managed QImage storage while
-        // retaining Qt's alpha, 16-bit color and metadata behavior.
-        QByteArray png = encodeImage(image.get(), CFSTR("public.png"));
-        QBuffer buffer(&png);
-        if (!buffer.open(QIODevice::ReadOnly))
-            return {};
-        QImageReader reader(&buffer, "PNG");
-        return image_codec::readManagedImage(reader);
+        return decodeNativeClipboardImage(data.first());
     }
 };
 } // namespace
@@ -186,11 +171,178 @@ bool imageClipboardBitmapIsDerivedFromPng() {
     return NSPasteboard.generalPasteboard.changeCount == imagePasteboardOwner->native->revision;
 }
 
-bool publishImageClipboard(QClipboard* clipboard, const QByteArray& png,
-                           const QByteArray& placement, const QByteArray& appearance,
-                           const QString& filePath) {
-    if (clipboard == nullptr || png.isEmpty())
+bool imageClipboardHasOnlyPng() {
+    if (QGuiApplication::platformName() != QStringLiteral("cocoa"))
         return false;
+    @autoreleasepool {
+        NSArray<NSPasteboardItem*>* items = NSPasteboard.generalPasteboard.pasteboardItems;
+        return items.count == 1 &&
+               [items.firstObject.types isEqualToArray:@[ NSPasteboardTypePNG ]];
+    }
+}
+
+QByteArray copyTiffOnlyClipboardItem(qint64 maximumBytes,
+                                     const std::function<bool(qint64)>& reserve) {
+    if (QGuiApplication::platformName() != QStringLiteral("cocoa"))
+        return {};
+    @autoreleasepool {
+        NSArray<NSPasteboardItem*>* items = NSPasteboard.generalPasteboard.pasteboardItems;
+        if (items.count != 1 || ![items.firstObject.types isEqualToArray:@[ NSPasteboardTypeTIFF ]])
+            return {};
+        NSData* data = [items.firstObject dataForType:NSPasteboardTypeTIFF];
+        if (!data || data.length == 0 || data.length > static_cast<NSUInteger>(maximumBytes))
+            return {};
+        if (reserve && !reserve(static_cast<qint64>(data.length)))
+            return {};
+        return QByteArray::fromNSData(data);
+    }
+}
+
+namespace {
+QSize nativeClipboardImageSize(CGImageSourceRef source) {
+    const CfPointer<CFDictionaryRef> properties(
+        CGImageSourceCopyPropertiesAtIndex(source, 0, nullptr), CFRelease);
+    if (!properties)
+        return {};
+    const auto readDimension = [&properties](CFStringRef key, int* value) {
+        const auto number = static_cast<CFNumberRef>(CFDictionaryGetValue(properties.get(), key));
+        return number && CFNumberGetTypeID() == CFGetTypeID(number) &&
+               CFNumberGetValue(number, kCFNumberIntType, value);
+    };
+    int width = 0;
+    int height = 0;
+    if (!readDimension(kCGImagePropertyPixelWidth, &width) ||
+        !readDimension(kCGImagePropertyPixelHeight, &height))
+        return {};
+    return {width, height};
+}
+
+QByteArray encodeBoundedClipboardPng(CGImageRef image, qsizetype capacity) {
+    struct Output {
+        char* bytes;
+        size_t capacity;
+        size_t length = 0;
+        bool overflow = false;
+    };
+    QByteArray png(capacity, Qt::Uninitialized);
+    Output output{png.data(), static_cast<size_t>(capacity)};
+    const CGDataConsumerCallbacks callbacks{
+        [](void* context, const void* bytes, size_t length) -> size_t {
+            auto& sink = *static_cast<Output*>(context);
+            if (sink.overflow || length > sink.capacity - sink.length) {
+                sink.overflow = true;
+                return 0;
+            }
+            std::memcpy(sink.bytes + sink.length, bytes, length);
+            sink.length += length;
+            return length;
+        },
+        nullptr,
+    };
+    const CfPointer<CGDataConsumerRef> consumer(CGDataConsumerCreate(&output, &callbacks),
+                                                CFRelease);
+    const CfPointer<CGImageDestinationRef> destination(
+        consumer ? CGImageDestinationCreateWithDataConsumer(consumer.get(), CFSTR("public.png"), 1,
+                                                            nullptr)
+                 : nullptr,
+        CFRelease);
+    if (!destination)
+        return {};
+    CGImageDestinationAddImage(destination.get(), image, nullptr);
+    if (!CGImageDestinationFinalize(destination.get()) || output.overflow)
+        return {};
+    png.resize(static_cast<qsizetype>(output.length));
+    return png;
+}
+} // namespace
+
+QImage decodeNativeClipboardImage(const QByteArray& encoded, qint64 maximumPixels,
+                                  const std::function<bool(qint64)>& reserveWorkingBytes) {
+    @autoreleasepool {
+        CfPointer<CFMutableDataRef> nativePng(nullptr, CFRelease);
+        QByteArray png;
+        {
+            const CfPointer<CFDataRef> bytes(encoded.toRawCFData(), CFRelease);
+            const CfPointer<CGImageSourceRef> source(
+                bytes ? CGImageSourceCreateWithData(bytes.get(), nullptr) : nullptr, CFRelease);
+            if (!source)
+                return {};
+            qint64 pngCapacity = 0;
+            if (maximumPixels > 0 || reserveWorkingBytes) {
+                const QSize size = nativeClipboardImageSize(source.get());
+                if (size.isEmpty() ||
+                    (maximumPixels > 0 &&
+                     static_cast<qint64>(size.width()) * size.height() > maximumPixels))
+                    return {};
+                if (reserveWorkingBytes) {
+                    // Allow two aligned 16-bit RGBA rasters for each conversion stage. The
+                    // bounded PNG buffer also allows for compression overhead and metadata.
+                    const qint64 rowBytes =
+                        (static_cast<qint64>(size.width()) * 8 + 63) & ~qint64{63};
+                    const qint64 rasterBytes = rowBytes * size.height();
+                    pngCapacity = rasterBytes + rasterBytes / 8 + encoded.size() + 64 * 1024;
+                    if (!reserveWorkingBytes(2 * rasterBytes + pngCapacity))
+                        return {};
+                }
+            }
+            const CfPointer<CGImageRef> image(
+                CGImageSourceCreateImageAtIndex(source.get(), 0, nullptr), CFRelease);
+            if (!image)
+                return {};
+            if (reserveWorkingBytes)
+                png = encodeBoundedClipboardPng(image.get(), pngCapacity);
+            else
+                nativePng = encodeImageData(image.get(), CFSTR("public.png"));
+        }
+        if (nativePng)
+            png = QByteArray::fromRawCFData(nativePng.get());
+        if (png.isEmpty())
+            return {};
+        // Preserve the managed reader's alpha, 16-bit color and metadata behavior.
+        QBuffer buffer(&png);
+        if (!buffer.open(QIODevice::ReadOnly))
+            return {};
+        QImageReader reader(&buffer, "PNG");
+        return image_codec::readManagedImage(reader);
+    }
+}
+
+QStringList clipboardFileIconMimeTypes(const QMimeData& mimeData) {
+    if (QGuiApplication::platformName() != QStringLiteral("cocoa") || !mimeData.hasUrls() ||
+        QGuiApplication::clipboard()->mimeData() != &mimeData)
+        return {};
+
+    @autoreleasepool {
+        bool hasFileIcon = false;
+        bool hasExplicitPng = false;
+        bool hasExplicitTiff = false;
+        // Cocoa can synthesize PNG and TIFF from Finder's ICNS. The individual
+        // items list the original representations without those conversions.
+        for (NSPasteboardItem* item in NSPasteboard.generalPasteboard.pasteboardItems) {
+            const auto* types = item.types;
+            if ([types containsObject:NSPasteboardTypePNG])
+                hasExplicitPng = true;
+            if ([types containsObject:NSPasteboardTypeTIFF])
+                hasExplicitTiff = true;
+            if ([types containsObject:NSPasteboardTypeFileURL] &&
+                [types containsObject:@"com.apple.icns"])
+                hasFileIcon = true;
+        }
+        QStringList formats;
+        if (hasFileIcon && !hasExplicitPng)
+            formats.append(QStringLiteral("image/png"));
+        if (hasFileIcon && !hasExplicitTiff)
+            formats.append(QStringLiteral("application/x-qt-image"));
+        return formats;
+    }
+}
+
+std::optional<quint64> publishImageClipboard(QClipboard* clipboard, const QByteArray& png,
+                                             const QByteArray& placement,
+                                             const QByteArray& appearance,
+                                             const QString& filePath) {
+    if (clipboard == nullptr || png.isEmpty())
+        return std::nullopt;
     initializeImageClipboardConverter();
     if (!imagePasteboardOwner)
         imagePasteboardOwner = new ImagePasteboardOwner(QCoreApplication::instance());
@@ -220,6 +372,7 @@ bool publishImageClipboard(QClipboard* clipboard, const QByteArray& png,
                 setString:QUrl::fromLocalFile(filePath).toString(QUrl::FullyEncoded).toNSString()
                   forType:NSPasteboardTypeFileURL];
     }
+    const auto revision = static_cast<quint64>(owner->native->revision);
     owner->published = published;
     // Synchronize Qt's native reader to retire any previously owned QMimeData.
     // Reading here neither decodes the PNG nor changes the native clipboard.
@@ -228,6 +381,6 @@ bool publishImageClipboard(QClipboard* clipboard, const QByteArray& png,
         emit clipboard->dataChanged();
         emit clipboard->changed(QClipboard::Clipboard);
     }
-    return published;
+    return published ? std::optional(revision) : std::nullopt;
 }
 } // namespace snow_shot::platform::macos

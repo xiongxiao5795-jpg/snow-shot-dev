@@ -39,6 +39,9 @@ class AppPermissionBackend {
   public:
     virtual ~AppPermissionBackend() = default;
     virtual AppPermissionSnapshot query() = 0;
+    virtual AppPermissionStatus queryPermission(AppPermission permission) {
+        return query().status(permission);
+    }
     // Completion may arrive asynchronously, including after service destruction.
     virtual void request(AppPermission permission, std::function<void()> completion) = 0;
     virtual bool openSettings(AppPermission permission) = 0;
@@ -72,9 +75,11 @@ class AppPermissionService final : public QObject {
     bool requestPending() const {
         return !m_pending.isEmpty();
     }
-    // Queries current permissions before admitting an action; never prompts.
+    // A settings-row Begin can reuse its press check until an OS refresh is pending.
+    enum class Admission { Fresh, CheckedAtGesturePress };
     bool allow(const AppPermissions& requirements,
-               const std::function<void(const AppPermissions&)>& blocked = {});
+               const std::function<void(const AppPermissions&)>& blocked = {},
+               Admission admission = Admission::Fresh);
     void refresh();
     void refreshNow();
     void request(AppPermission permission);
@@ -85,10 +90,12 @@ class AppPermissionService final : public QObject {
     }
   signals:
     void changed();
+    // Emitted after a full permission query, even if no statuses changed.
     void refreshed();
     void settingsOpened(AppPermission permission);
 
   private:
+    void publishSnapshot(const AppPermissionSnapshot& next);
     std::unique_ptr<AppPermissionBackend> m_backend;
     AppPermissionSnapshot m_snapshot;
     QSet<AppPermission> m_pending;

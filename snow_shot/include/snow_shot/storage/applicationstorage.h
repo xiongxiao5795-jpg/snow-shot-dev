@@ -142,9 +142,12 @@ class ApplicationStorage final : public QObject {
     bool requestCaptureHistoryPolicy(const CaptureHistoryPolicy& policy);
     [[nodiscard]] std::shared_future<StorageResult>
     requestCaptureHistoryPolicyAsync(const CaptureHistoryPolicy& policy);
-    bool requestSmartSelectionMode(SmartSelectionMode mode);
-    [[nodiscard]] std::shared_future<StorageResult>
-    requestSmartSelectionModeAsync(SmartSelectionMode mode);
+    bool
+    requestSmartSelectionMode(SmartSelectionMode mode,
+                              ConfigurationWriteOrigin origin = ConfigurationWriteOrigin::Explicit);
+    [[nodiscard]] std::shared_future<StorageResult> requestSmartSelectionModeAsync(
+        SmartSelectionMode mode,
+        ConfigurationWriteOrigin origin = ConfigurationWriteOrigin::Explicit);
     [[nodiscard]] PinnedWindowPolicy pinnedWindowPolicy() const;
     bool requestPinnedWindowPolicy(const PinnedWindowPolicy& policy);
     bool requestPinnedWindowClear();
@@ -225,7 +228,7 @@ class ApplicationStorage final : public QObject {
 
     StorageStatus m_status;
     std::unique_ptr<ConfigurationStore> m_configuration;
-    std::unique_ptr<QTimer> m_pinnedCleanupTimer;
+    std::unique_ptr<QTimer> m_retentionCleanupTimer;
     std::unique_ptr<CaptureHistoryRepository> m_captureHistory;
     std::unique_ptr<PinnedWindowRepository> m_pinnedWindows;
     QThreadPool m_pinnedPreviewPool;

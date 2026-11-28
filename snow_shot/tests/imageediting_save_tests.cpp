@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "snow_shot/presentation/imageeditingcanvas.h"
 #include "snow_shot/presentation/imageeditingwindow.h"
+#include "screenshot_clipboard_test_output.h"
 #include "snow_shot/presentation/screenshotimageconversioncontroller.h"
 #include "snow_shot/presentation/screenshotimagefileservice.h"
 #include "snowimageqtcodec.h"
 #include "snow_shot/presentation/screenshotocrpresentation.h"
 #include "snow_shot/presentation/screenshotrecognitionsessioncontroller.h"
+#include "snow_shot/presentation/screenshotrecognitionwindow.h"
 #include "snow_shot/presentation/screenshottoolpalette.h"
 #include "snow_shot/storage/settingsadapters.h"
 #include "widgets/button.h"
@@ -30,6 +32,7 @@
 #include <QPointer>
 #include <QScopeGuard>
 #include <QTemporaryDir>
+#include <QTextBrowser>
 #include <QTcpServer>
 #include <QThread>
 #include <QTimer>
@@ -106,10 +109,14 @@ void saveWorkflow(bool custom, const QTemporaryDir& directory, bool showResult =
         auto* dialog = customDialog(window);
         require(dialog && dialog->isOpen() && !systemDialog(window),
                 "Image Editor honors the Snow Shot save-dialog preference");
+        auto* transient = dialog->contentWidget()->window()->windowHandle()->transientParent();
+        auto* toolbar = window.palette()->window()->windowHandle();
+#ifdef Q_OS_MACOS
+        if (transient && transient != toolbar)
+            transient = transient->transientParent();
+#endif
         require(dialog->ownerWindow() == window.canvas()->window() &&
-                    dialog->windowModality() == Qt::WindowModal &&
-                    dialog->contentWidget()->window()->windowHandle()->transientParent() ==
-                        window.palette()->window()->windowHandle(),
+                    dialog->windowModality() == Qt::WindowModal && transient == toolbar,
                 "custom save dialog belongs to the editor and stays above its floating toolbar");
         dialog->reject();
     } else {
@@ -225,6 +232,130 @@ void exportCompletionMayDestroyEditor() {
     awaitCondition([&] { return !lifetime; }, "export completion may destroy its editor");
     drainEvents();
     require(completions == 1, "export completes exactly once during reentrant destruction");
+}
+
+void standardImageCopyFollowsFilePreferenceAndInvocationOrder() {
+    const snow_shot::storage::ScreenshotSettings settings;
+    const bool previousFile = settings.copyImageFileToClipboard();
+    const auto previousFormat = settings.imageFormat();
+    const auto restore = qScopeGuard([&] {
+        static_cast<void>(settings.setCopyImageFileToClipboard(previousFile));
+        static_cast<void>(settings.setImageFormat(previousFormat));
+    });
+    require(settings.setImageFormat(QStringLiteral("png")) &&
+                settings.setCopyImageFileToClipboard(true),
+            "configure standard clipboard file output");
+    ImageEditingWindow window;
+    window.present(source());
+    int copies = 0;
+    QObject::connect(&window, &ImageEditingWindow::exportFinished, &window, [&](bool success) {
+        require(success, "the current standard copy succeeds");
+        ++copies;
+    });
+    window.palette()->copyRequested();
+    require(window.document()->crop(ImageEditingDocument::CropAxis::Columns, 2, 6) &&
+                settings.setCopyImageFileToClipboard(false),
+            "change image and file preference while the older copy is pending");
+    window.palette()->copyRequested();
+    const QImage expected = window.document()->image();
+    awaitCondition([&] { return copies == 1; }, "the latest copy publishes");
+    const auto verifyClipboard = [&](bool withFile) {
+        const auto [image, filePath] = readScreenshotClipboardOutput();
+        require(!filePath.isEmpty() == withFile,
+                "standard copy uses the file setting captured at invocation");
+        if (withFile) {
+            const QImage file(filePath);
+            require(file.size() == expected.size() &&
+                        file.pixelColor(2, 2) == expected.pixelColor(2, 2),
+                    "the attached file contains the copied image");
+        }
+        require(image.size() == expected.size() &&
+                    image.pixelColor(2, 2) == expected.pixelColor(2, 2),
+                "clipboard image matches the newer document state");
+    };
+    verifyClipboard(false);
+    require(settings.setCopyImageFileToClipboard(true), "enable file output for the next copy");
+    window.palette()->copyRequested();
+    awaitCondition([&] { return copies == 2; }, "standard image and file publish together");
+    verifyClipboard(true);
+    window.shutdown();
+
+    using ExportController = snow_shot::presentation::ImageEditingExportController;
+    using Clipboard = ScreenshotClipboardService;
+    QWidget owner;
+    ExportController earlier(nullptr, &owner), later(nullptr, &owner);
+    std::function<void(QImage)> releaseEarlier;
+    std::optional<bool> earlierResult, laterResult;
+    const auto delayed =
+        ScreenshotExportSource::fromImageLoader([&](QObject*, std::function<void(QImage)> ready) {
+            releaseEarlier = std::move(ready);
+            return true;
+        });
+    auto* clipboard = QApplication::clipboard();
+    earlier.startCopy(delayed, {Clipboard::reservePublication(clipboard), {}, {}}, &owner,
+                      [&](bool success, const QString&) { earlierResult = success; });
+    awaitCondition([&] { return bool(releaseEarlier); }, "delay the earlier image source");
+    later.startCopy(ScreenshotExportSource::fromImage(expected),
+                    {Clipboard::reservePublication(clipboard), {}, {}}, &owner,
+                    [&](bool success, const QString&) { laterResult = success; });
+    awaitCondition([&] { return laterResult.has_value(); }, "newer copy finishes first");
+    releaseEarlier(source().image);
+    awaitCondition([&] { return earlierResult.has_value(); }, "older copy finishes last");
+    require(*laterResult && !*earlierResult, "older completion yields to the newer publication");
+    verifyClipboard(false);
+}
+
+void firstSmartOcrCopyWaitsForGrouping() {
+    class GroupingPort final : public ScreenshotOcrRecognitionPort {
+      public:
+        ParagraphCompletion grouped;
+        RequestToken groupParagraphs(ScreenshotOcrParagraphRequest, QObject*,
+                                     ParagraphCompletion completion) override {
+            grouped = std::move(completion);
+            return 1;
+        }
+        RequestToken recognize(ScreenshotOcrRequest, QObject*, Completion) override {
+            return 0;
+        }
+        void cancel(RequestToken) override {}
+        bool reprioritize(RequestToken, ScreenshotOcrRequestPriority) override {
+            return false;
+        }
+    } port;
+    const snow_shot::storage::TextRecognitionSettings settings;
+    const auto formatting = settings.defaultFormatting();
+    const auto punctuation = settings.defaultPunctuation();
+    const auto restore = qScopeGuard([&] {
+        static_cast<void>(settings.setDefaultFormatting(formatting));
+        static_cast<void>(settings.setDefaultPunctuation(punctuation));
+    });
+    require(settings.setDefaultFormatting(QStringLiteral("smart")) &&
+                settings.setDefaultPunctuation(QStringLiteral("none")),
+            "configure smart OCR clipboard text");
+    auto input = source();
+    auto presentation = std::make_shared<ScreenshotOcrPresentation>();
+    presentation->selection = input.canvasRect.toRect();
+    for (const auto& text : {QStringLiteral("First line"), QStringLiteral("continued")}) {
+        const QRectF bounds(-7, 11 + qreal(presentation->lines.size()) * 5, 20, 4);
+        ScreenshotOcrLine line;
+        line.text = text;
+        line.quad = {bounds.topLeft(), bounds.topRight(), bounds.bottomRight(),
+                     bounds.bottomLeft()};
+        presentation->lines.push_back(std::move(line));
+    }
+    input.recognition.text = ScreenshotOcrRecognitionResult{std::move(presentation)};
+    ImageEditingWindow window({[&] { return ScreenshotPinnedRecognitionProviders{&port}; }});
+    window.present(std::move(input));
+    window.palette()->ocrRequested();
+    auto* clipboard = QApplication::clipboard();
+    clipboard->setText(QStringLiteral("Previous copy"));
+    window.palette()->copyRequested();
+    require(port.grouped && clipboard->text() == QStringLiteral("Previous copy"),
+            "the first copy waits for paragraph grouping before publishing");
+    std::exchange(port.grouped, {})({{{0, 1}}, {}});
+    awaitCondition([&] { return clipboard->text() == QStringLiteral("First line continued"); },
+                   "the first clipboard write includes the grouped paragraph");
+    window.shutdown();
 }
 
 void clipboardPublicationMayDestroyEditor() {
@@ -515,6 +646,22 @@ void conversionExportMarksActiveModel(ConversionFormat format, bool copy,
     require(settings.setVisionModel(secondModel), "select the later identical conversion");
     activateConversion(window, format);
     require(window.dirty(), "a new model result needs its own successful export");
+    if (copy) {
+        auto* view = window.canvas()->window()->findChild<ScreenshotRecognitionWindow*>();
+        auto* browser = view ? view->findChild<QTextBrowser*>() : nullptr;
+        require(browser, "the conversion preview exposes its selectable text");
+        auto cursor = browser->textCursor();
+        cursor.movePosition(QTextCursor::Start);
+        cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+        browser->setTextCursor(cursor);
+        require(cursor.hasSelection() && view->copyVisibleContentToClipboard(),
+                "copy the selected preview text");
+        awaitCondition([&] { return QApplication::clipboard()->text() == cursor.selectedText(); },
+                       "the preview publishes the selection");
+        require(window.dirty(), "copying a preview selection preserves unsaved document changes");
+        cursor.clearSelection();
+        browser->setTextCursor(cursor);
+    }
     int exports = 0;
     bool succeeded = false;
     QObject::connect(&window, &ImageEditingWindow::exportFinished, &window, [&](bool success) {
@@ -654,15 +801,15 @@ void recognitionOverwriteCompletesOnce(const QTemporaryDir& directory) {
         succeeded = success;
     };
     QPointer<QFileDialog> dialog = startRecognitionSave(controller, &owner, complete);
-    controller.start(ExportController::Operation::Save, QStringLiteral("duplicate"), &owner,
-                     nullptr, complete);
+    const ScreenshotRecognitionFileSnapshot duplicate{ScreenshotRecognitionFileKind::Qr,
+                                                      QStringLiteral("duplicate")};
+    controller.start(ExportController::Operation::Save, duplicate, &owner, nullptr, complete);
     require(owner.findChildren<QFileDialog*>().size() == 1,
             "duplicate export requests do not open a second destination dialog");
     QPointer<QMessageBox> decision = chooseRecognitionDestination(dialog, &owner, path);
     require(controller.busy() && completions == 0 && decision->isVisible(),
             "overwrite review keeps one request pending without completing its output");
-    controller.start(ExportController::Operation::Save, QStringLiteral("duplicate"), &owner,
-                     nullptr, complete);
+    controller.start(ExportController::Operation::Save, duplicate, &owner, nullptr, complete);
     require(owner.findChildren<QMessageBox*>().size() == 1,
             "duplicate export requests do not open a second overwrite decision");
     decision->button(QMessageBox::No)->click();
@@ -814,6 +961,8 @@ void runImageEditingSaveTests() {
     require(settings.setShowSaveResult(false), "restore save result before other save tests");
     exportCompletionMayDestroyEditor();
     clipboardPublicationMayDestroyEditor();
+    standardImageCopyFollowsFilePreferenceAndInvocationOrder();
+    firstSmartOcrCopyWaitsForGrouping();
 #if SNOW_SHOT_ENABLE_IMAGE_CONVERSION
     conversionExportsKeepModelCheckpoints(directory);
 #endif

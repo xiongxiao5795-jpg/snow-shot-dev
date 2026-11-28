@@ -300,8 +300,7 @@ class ApplicationStorageHistoryDataSource final : public ScreenshotHistoryPageDa
                                                         request.initialWindowSize, request.screen)
                 : std::nullopt;
         std::optional<ScreenshotClipboardAppearance> appearance;
-        if (record.contentKind == storage::CaptureHistoryContentKind::ScreenshotSession &&
-            record.result) {
+        if (record.contentKind != storage::CaptureHistoryContentKind::Image && record.result) {
             appearance.emplace();
             appearance->rasterSize = record.result->imageSize;
             appearance->borderAppearance =
@@ -578,6 +577,7 @@ class HistoryEntryWidget final : public HistoryEntryCard {
                        std::function<void()> pinRequested, std::function<void()> stitchRequested,
                        std::function<void()> splitRequested,
                        std::function<void()> imageEditingRequested,
+                       std::function<void()> imageCompressionRequested,
                        std::function<void()> copyImagePathRequested,
                        std::function<void()> revealRequested,
                        std::function<void(QWidget*)> deleteRequested, QWidget* parent = nullptr)
@@ -587,6 +587,7 @@ class HistoryEntryWidget final : public HistoryEntryCard {
           m_pinRequested(std::move(pinRequested)), m_stitchRequested(std::move(stitchRequested)),
           m_splitRequested(std::move(splitRequested)),
           m_imageEditingRequested(std::move(imageEditingRequested)),
+          m_imageCompressionRequested(std::move(imageCompressionRequested)),
           m_copyImagePathRequested(std::move(copyImagePathRequested)),
           m_revealRequested(std::move(revealRequested)),
           m_deleteRequested(std::move(deleteRequested)) {
@@ -602,15 +603,22 @@ class HistoryEntryWidget final : public HistoryEntryCard {
 
         const QRect selection = record.selection.rectangle;
         auto* summary = summaryLabel();
-        summary->setText(HistoryEntryWidget::tr("%1 x %2 px  ·  %3 display(s)")
-                             .arg(selection.width())
-                             .arg(selection.height())
-                             .arg(record.displays.size()));
+        if (record.contentKind == storage::CaptureHistoryContentKind::ResultOnly && record.result)
+            summary->setText(HistoryEntryWidget::tr("%1 x %2 px")
+                                 .arg(record.result->imageSize.width())
+                                 .arg(record.result->imageSize.height()));
+        else
+            summary->setText(HistoryEntryWidget::tr("%1 x %2 px  ·  %3 display(s)")
+                                 .arg(selection.width())
+                                 .arg(selection.height())
+                                 .arg(record.displays.size()));
         summary->setObjectName(QStringLiteral("screenshotHistoryEntrySummary"));
         auto* metadata = metadataLabel();
+        const QPoint origin =
+            record.desktopGeometry ? record.desktopGeometry->canvasOrigin : QPoint();
         metadata->setText(HistoryEntryWidget::tr("Position %1, %2  ·  %3")
-                              .arg(selection.x())
-                              .arg(selection.y())
+                              .arg(qint64(selection.x()) + origin.x())
+                              .arg(qint64(selection.y()) + origin.y())
                               .arg(formattedBytes(record.totalBytes)));
         metadata->setObjectName(QStringLiteral("screenshotHistoryEntryMetadata"));
 
@@ -645,6 +653,8 @@ class HistoryEntryWidget final : public HistoryEntryCard {
         m_carousel->setDraggable(true);
 
         auto* imageLoader = createScreenshotHistoryImageLoader(record, dataSource, this);
+        if (record.result && assets && assets->result)
+            setDragImage(imageLoader, assets->result->localFileUrl);
         adqt::widgets::AdImageItems previewItems;
         if (assets.has_value()) {
             previewItems.reserve(assets->displays.size() + (assets->result.has_value() ? 1 : 0));
@@ -820,7 +830,7 @@ class HistoryEntryWidget final : public HistoryEntryCard {
             event->accept();
             return;
         }
-        QFrame::mousePressEvent(event);
+        HistoryEntryCard::mousePressEvent(event);
     }
 
     void changeEvent(QEvent* event) override {
@@ -854,6 +864,10 @@ class HistoryEntryWidget final : public HistoryEntryCard {
         if (m_imageEditingAction != nullptr) {
             m_imageEditingAction->setText(HistoryEntryWidget::tr("Image editing"));
             m_imageEditingAction->setToolTip(m_imageEditingAction->text());
+        }
+        if (m_imageCompressionAction != nullptr) {
+            m_imageCompressionAction->setText(HistoryEntryWidget::tr("Image compression"));
+            m_imageCompressionAction->setToolTip(m_imageCompressionAction->text());
         }
         if (m_splitAction != nullptr) {
             const QString label = QCoreApplication::translate(
@@ -889,6 +903,15 @@ class HistoryEntryWidget final : public HistoryEntryCard {
         connect(m_imageEditingAction, &QAction::triggered, this, [this] {
             if (m_imageEditingRequested)
                 m_imageEditingRequested();
+        });
+        m_imageCompressionAction = menu->addItem(HistoryEntryWidget::tr("Image compression"),
+                                                 custom_outlined_icons::ImageCompression());
+        m_imageCompressionAction->setObjectName(
+            QStringLiteral("screenshotHistoryEntryImageCompression"));
+        m_imageCompressionAction->setEnabled(m_record.result.has_value());
+        connect(m_imageCompressionAction, &QAction::triggered, this, [this] {
+            if (m_imageCompressionRequested)
+                m_imageCompressionRequested();
         });
         m_copyImagePathAction = menu->addItem(QString(), outlined_icons::Copy());
         m_copyImagePathAction->setObjectName(QStringLiteral("screenshotHistoryEntryCopyImagePath"));
@@ -942,7 +965,9 @@ class HistoryEntryWidget final : public HistoryEntryCard {
     std::function<void()> m_stitchRequested;
     std::function<void()> m_splitRequested;
     std::function<void()> m_imageEditingRequested;
+    std::function<void()> m_imageCompressionRequested;
     QPointer<QAction> m_imageEditingAction;
+    QPointer<QAction> m_imageCompressionAction;
     std::function<void()> m_copyImagePathRequested;
     QPointer<QAction> m_copyImagePathAction;
     std::function<void()> m_revealRequested;
@@ -1052,13 +1077,13 @@ ScreenshotHistoryPageWidget::ScreenshotHistoryPageWidget(
     m_selectionBar->setObjectName(QStringLiteral("screenshotHistorySelectionBar"));
     m_selectionBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto* selectionBarOuterLayout = new QVBoxLayout(m_selectionBar);
-    selectionBarOuterLayout->setContentsMargins(0, 0, 0, metric.marginSM);
+    selectionBarOuterLayout->setContentsMargins(0, 0, 0, metric.margin);
     selectionBarOuterLayout->setSpacing(0);
     m_selectionPanel = new HistorySelectionBar(m_selectionBar);
     m_selectionPanel->setObjectName(QStringLiteral("screenshotHistorySelectionPanel"));
     m_selectionPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_selectionBarLayout = new QBoxLayout(QBoxLayout::LeftToRight, m_selectionPanel);
-    m_selectionBarLayout->setContentsMargins(metric.paddingMD, metric.paddingSM, metric.paddingMD,
+    m_selectionBarLayout->setContentsMargins(metric.paddingLG, metric.paddingSM, metric.paddingLG,
                                              metric.paddingSM);
     m_selectionBarLayout->setSpacing(metric.marginXS);
     m_selectionSummary = new QLabel(m_selectionPanel);
@@ -1071,7 +1096,7 @@ ScreenshotHistoryPageWidget::ScreenshotHistoryPageWidget(
     m_selectionActions->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     auto* selectionActionsLayout = new QHBoxLayout(m_selectionActions);
     selectionActionsLayout->setContentsMargins(0, 0, 0, 0);
-    selectionActionsLayout->setSpacing(0);
+    selectionActionsLayout->setSpacing(metric.margin);
     m_deleteSelectedButton = new adqt::widgets::AdButton(m_selectionActions);
     m_deleteSelectedButton->setObjectName(QStringLiteral("screenshotHistoryDeleteSelected"));
     history_page::configureSelectionAction(m_deleteSelectedButton, true);
@@ -1090,7 +1115,6 @@ ScreenshotHistoryPageWidget::ScreenshotHistoryPageWidget(
     selectionActionsLayout->addWidget(m_deselectAllButton);
     m_selectionBarLayout->addWidget(m_selectionActions, 0, Qt::AlignRight | Qt::AlignVCenter);
     selectionBarOuterLayout->addWidget(m_selectionPanel);
-    m_selectionBar->hide();
     pageContainer->addStickyWidget(m_selectionBar, metric.marginSM);
 
     m_deleteAllConfirmation = new adqt::widgets::AdPopconfirm(content);
@@ -1552,6 +1576,7 @@ void ScreenshotHistoryPageWidget::rebuildEntries() {
                 [this, record]() { emit stitchImagesRequested({record}); },
                 [this, record]() { emit splitRequested(record); },
                 [this, record]() { emit imageEditingRequested(record); },
+                [this, record]() { emit imageCompressionRequested(record); },
                 [this, record]() {
                     const auto resolvedAssets =
                         m_dataSource ? m_dataSource->displayAssets(record) : std::nullopt;
@@ -1567,6 +1592,8 @@ void ScreenshotHistoryPageWidget::rebuildEntries() {
                 },
                 [this, id = record.id](QWidget* anchor) { requestEntryDeletion(id, anchor); },
                 m_entriesHost);
+            connect(entry, &HistoryEntryCard::imageDragRequested, this,
+                    &ScreenshotHistoryPageWidget::imageDragRequested);
             entry->applyTheme(m_colorScheme);
             m_entryWidgetsById.insert(record.id, entry);
         }
@@ -1707,7 +1734,6 @@ void ScreenshotHistoryPageWidget::updateSelectionBar() {
         return;
     }
 
-    updateBatchActions();
     const int selectionCount = static_cast<int>(m_selectedRecordIds.size());
     const auto status = storage::ApplicationStorage::instance().status();
     const int availableWidth = m_entriesHost != nullptr ? m_entriesHost->width() : width();
@@ -1718,6 +1744,7 @@ void ScreenshotHistoryPageWidget::updateSelectionBar() {
         m_selectedRecordIds, m_pageRecordIds, m_dataSource != nullptr && status.writeAvailable,
         availableWidth, tr("Selected %n item(s)", nullptr, selectionCount),
         tr("Delete %n selected item(s)?", nullptr, selectionCount));
+    updateBatchActions();
 }
 
 void ScreenshotHistoryPageWidget::requestDeleteSelected() {

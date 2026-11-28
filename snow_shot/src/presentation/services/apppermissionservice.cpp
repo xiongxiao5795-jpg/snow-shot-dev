@@ -99,10 +99,26 @@ AppPermissions AppPermissionService::takeStartupMissing() {
     return startupMissing();
 }
 bool AppPermissionService::allow(const AppPermissions& requirements,
-                                 const std::function<void(const AppPermissions&)>& blocked) {
+                                 const std::function<void(const AppPermissions&)>& blocked,
+                                 Admission admission) {
     if (requirements.isEmpty())
         return true;
-    refreshNow();
+    const bool checking = std::find(m_snapshot.statuses.cbegin(), m_snapshot.statuses.cend(),
+                                    AppPermissionStatus::Checking) != m_snapshot.statuses.cend();
+    if (checking || m_refreshTimer.isActive()) {
+        refreshNow();
+    } else if (admission == Admission::Fresh) {
+        auto next = m_snapshot;
+        std::array<bool, std::tuple_size_v<decltype(next.statuses)>> queried{};
+        for (const auto permission : requirements) {
+            const auto index = static_cast<size_t>(permission);
+            if (!queried.at(index)) {
+                next.statuses[index] = m_backend->queryPermission(permission);
+                queried[index] = true;
+            }
+        }
+        publishSnapshot(next);
+    }
     const auto unavailable = missing(requirements);
     if (unavailable.isEmpty())
         return true;
@@ -125,7 +141,10 @@ void AppPermissionService::refresh() {
 }
 void AppPermissionService::refreshNow() {
     m_refreshTimer.stop();
-    const auto next = m_backend->query();
+    publishSnapshot(m_backend->query());
+    emit refreshed();
+}
+void AppPermissionService::publishSnapshot(const AppPermissionSnapshot& next) {
     if (next != m_snapshot) {
         for (const auto permission : {AppPermission::ScreenRecording, AppPermission::Accessibility,
                                       AppPermission::InputMonitoring, AppPermission::Microphone}) {
@@ -162,7 +181,6 @@ void AppPermissionService::refreshNow() {
         m_snapshot = next;
         emit changed();
     }
-    emit refreshed();
 }
 void AppPermissionService::request(AppPermission permission) {
     if (requestPending())

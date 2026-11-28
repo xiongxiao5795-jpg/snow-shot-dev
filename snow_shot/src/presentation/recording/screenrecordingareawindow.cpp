@@ -58,12 +58,27 @@ namespace {
 constexpr QColor kIdleColor(0x40, 0x96, 0xff);
 constexpr QColor kRecordingColor(0xf5, 0x22, 0x2d);
 constexpr QColor kPausedColor(0xfa, 0xad, 0x14);
-constexpr qreal kResizeHitWidth = 6.0;
-constexpr int kFrameInset = snow_shot::presentation::recording::screenRecordingPhysicalFrameInset;
+constexpr int kResizeHitWidth = 6;
 constexpr int kMoveButtonGap = 8;
 } // namespace
 
 namespace {
+QRect resizeExterior(const QRectF& selection) {
+    return selection.adjusted(-kResizeHitWidth, -kResizeHitWidth, kResizeHitWidth, kResizeHitWidth)
+        .toAlignedRect();
+}
+
+QPoint logicalPixel(const QPointF& position) {
+    return QPoint(qFloor(position.x()), qFloor(position.y()));
+}
+
+QRectF resizeInterior(const QRectF& selection) {
+    // Preserve a usable interior when either dimension of the selection is small.
+    const qreal horizontal = qMin<qreal>(kResizeHitWidth, selection.width() / 4.0);
+    const qreal vertical = qMin<qreal>(kResizeHitWidth, selection.height() / 4.0);
+    return selection.adjusted(horizontal, vertical, -horizontal, -vertical);
+}
+
 QPoint regionPointer(const QPointF& logicalPosition) {
 #if defined(Q_OS_WIN)
     if (QGuiApplication::platformName() == QStringLiteral("windows")) {
@@ -104,9 +119,10 @@ QRect nativeClientGeometry(const QWidget& window) {
     return {};
 }
 
-QRegion borderPaintRegion(const QRectF& frame, const QRectF& selection, qreal padding) {
+QRegion borderPaintRegion(const QRectF& frame, const QRectF& selection, qreal padding,
+                          qreal scale) {
     const auto border = snow_shot::presentation::recording::screenRecordingAreaBorderGeometry(
-        frame, selection, padding);
+        frame, selection, padding, scale);
     QRegion region;
     for (const QRectF& strip : {border.top, border.bottom, border.left, border.right}) {
         if (!strip.isEmpty())
@@ -174,11 +190,15 @@ void ScreenRecordingAreaWindow::setTrimming(bool enabled) {
     cancelRegionInteraction();
     cancelWebcamInteraction();
     m_trimming = enabled;
-    if (enabled)
-        setFixedSize(size());
-    else {
+    if (!enabled) {
         setMinimumSize(0, 0);
         setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    }
+    if (m_inputMode == InputMode::RegionEditing && !m_followCaptureActive &&
+        m_recordingRegion.isValid()) {
+        placeRecordingRegion(m_recordingRegion);
+    } else if (enabled) {
+        setFixedSize(size());
     }
     m_canvas->setVisible(!enabled && !m_followCaptureActive);
     if (!enabled)
@@ -269,6 +289,7 @@ void ScreenRecordingAreaWindow::layoutCaptureViewport() {
     const auto geometry = snow_shot::presentation::recording::screenRecordingFollowFrameGeometry(
         logicalRegion, scale);
     m_captureLogicalRegion = logicalRegion;
+    const bool scaleChanged = m_captureScale != scale;
     m_captureScale = scale;
     m_captureWindowGeometry = geometry.windowGeometry;
 #ifndef Q_OS_MACOS
@@ -279,6 +300,8 @@ void ScreenRecordingAreaWindow::layoutCaptureViewport() {
 #endif
     setGeometry(m_captureWindowGeometry);
     synchronizeCaptureViewport();
+    if (scaleChanged)
+        update();
     // The hidden canvas keeps its original geometry and viewport throughout follow.
 }
 
@@ -297,14 +320,15 @@ void ScreenRecordingAreaWindow::synchronizeCaptureViewport() {
     else
 #endif
         selection = m_captureLogicalRegion.translated(-QPointF(mapToGlobal(QPoint())));
-    const qreal inset = kFrameInset / scale;
-    const qreal padding = 1.0 / scale;
-    const QRectF frame = selection.adjusted(-inset, -inset, inset, inset);
+    const auto metrics = snow_shot::presentation::recording::screenRecordingAreaFrameMetrics(scale);
+    const QRectF frame = metrics.expandedRect(selection);
+    const qreal padding = metrics.paddingWidth;
     if (m_selectionRect != selection || m_frameRect != frame || m_paddingWidth != padding) {
         // Follow has no painted interior. Clear the old border as well as painting
         // the new one; mode changes and backing-store resizes still repaint fully.
-        const QRegion damage = borderPaintRegion(m_frameRect, m_selectionRect, m_paddingWidth) |
-                               borderPaintRegion(frame, selection, padding);
+        const QRegion damage =
+            borderPaintRegion(m_frameRect, m_selectionRect, m_paddingWidth, scale) |
+            borderPaintRegion(frame, selection, padding, scale);
         m_selectionRect = selection;
         m_frameRect = frame;
         m_paddingWidth = padding;
@@ -357,8 +381,11 @@ void ScreenRecordingAreaWindow::placeRecordingRegion(const QRect& region, bool r
         ScreenshotGeometryMapper::logicalRectFForPhysicalRect(region, screen);
     const qreal scale = screen != nullptr ? screen->devicePixelRatio() : 1.0;
 #endif
-    const auto frameGeometry =
-        snow_shot::presentation::recording::screenRecordingAreaFrameGeometry(logicalRegion, scale);
+    // Reserve room for the grab area without enlarging the painted frame.
+    const qreal resizeInset =
+        m_inputMode == InputMode::RegionEditing && !m_trimming ? kResizeHitWidth : 0.0;
+    const auto frameGeometry = snow_shot::presentation::recording::screenRecordingAreaFrameGeometry(
+        logicalRegion, scale, resizeInset);
     m_frameRect = frameGeometry.frameRect;
     m_selectionRect = frameGeometry.selectionRect;
     m_paddingWidth = frameGeometry.paddingWidth;
@@ -413,10 +440,14 @@ void ScreenRecordingAreaWindow::setInputMode(InputMode mode) {
         return;
     }
     cancelWebcamInteraction();
+    const bool resizeInsetChanged =
+        (m_inputMode == InputMode::RegionEditing) != (mode == InputMode::RegionEditing);
     m_inputMode = mode;
     m_angleWheelSteps.reset();
     cancelRegionInteraction();
     m_gestureButton = Qt::NoButton;
+    if (resizeInsetChanged && !m_trimming && !m_followCaptureActive && m_recordingRegion.isValid())
+        placeRecordingRegion(m_recordingRegion);
     applyInputMode();
 }
 
@@ -562,10 +593,11 @@ void ScreenRecordingAreaWindow::layoutRegionDragHandle() {
     }
     const int side =
         qMin(RecordingRegionDragHandle::controlSize, qMin(bounds.width(), bounds.height()));
-    const int inset =
-        qMin(kMoveButtonGap, qMax(0, (qMin(bounds.width(), bounds.height()) - side) / 2));
+    const int rightInset = qMin(kMoveButtonGap, (bounds.width() - side) / 2);
+    const int bottomInset = qMin(kMoveButtonGap, (bounds.height() - side) / 2);
     m_regionDragHandle->setFixedSize(side, side);
-    m_regionDragHandle->move(bounds.right() + 1 - side - inset, bounds.bottom() + 1 - side - inset);
+    m_regionDragHandle->move(bounds.right() + 1 - side - rightInset,
+                             bounds.bottom() + 1 - side - bottomInset);
     m_regionDragHandle->show();
     m_regionDragHandle->raise();
     // Webcam controls take priority where the two controls overlap in a small region.
@@ -582,13 +614,11 @@ QRegion ScreenRecordingAreaWindow::regionInteractionRegion() const {
         return {};
     if (m_trimming)
         return QRegion(rect());
-    const qreal horizontalHitWidth = qMin(kResizeHitWidth, m_selectionRect.width() / 4.0);
-    const qreal verticalHitWidth = qMin(kResizeHitWidth, m_selectionRect.height() / 4.0);
-    const QRect interior(QPoint(qFloor(m_selectionRect.left() + horizontalHitWidth) + 1,
-                                qFloor(m_selectionRect.top() + verticalHitWidth) + 1),
-                         QPoint(qCeil(m_selectionRect.right() - horizontalHitWidth) - 1,
-                                qCeil(m_selectionRect.bottom() - verticalHitWidth) - 1));
-    QRegion input = QRegion(rect()) - QRegion(interior);
+    const QRectF inner = resizeInterior(m_selectionRect);
+    const QRect interior(QPoint(qFloor(inner.left()) + 1, qFloor(inner.top()) + 1),
+                         QPoint(qCeil(inner.right()) - 1, qCeil(inner.bottom()) - 1));
+    QRegion input =
+        QRegion(resizeExterior(m_selectionRect).intersected(rect())) - QRegion(interior);
     if (m_regionDragHandle && m_regionDragHandle->isVisible() && m_regionDragHandle->isEnabled())
         input |= m_regionDragHandle->geometry();
     if (m_webcamControl && m_webcamControl->isVisible())
@@ -610,7 +640,7 @@ void ScreenRecordingAreaWindow::updateNativeMouseRouting(const QPoint& desktopPo
     // system mouse hook never waits for these native window operations.
     applyNativePassThrough(!m_regionDragActive &&
                            !(m_webcamControl && m_webcamControl->interacting()) &&
-                           !regionInteractionRegion().contains(local.toPoint()));
+                           !regionInteractionRegion().contains(logicalPixel(local)));
 }
 
 QColor ScreenRecordingAreaWindow::inputSurfaceColor() const {
@@ -808,20 +838,20 @@ bool ScreenRecordingAreaWindow::drawingEnabled() const {
 }
 
 Qt::Edges ScreenRecordingAreaWindow::resizeEdgesAt(const QPointF& position) const {
-    if (m_trimming || !regionEditingEnabled() || !rect().contains(position.toPoint())) {
+    if (m_trimming || !regionEditingEnabled() ||
+        !resizeExterior(m_selectionRect).intersected(rect()).contains(logicalPixel(position))) {
         return {};
     }
     Qt::Edges edges;
-    const qreal horizontalHitWidth = qMin(kResizeHitWidth, m_selectionRect.width() / 4.0);
-    const qreal verticalHitWidth = qMin(kResizeHitWidth, m_selectionRect.height() / 4.0);
-    if (position.x() <= m_selectionRect.left() + horizontalHitWidth) {
+    const QRectF interior = resizeInterior(m_selectionRect);
+    if (position.x() <= interior.left()) {
         edges |= Qt::LeftEdge;
-    } else if (position.x() >= m_selectionRect.right() - horizontalHitWidth) {
+    } else if (position.x() >= interior.right()) {
         edges |= Qt::RightEdge;
     }
-    if (position.y() <= m_selectionRect.top() + verticalHitWidth) {
+    if (position.y() <= interior.top()) {
         edges |= Qt::TopEdge;
-    } else if (position.y() >= m_selectionRect.bottom() - verticalHitWidth) {
+    } else if (position.y() >= interior.bottom()) {
         edges |= Qt::BottomEdge;
     }
     return edges;
@@ -931,14 +961,15 @@ void ScreenRecordingAreaWindow::layoutSelection() {
     QRectF selection = QRectF(rect()).marginsRemoved(
         QMarginsF(m_physicalInsets.left() / scale, m_physicalInsets.top() / scale,
                   m_physicalInsets.right() / scale, m_physicalInsets.bottom() / scale));
-    const qreal frameInset = kFrameInset / scale;
-    QRectF frame = selection.adjusted(-frameInset, -frameInset, frameInset, frameInset);
-    const qreal padding = 1.0 / scale;
+    const auto metrics = snow_shot::presentation::recording::screenRecordingAreaFrameMetrics(scale);
+    QRectF frame = metrics.expandedRect(selection);
+    qreal padding = metrics.paddingWidth;
     const auto nativeGeometry = snow_shot::presentation::recording::screenRecordingObservedGeometry(
         nativeClientGeometry(*this), scale, m_physicalInsets.toMargins());
     if (nativeGeometry.recordingRegion.isValid()) {
         selection = nativeGeometry.selectionRect;
         frame = nativeGeometry.frameRect;
+        padding = nativeGeometry.paddingWidth;
     }
     if (m_selectionRect == selection && m_frameRect == frame && m_paddingWidth == padding) {
         return;
@@ -1156,7 +1187,7 @@ bool ScreenRecordingAreaWindow::nativeEvent(const QByteArray& eventType, void* m
             ScreenToClient(msg->hwnd, &point);
             const QPointF local(point.x / devicePixelRatioF(), point.y / devicePixelRatioF());
             const bool interactive = drawingEnabled();
-            *result = interactive || regionInteractionRegion().contains(local.toPoint())
+            *result = interactive || regionInteractionRegion().contains(logicalPixel(local))
                           ? HTCLIENT
                           : HTTRANSPARENT;
             return true;
@@ -1242,7 +1273,8 @@ void ScreenRecordingAreaWindow::paintEvent(QPaintEvent* event) {
     }
     painter.setRenderHint(QPainter::Antialiasing, false);
     const auto border = snow_shot::presentation::recording::screenRecordingAreaBorderGeometry(
-        m_frameRect, m_selectionRect, m_paddingWidth);
+        m_frameRect, m_selectionRect, m_paddingWidth,
+        m_followCaptureActive ? m_captureScale : devicePixelRatioF());
     painter.fillRect(border.top, color);
     painter.fillRect(border.bottom, color);
     painter.fillRect(border.left, color);

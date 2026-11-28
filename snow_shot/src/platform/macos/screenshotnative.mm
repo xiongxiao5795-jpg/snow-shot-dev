@@ -15,6 +15,7 @@
 #import <objc/runtime.h>
 #include <algorithm>
 #include <QApplication>
+#include <QtGui/private/qguiapplication_p.h>
 #include <QAbstractEventDispatcher>
 #include <QSet>
 #include <QScopedValueRollback>
@@ -351,18 +352,24 @@ void synchronizeScreenshotLayers() {
             continue;
         int sheetDepth = 1;
         CaptureLayer owner = nativePanelOwner(window, windows, sheetDepth);
-        // QFileDialog retains its Qt modal owner even when Cocoa supplies the
-        // actual panel. Keep that family's band when both captures are visible.
-        if (filePanel) {
-            const auto modalOwner = captureLayer(QGuiApplication::modalWindow());
+        // A sheet inherits its native owner's level. A detached file panel can
+        // still have a QFileDialog owner even if Qt omitted a Tool transient parent.
+        const bool detachedFilePanel = filePanel && !window.sheetParent && !window.parentWindow;
+        QWindow* qtModal = QGuiApplication::modalWindow();
+        if (detachedFilePanel) {
+            QWidget* modal = QApplication::activeModalWidget();
+            const auto modalOwner =
+                modal ? widgetCaptureLayer(modal, modalFloors) : captureLayer(qtModal, modalFloors);
             if (modalOwner.valid()) {
                 owner = modalOwner;
                 sheetDepth = 1;
             }
         }
         const auto panelRole = nativePanelLayer(owner, panelFloors, sheetDepth);
+        const bool globalPanel =
+            detachedFilePanel && (!qtModal || qtModal->modality() == Qt::ApplicationModal);
         const NSInteger panelLevel = panelRole.valid() ? captureWindowLevel(panelRole)
-                                     : filePanel
+                                     : globalPanel
                                          ? *std::max_element(panelLevels.begin(), panelLevels.end())
                                          : 0;
         if (panelLevel && window.visible)
@@ -386,7 +393,7 @@ class ScreenshotStackingPolicy final : public QObject {
                     m_focusOwner.clear();
                     if (!owner->isVisible() || !captureLayer(owner).valid())
                         return;
-                    if (QWindow* modal = QGuiApplication::modalWindow(); modal && modal != owner)
+                    if (QGuiApplicationPrivate::instance()->isWindowBlocked(owner))
                         return;
                     owner->requestActivate();
                 });
@@ -663,6 +670,18 @@ void configureScreenshotOverlayWindow(QWidget* widget) {
     configureControlledWindowDragging(widget, true);
 }
 
+void flushScreenshotPresentationTransactions(const QWidget& widget) {
+    if (qApp == nullptr || QThread::currentThread() != qApp->thread() ||
+        QGuiApplication::platformName() != QStringLiteral("cocoa") || !widget.isWindow() ||
+        widget.internalWinId() == 0) {
+        return;
+    }
+
+    @autoreleasepool {
+        [CATransaction flush];
+    }
+}
+
 void retireScreenshotWindowPresentation(QWidget* widget) {
     if (widget == nullptr || qApp == nullptr || QThread::currentThread() != qApp->thread() ||
         QGuiApplication::platformName() != QStringLiteral("cocoa") || !widget->isWindow() ||
@@ -763,12 +782,14 @@ void configureFloatingToolbarWindow(QWidget* widget, bool captureActive) {
                                           : CaptureFamily::DesktopToolbar);
 }
 
-quint32 screenshotDisplayAtCursor() {
+quint32 screenshotDisplayAtCursor(QPointF* cursor) {
     CGEventRef event = CGEventCreate(nullptr);
     if (!event)
         return 0;
     const CGPoint point = CGEventGetLocation(event);
     CFRelease(event);
+    if (cursor)
+        *cursor = QPointF(point.x, point.y);
     CGDirectDisplayID display = 0;
     uint32_t count = 0;
     return CGGetDisplaysWithPoint(point, 1, &display, &count) == kCGErrorSuccess && count ? display

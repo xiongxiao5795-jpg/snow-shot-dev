@@ -65,15 +65,20 @@ void pngLifetimeAndTerminalOutcomes() {
         if (status == Service::Status::Shared)
             source.setColorSpace(QColorSpace::DisplayP3);
         const QImage expected = source;
-        require(service.shareImage(&owner, &owner, source, QStringLiteral("capture.png"),
-                                   [&](Service::Result result) {
-                                       require(result.status == status, "preserve native outcome");
-                                       require(!service.busy(),
-                                               "release busy state before completion");
-                                       require(QThread::currentThread() == qApp->thread(),
-                                               "completion returns to GUI thread");
-                                       ++completions;
-                                   }),
+        require(service.shareImage(
+                    &owner, &owner, source, QStringLiteral("capture.png"),
+                    [&](Service::Result result) {
+                        require(result.status == status, "preserve native outcome");
+                        require(status == Service::Status::Shared
+                                    ? result.sharedPath == path && result.fileLifetime &&
+                                          QFileInfo::exists(result.sharedPath)
+                                    : result.sharedPath.isEmpty() && !result.fileLifetime,
+                                "only confirmed sharing supplies the actual sent PNG");
+                        require(!service.busy(), "release busy state before completion");
+                        require(QThread::currentThread() == qApp->thread(),
+                                "completion returns to GUI thread");
+                        ++completions;
+                    }),
                 "accept image sharing");
         source.fill(Qt::green);
         require(completions == 0 && service.busy(), "sharing is asynchronous and busy immediately");
@@ -192,6 +197,39 @@ void cancelledPreparationWaitingForMemoryNeverStartsSharing() {
             "cancelled queued preparation never opens native sharing or completes twice");
 }
 
+void explicitlyCancelledSharePreservesOnlyTheNativeFileLease() {
+    QWidget owner;
+    QObject receiver;
+    QObject unrelated;
+    Service::Completion native;
+    QString path;
+    int nativeCancels = 0;
+    int completions = 0;
+    Service service(
+        [&](QWidget*, QString file, Service::Completion done, Service::CancelNative& cancelNative) {
+            path = std::move(file);
+            native = std::move(done);
+            cancelNative = [&] { ++nativeCancels; };
+        },
+        nullptr);
+    require(service.shareImage(&receiver, &owner, snapshot(), {},
+                               [&](auto result) {
+                                   require(result.status == Service::Status::Cancelled &&
+                                               result.sharedPath.isEmpty(),
+                                           "explicit cancellation delivers no shared file");
+                                   ++completions;
+                               }),
+            "start pending share");
+    wait([&] { return bool(native); });
+    require(!service.cancel(&unrelated) && service.busy(), "cancellation is receiver-scoped");
+    require(service.cancel(&receiver) && !service.busy() && nativeCancels == 1 && completions == 1,
+            "cancel without destroying the QWidget or waiting on the native backend");
+    require(QFileInfo::exists(path), "a native transfer can still read its independent file lease");
+    std::exchange(native, {})({Service::Status::Shared, {}});
+    wait([&] { return !QFileInfo::exists(path); });
+    require(!service.cancel(&receiver) && completions == 1, "ignore a stale native completion");
+}
+
 void screenshotCompletionPolicy() {
     for (const auto status :
          {Service::Status::Shared, Service::Status::Cancelled, Service::Status::Failed,
@@ -203,14 +241,14 @@ void screenshotCompletionPolicy() {
                 ++released;
                 return true;
             },
-            [&] { ++closed; }, [&](auto) { ++restored; });
+            [&](auto) { ++closed; }, [&](auto) { ++restored; });
         completion({status, {}});
         completion({status, {}});
         require(released == 1 && closed == (status == Service::Status::Shared ? 1 : 0) &&
                     restored == (status == Service::Status::Shared ? 0 : 1),
                 "only a successful share closes the screenshot, once");
         auto stale = screenshotAirDropCompletion(
-            std::make_shared<bool>(false), [] { return false; }, [&] { ++closed; },
+            std::make_shared<bool>(false), [] { return false; }, [&](auto) { ++closed; },
             [&](auto) { ++restored; });
         stale({Service::Status::Shared, {}});
         require(closed + restored == 1,
@@ -225,6 +263,7 @@ int main(int argc, char** argv) {
     destructionKeepsInFlightFileAlive();
     unavailableAndEarlyDestruction();
     cancelledPreparationWaitingForMemoryNeverStartsSharing();
+    explicitlyCancelledSharePreservesOnlyTheNativeFileLease();
     screenshotCompletionPolicy();
     return 0;
 }

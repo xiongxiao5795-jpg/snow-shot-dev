@@ -170,8 +170,14 @@ is repaired, run `brew update` and retry the install or upgrade above. An update
 cannot resolve it while the remote cask still requires Intel; maintainers should
 follow the repair procedure below.
 
-Finish recordings and quit Snow Shot before upgrading or uninstalling. For
-project-signed releases after 1.5.8, Homebrew verifies the pinned project
+Finish captures and recordings before upgrading or uninstalling. When the
+installed cask includes `quit:`, Homebrew asks a running Snow Shot to quit and
+reopens it after a successful upgrade if it was able to quit the app. For the
+first upgrade from a cask without `quit:`, quit Snow Shot before upgrading and
+open it afterward. If Homebrew reports a quit failure during an upgrade, quit
+and reopen the app manually.
+
+For project-signed releases after 1.5.8, Homebrew verifies the pinned project
 certificate and copies the application without re-signing it. Finder drag-and-drop,
 the standalone installer, and Homebrew preserve the same publisher signature.
 No user signing key, certificate installation, or Keychain access is required.
@@ -261,8 +267,10 @@ bash -n scripts/install-snow-shot-macos.sh
 
 Native release qualification uses a disposable macOS desktop account with
 Homebrew: install, launch, upgrade between two stable releases, uninstall, and
-repeat with `--appdir`. Check that the signing identity stays the same, the OCR
-helper and manifest bytes remain unchanged, and uninstall preserves user data.
+repeat with `--appdir`. When upgrading from a cask with `quit:`, verify that
+running Snow Shot restarts with the new version. Check that the signing identity
+stays the same, the OCR helper and manifest bytes remain unchanged, and
+uninstall preserves user data.
 In that disposable account, test a package with the wrong signer and verify that
 Homebrew restores the previous app after a failed upgrade. This qualification is
 separate from signature-only regression checks and requires real release assets
@@ -704,18 +712,21 @@ The shell wrapper also sets Xcode libclang discovery for Rust bindgen.
 ### Idle memory optimization
 
 Both editions expose **Memory Optimization Policy** under **General > Application
-performance**. **Smart Control** is the default; **Disabled** stops automatic
-reclamation immediately. On macOS, Smart Control calls
+performance**. **Smart Control** is the default. **Disabled** prevents new
+reclamation attempts. On macOS, Smart Control calls
 `malloc_zone_pressure_relief(nullptr, 0)` to return unused allocator pages to the
-system. Live images, capture data, and other allocations retain their contents.
-This is best-effort reclamation and may release zero bytes; it does not evict
-live process pages like Windows `EmptyWorkingSet`.
+system. On Windows, Smart Control uses `HeapOptimizeResources` to reclaim unused
+low-fragmentation heap pages. Both operations are best-effort and may release
+zero bytes.
 
-The controller waits for background idle time, blocks reclamation during active
-work or UI interaction, and limits attempts to one per idle period with a
-five-minute cooldown. Memory pressure notifications shorten the idle wait after
-the initial startup grace. Logs report macOS physical footprint (including
-compressed memory) and allocator-reported released bytes separately.
+The controller waits for background idle time and clears export caches on the UI
+thread once per eligible idle period. If the worker pool is busy, the controller
+tries again on a later check. The worker rechecks activity before it calls the
+allocator. Work and input can resume while an admitted reclamation finishes. The
+controller limits attempts to one per idle period with a five-minute cooldown.
+Memory pressure notifications shorten the idle wait after the initial startup
+grace. Logs report macOS physical footprint (including compressed memory) and
+allocator-reported released bytes separately.
 
 Focused checks:
 

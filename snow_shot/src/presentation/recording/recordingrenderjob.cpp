@@ -3,7 +3,7 @@
 #include "recordingrenderjob.h"
 #include "recordingrenderdialog.h"
 #include "snow_shot/platform/applicationqos.h"
-#include "snow_shot/presentation/components/screenrecordingmodal.h"
+#include "snow_shot/presentation/components/modalwindow.h"
 #include "widgets/modal.h"
 #include <QCoreApplication>
 #include <QEvent>
@@ -192,6 +192,8 @@ struct RecordingRenderJob::Impl {
         if (error != lastError)
             setError(std::move(error));
         timer.stop();
+        if (failurePolicy == FailurePolicy::KeepSource && owner.release(false))
+            return;
         notify();
         // Reconcile the natural window height after adding error/source details
         // and switching footer actions. Percentage-only updates do not resize it.
@@ -348,6 +350,7 @@ struct RecordingRenderJob::Impl {
     std::future<void> cancelFuture;
     std::optional<Outcome> releasing;
     bool retained = false;
+    FailurePolicy failurePolicy = FailurePolicy::AwaitDecision;
     bool terminalSucceeded = false;
     bool cancelRequested = false;
     double percent = 0;
@@ -399,9 +402,15 @@ void RecordingRenderJob::detachWindowOwner() {
     // Content, render state, and the saved screen/anchor remain owned by the job.
     const bool reopen = s.modal->isOpen();
     s.modal->close();
-    snow_shot::presentation::configureScreenRecordingModal(*s.modal, nullptr);
+    snow_shot::presentation::modal_window::detach(*s.modal);
+    s.modal->setWindowAlwaysOnTop(true);
     if (reopen)
         s.modal->open();
+}
+void RecordingRenderJob::setFailurePolicy(FailurePolicy policy) {
+    m_impl->failurePolicy = policy;
+    if (policy == FailurePolicy::KeepSource)
+        static_cast<void>(release(false));
 }
 bool RecordingRenderJob::cancel() {
     auto& s = *m_impl;

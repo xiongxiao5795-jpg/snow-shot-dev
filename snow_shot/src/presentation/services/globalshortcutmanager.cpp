@@ -5,6 +5,7 @@
 #include "snow_shot/diagnostics/diagnostics.h"
 #include "snow_shot/platform/focusedfullscreenwindow.h"
 #include "snow_shot/storage/applicationstorage.h"
+#include "snow_shot/storage/configurationschema.h"
 #include "snow_shot/storage/settingsadapters.h"
 
 #include <QHash>
@@ -23,7 +24,7 @@ namespace {
 constexpr int MAX_SHORTCUTS_PER_ACTION = 2;
 constexpr int FIRST_REGISTRATION_ID = 0x2200;
 constexpr int LAST_REGISTRATION_ID = 0xBFFF;
-constexpr std::size_t ACTION_COUNT = SNOW_SHOT_ENABLE_QUICK_ANNOTATION ? 38 : 32;
+constexpr std::size_t ACTION_COUNT = SNOW_SHOT_ENABLE_QUICK_ANNOTATION ? 40 : 34;
 
 constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::Screenshot,
@@ -36,6 +37,7 @@ constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::ScreenshotCopy,
     GlobalShortcutAction::ScreenshotSave,
     GlobalShortcutAction::ScreenshotQuickSave,
+    GlobalShortcutAction::ScreenshotPinWindowToScreen,
     GlobalShortcutAction::ScreenshotFullScreen,
     GlobalShortcutAction::ScreenshotFocusedWindow,
     GlobalShortcutAction::ScreenRecord,
@@ -47,6 +49,7 @@ constexpr std::array<GlobalShortcutAction, ACTION_COUNT> ALL_ACTIONS = {
     GlobalShortcutAction::StitchSelectedImages,
     GlobalShortcutAction::SplitSelectedImages,
     GlobalShortcutAction::EditSelectedImages,
+    GlobalShortcutAction::CompressSelectedImages,
     GlobalShortcutAction::SwitchWindowGroup,
     GlobalShortcutAction::OpenSettings,
     GlobalShortcutAction::PinClipboardContent,
@@ -197,6 +200,8 @@ shortcuts::ShortcutBindingList persistedShortcuts(const storage::ShortcutSetting
         return settings.screenshotSave();
     case GlobalShortcutAction::ScreenshotQuickSave:
         return settings.screenshotQuickSave();
+    case GlobalShortcutAction::ScreenshotPinWindowToScreen:
+        return settings.screenshotPinWindowToScreen();
     case GlobalShortcutAction::ScreenshotFullScreen:
         return settings.screenshotFullScreen();
     case GlobalShortcutAction::ScreenshotFocusedWindow:
@@ -219,6 +224,8 @@ shortcuts::ShortcutBindingList persistedShortcuts(const storage::ShortcutSetting
         return settings.splitSelectedImages();
     case GlobalShortcutAction::EditSelectedImages:
         return settings.editSelectedImages();
+    case GlobalShortcutAction::CompressSelectedImages:
+        return settings.compressSelectedImages();
     case GlobalShortcutAction::OpenPinToScreenManagement:
         return settings.openPinToScreenManagement();
     case GlobalShortcutAction::OpenSettings:
@@ -304,6 +311,8 @@ bool persistShortcuts(const storage::ShortcutSettings& settings, GlobalShortcutA
         return settings.setScreenshotSave(bindings);
     case GlobalShortcutAction::ScreenshotQuickSave:
         return settings.setScreenshotQuickSave(bindings);
+    case GlobalShortcutAction::ScreenshotPinWindowToScreen:
+        return settings.setScreenshotPinWindowToScreen(bindings);
     case GlobalShortcutAction::ScreenshotFullScreen:
         return settings.setScreenshotFullScreen(bindings);
     case GlobalShortcutAction::ScreenshotFocusedWindow:
@@ -326,6 +335,8 @@ bool persistShortcuts(const storage::ShortcutSettings& settings, GlobalShortcutA
         return settings.setSplitSelectedImages(bindings);
     case GlobalShortcutAction::EditSelectedImages:
         return settings.setEditSelectedImages(bindings);
+    case GlobalShortcutAction::CompressSelectedImages:
+        return settings.setCompressSelectedImages(bindings);
     case GlobalShortcutAction::OpenPinToScreenManagement:
         return settings.setOpenPinToScreenManagement(bindings);
     case GlobalShortcutAction::OpenSettings:
@@ -439,16 +450,41 @@ class GlobalShortcutManager::Impl {
         }
         QObject::connect(
             &storage::ApplicationStorage::instance().configuration(),
-            &storage::ConfigurationStore::valueChanged, &q,
-            [this](const QString& key, const QJsonValue&) {
-                if (m_initialized &&
-                    (key == QStringLiteral("extended_features/translation_page_enabled") ||
-                     key ==
-                         QStringLiteral("global_shortcuts/disable_on_focused_fullscreen_window") ||
-                     key == QStringLiteral("global_shortcuts/fullscreen_window_filter") ||
-                     key == QStringLiteral("global_shortcuts/fullscreen_disable_scope"))) {
-                    reconcile();
+            &storage::ConfigurationStore::valuesCommitted, &q,
+            [this](storage::ConfigurationWriteOrigin origin, const auto& previous,
+                   const auto& values) {
+                if (!m_initialized)
+                    return;
+                const QString prefix = QStringLiteral("global_shortcuts/");
+                const QString translationEnabled =
+                    QStringLiteral("extended_features/translation_page_enabled");
+                bool refresh =
+                    values.contains(translationEnabled) &&
+                    previous.value(translationEnabled) != values.value(translationEnabled);
+                bool bindingsTouched = false;
+                for (auto it = values.lowerBound(prefix);
+                     it != values.cend() && it.key().startsWith(prefix); ++it) {
+                    const auto* entry = storage::ConfigurationSchema::entry(it.key());
+                    if (entry && entry->valueKind == storage::ConfigurationValueKind::ShortcutList)
+                        bindingsTouched = true;
+                    else if (previous.value(it.key()) != it.value())
+                        refresh = true;
                 }
+                if (bindingsTouched) {
+                    const storage::ShortcutSettings settings;
+                    for (GlobalShortcutAction action : ALL_ACTIONS) {
+                        auto& current = m_shortcuts[actionIndex(action)];
+                        auto next = canonicalBindings(persistedShortcuts(settings, action));
+                        if (current != next) {
+                            current = std::move(next);
+                            refresh = true;
+                        }
+                    }
+                    // A manual retry can reattempt native registration for the same value.
+                    refresh = refresh || origin == storage::ConfigurationWriteOrigin::Explicit;
+                }
+                if (refresh)
+                    reconcile();
             });
         m_initialized = true;
         reconcile();
@@ -460,13 +496,7 @@ class GlobalShortcutManager::Impl {
         if (!m_initialized) {
             initialize();
         }
-        const auto canonical = canonicalBindings(bindings);
-        if (!persistShortcuts(storage::ShortcutSettings(), action, canonical)) {
-            return false;
-        }
-        m_shortcuts[actionIndex(action)] = canonical;
-        reconcile();
-        return true;
+        return persistShortcuts(storage::ShortcutSettings(), action, canonicalBindings(bindings));
     }
 
     GlobalShortcutValidationResult
@@ -512,7 +542,13 @@ class GlobalShortcutManager::Impl {
             unavailable.action = action;
             return unavailable;
         }
-        return m_states[actionIndex(action)];
+        auto result = m_states[actionIndex(action)];
+        if (!m_initialized && storage::ApplicationStorage::instance().isInitialized()) {
+            // The settings service can read and write before native registration starts.
+            result.shortcuts =
+                canonicalBindings(persistedShortcuts(storage::ShortcutSettings(), action));
+        }
+        return result;
     }
 
     RegistrationSuspensionHandle suspendRegistrations() {

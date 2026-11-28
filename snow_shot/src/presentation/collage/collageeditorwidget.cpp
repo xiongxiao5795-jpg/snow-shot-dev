@@ -2,6 +2,9 @@
 #include "snow_shot/presentation/components/collageeditorwidget.h"
 #include "collagepreviewrows_p.h"
 #include "collageimageediting_p.h"
+#include "collagefreelayout_p.h"
+#include "snow_draw_engine_qt/snow_canvas_snapping.h"
+#include <QPaintEvent>
 #include "collagethumbnailactions_p.h"
 #include "collageoriginalpreview_p.h"
 #include "snow_shot/presentation/components/collagepdfpagegrid.h"
@@ -9,12 +12,16 @@
 #include "snow_shot/presentation/components/collagepdftemplatewidget.h"
 
 #include "snow_shot/presentation/screenshotwheelinput.h"
+#include "snow_shot/shortcuts/shortcutdisplayservice.h"
 #include "snow_shot/presentation/screenshotexportcoordinator.h"
 #include "snow_shot/presentation/screenshotclipboardcontent.h"
 #include "snow_shot/presentation/components/overlaycontrolbutton.h"
+#include "snow_shot/presentation/canvasstatusreadout.h"
 #include "snow_shot/presentation/components/canvasactiontoolbar.h"
+#include "snow_shot/presentation/components/canvascheckerboard.h"
 #include "snow_shot/presentation/components/imagedropsurface.h"
 #include "snow_shot/presentation/components/icons/snowshoticons.h"
+#include "snow_shot/presentation/styles/outputdescriptionstyle.h"
 #include "snow_shot/presentation/styles/thememanager.h"
 #include "antd_icons.h"
 #include "icon_renderer.h"
@@ -51,7 +58,7 @@
 #include <QPointer>
 #include <QRgba64>
 #include <QScrollBar>
-#include <QSet>
+#include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QTimer>
 #include <QUrl>
@@ -67,6 +74,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace snow_shot::presentation::components {
@@ -81,6 +89,8 @@ using adqt::widgets::AdInputNumber;
 using adqt::widgets::AdScrollArea;
 using adqt::widgets::AdSegmented;
 namespace icons = adqt::icons::antd::outlined;
+// Match rectangle movement in the screenshot canvas (Command on macOS, Ctrl on Windows).
+constexpr QKeyCombination kFreeSnapKey(Qt::ControlModifier, Qt::Key_Control);
 constexpr int kSettingsFormWidth = 340;
 constexpr int kSettingsFormRightMargin = 12;
 constexpr auto kDragType = "application/x-snow-shot-collage-item";
@@ -116,6 +126,14 @@ constexpr std::array<const char*, 8> kColorValues{"#FFFFFF", "#000000", "#8C8C8C
     QT_TRANSLATE_NOOP("ImageStitchingEditorWidget", "Total: %1 images"),
     QT_TRANSLATE_NOOP("ImageStitchingEditorWidget", "Vertical"),
     QT_TRANSLATE_NOOP("ImageStitchingEditorWidget", "Horizontal"),
+    QT_TRANSLATE_NOOP("ImageStitchingEditorWidget", "Free"),
+    QT_TRANSLATE_NOOP("ImageStitchingEditorWidget",
+                      "Drag to move an image. Hold %1 to snap to other images. Drag a handle to "
+                      "resize around the center."),
+    QT_TRANSLATE_NOOP("ImageStitchingEditorWidget",
+                      "Percentage of the first image’s original height after rotation"),
+    QT_TRANSLATE_NOOP("ImageStitchingEditorWidget",
+                      "Percentage of the greatest original image height after rotation"),
     QT_TRANSLATE_NOOP("ImageStitchingEditorWidget", "Custom"),
     QT_TRANSLATE_NOOP("ImageStitchingEditorWidget", "Rows"),
     QT_TRANSLATE_NOOP("ImageStitchingEditorWidget", "Columns"),
@@ -297,16 +315,6 @@ QStringList droppedImageFiles(const QMimeData* mime) {
     return paths;
 }
 
-QPixmap checkerboard(const QWidget* widget) {
-    const auto theme = adqt::theme::ThemeManager::instance().resolveTheme(widget);
-    QPixmap tile(20, 20);
-    tile.fill(theme.colorBgContainer);
-    QPainter painter(&tile);
-    painter.fillRect(0, 0, 10, 10, theme.colorFillSecondary);
-    painter.fillRect(10, 10, 10, 10, theme.colorFillSecondary);
-    return tile;
-}
-
 void drawTransformedPreview(QPainter& painter, const QRectF& target, const QImage& image,
                             const QTransform& transform) {
     if (image.isNull() || target.isEmpty())
@@ -361,6 +369,11 @@ class ImageStitchingColorPresetButton final : public AdButton {
     QColor m_color;
 };
 
+const ImageStitchingItem* itemById(const ImageStitchingDocument& document, quint64 id) {
+    const int index = document.indexOf(id);
+    return index < 0 ? nullptr : &document.items()[index];
+}
+
 class ImageStitchingThumbnail final : public QWidget {
   public:
     ImageStitchingThumbnail(ImageStitchingDocument* document, quint64 id, QWidget* parent)
@@ -386,6 +399,7 @@ class ImageStitchingThumbnail final : public QWidget {
         retranslate();
     }
     std::function<void(quint64)> selected;
+    std::function<bool(quint64, quint64)> swapRequested;
     std::function<void(quint64)> replaceRequested;
     std::function<void()> editStarted;
     void setEditingEnabled(bool enabled, bool replacementAllowed) {
@@ -395,11 +409,7 @@ class ImageStitchingThumbnail final : public QWidget {
     void setItem(const ImageStitchingItem& item, int ordinal, bool force = false) {
         if (!force && m_revision == item.revision && m_ordinal == ordinal && m_label == item.label)
             return;
-        if (m_revision != item.revision || m_preview.isNull()) {
-            m_revision = item.revision;
-            m_preview = item.preview;
-            m_transform = item.transform;
-        }
+        m_revision = item.revision;
         m_label = item.label;
         m_ordinal = ordinal;
         retranslate();
@@ -424,15 +434,15 @@ class ImageStitchingThumbnail final : public QWidget {
             QPen(m_target ? theme.colorPrimary : theme.colorBorderSecondary, m_target ? 2 : 1));
         painter.drawRoundedRect(outer, theme.borderRadiusSM, theme.borderRadiusSM);
         const QRectF imageArea = outer.adjusted(5, 5, -5, -20);
-        painter.fillRect(imageArea, QBrush(checkerboard(this)));
-        if (!m_preview.isNull()) {
-            const auto size = m_transform.mapRect(QRectF(QPointF{}, m_preview.size()))
+        painter.fillRect(imageArea, canvasCheckerboard(theme));
+        if (const auto* item = itemById(*m_document, m_id)) {
+            const auto size = item->transform.mapRect(QRectF(QPointF{}, item->preview.size()))
                                   .size()
                                   .scaled(imageArea.size(), Qt::KeepAspectRatio);
             const QRectF target(imageArea.center() - QPointF(size.width() / 2, size.height() / 2),
                                 size);
             painter.setRenderHint(QPainter::SmoothPixmapTransform);
-            drawTransformedPreview(painter, target, m_preview, m_transform);
+            drawTransformedPreview(painter, target, item->preview, item->transform);
         }
         painter.setPen(theme.colorTextSecondary);
         painter.drawText(QRect(5, height() - 20, width() - 10, 17), Qt::AlignCenter,
@@ -455,14 +465,27 @@ class ImageStitchingThumbnail final : public QWidget {
         if (event->button() == Qt::LeftButton) {
             m_press = event->position();
             setFocus(Qt::MouseFocusReason);
-            if (selected)
-                selected(m_id);
+            m_document->select(m_id);
             event->accept();
         }
     }
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        if (event->button() != Qt::LeftButton || !m_press) {
+            QWidget::mouseReleaseEvent(event);
+            return;
+        }
+        m_press.reset();
+        if (selected && QRectF(rect()).contains(event->position()))
+            selected(m_id);
+        event->accept();
+    }
     void mouseMoveEvent(QMouseEvent* event) override {
-        if (!(event->buttons() & Qt::LeftButton) || !m_editing ||
-            (event->position() - m_press).manhattanLength() < QApplication::startDragDistance())
+        if (!m_press || !(event->buttons() & Qt::LeftButton) || !m_editing ||
+            (event->position() - *m_press).manhattanLength() < QApplication::startDragDistance())
+            return;
+        m_press.reset();
+        const auto* item = itemById(*m_document, m_id);
+        if (!item)
             return;
         auto* drag = new QDrag(this);
         auto* mime = new QMimeData;
@@ -470,8 +493,8 @@ class ImageStitchingThumbnail final : public QWidget {
                       QByteArray::number(reinterpret_cast<quintptr>(m_document)) + ':' +
                           QByteArray::number(m_id));
         drag->setMimeData(mime);
-        drag->setPixmap(QPixmap::fromImage(m_preview).scaled(80, 64, Qt::KeepAspectRatio,
-                                                             Qt::SmoothTransformation));
+        drag->setPixmap(QPixmap::fromImage(item->preview)
+                            .scaled(80, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         drag->exec(Qt::MoveAction);
     }
     void keyPressEvent(QKeyEvent* event) override {
@@ -505,7 +528,7 @@ class ImageStitchingThumbnail final : public QWidget {
     void dropEvent(QDropEvent* event) override {
         const auto source = dragItem(event->mimeData(), m_document);
         m_target = false;
-        if (m_editing && source != 0 && m_document->swapItems(source, m_id))
+        if (m_editing && source != 0 && swapRequested && swapRequested(source, m_id))
             event->acceptProposedAction();
         update();
     }
@@ -514,10 +537,8 @@ class ImageStitchingThumbnail final : public QWidget {
     ImageStitchingDocument* m_document;
     quint64 m_id;
     quint64 m_revision = std::numeric_limits<quint64>::max();
-    QImage m_preview;
-    QTransform m_transform;
     QString m_label;
-    QPointF m_press;
+    std::optional<QPointF> m_press;
     int m_ordinal = 1;
     bool m_target = false;
     bool m_editing = true;
@@ -536,15 +557,12 @@ struct ImageStitchingPreviewCanvas::Impl {
         std::shared_ptr<void> reservation;
     };
     ImageStitchingPreviewCanvas* owner;
-    ImageStitchingDocument* document;
+    QPointer<ImageStitchingDocument> document;
     ImageStitchingLayout layout;
     ImageStitchingSettings cachedSettings;
     bool initialized = false;
     QVector<quint64> order;
     QHash<quint64, qsizetype> indexById;
-    QHash<quint64, QImage> previews;
-    QHash<quint64, QTransform> previewTransforms;
-    QHash<quint64, quint64> revisions;
     QHash<quint64, Detail> details;
     struct DetailJob {
         ScreenshotExportJobHandle handle;
@@ -553,14 +571,14 @@ struct ImageStitchingPreviewCanvas::Impl {
     };
     QHash<quint64, DetailJob> detailJobs;
     QHash<quint64, qint64> pendingDetailBytes;
-    qint64 basePreviewBytes = 0;
     qint64 detailCacheBytes = 0;
     qint64 pendingPreviewBytes = 0;
     std::shared_ptr<std::atomic<qint64>> workingBytes = std::make_shared<std::atomic<qint64>>(0);
     QTimer* detailTimer = nullptr;
+    bool detailsVisible = false;
+    bool restoreDetailsOnShow = false;
     quint64 nextDetailTicket = 0;
     quint64 detailClock = 0;
-    QPixmap checker;
     qreal zoom = 1;
     QPointF offset;
     QPointF last;
@@ -573,20 +591,128 @@ struct ImageStitchingPreviewCanvas::Impl {
     QRectF initialImage;
     QRectF pendingImage;
     ImageStitchingStaticPlacement pendingPlacement;
+    struct FreeDrag {
+        ImageStitchingFreePlacement initial;
+        ImageStitchingFreePlacement pending;
+        QSize sourceSize;
+        QRectF stationary;
+        QVector<QRectF> references;
+        QVector<SnowCanvasSnapGuide> guides;
+        QRectF canvas;
+        QPointF pointer;
+    };
+    std::optional<FreeDrag> freeDrag;
+    QSize displayedSize;
+
     bool automaticFit = true;
+    bool swappingImages = false;
     bool editing = true;
     bool replacementAllowed = true;
     bool rendering = true;
     CanvasActionToolbar* toolbar = nullptr;
+    CanvasStatusReadout* zoomReadout = nullptr;
     std::array<AdButton*, 8> actions{};
 
+    bool freeMode() const {
+        return cachedSettings.direction == ImageStitchingDirection::Free;
+    }
+    QRectF canvasBounds() const {
+        return freeDrag && dragging ? freeDrag->canvas : QRectF(layout.origin, layout.size);
+    }
+    void beginFreeDrag(int index) {
+        auto& gesture = freeDrag.emplace();
+        const auto& item = document->items()[index];
+        gesture.initial = *item.freePlacement;
+        gesture.pending = gesture.initial;
+        gesture.sourceSize = transformedSize(item);
+        gesture.canvas = QRectF(layout.origin, layout.size);
+        gesture.pointer = press;
+        for (qsizetype i = 0; i < layout.imageRects.size(); ++i) {
+            if (i == index)
+                continue;
+            const auto world = QRectF(layout.imageRects[i]).translated(layout.origin);
+            gesture.stationary = gesture.stationary.united(world);
+            // Shift inflated rectangles by half-spacing to keep top-left corners on the output
+            // pixel grid with odd spacing. Undo that shift when painting the engine guides.
+            gesture.references.append(
+                world.adjusted(0, 0, cachedSettings.spacing, cachedSettings.spacing));
+        }
+    }
+    void updateFreeDrag(QPointF pointer, bool snapEnabled) {
+        auto& gesture = *freeDrag;
+        gesture.pointer = pointer;
+        const auto delta = (pointer - press) / zoom;
+        auto placement = gesture.initial;
+        QVector<SnowCanvasSnapGuide> guides;
+        QRectF image;
+        if (handle == SnowCanvasSelectionHandle::None) {
+            QPointF movement(std::floor(delta.x() + .5), std::floor(delta.y() + .5));
+            image = initialImage.translated(movement);
+            if (snapEnabled) {
+                const auto inflated =
+                    image.adjusted(0, 0, cachedSettings.spacing, cachedSettings.spacing);
+                // Use the engine's integral translation grid. Admission below checks the union
+                // with the other images, since the current canvas is free to grow or shrink.
+                const qreal margin = std::numeric_limits<int>::max();
+                const SnowCanvasMoveSnapConstraints limits{
+                    inflated.adjusted(-margin, -margin, margin, margin), 1};
+                if (const auto snap =
+                        snowCanvasSnapMove(inflated, gesture.references, zoom, {}, limits)) {
+                    movement += snap->correction;
+                    image.translate(snap->correction);
+                    guides = snap->guides;
+                }
+            }
+            placement.centerPixels += movement;
+        } else {
+            const auto resized =
+                image_stitching_detail::centeredResize(initialImage, handle, delta, zoom);
+            const auto source = gesture.sourceSize;
+            placement.pixelsPerPixel = source.width() >= source.height()
+                                           ? resized.width() / source.width()
+                                           : resized.height() / source.height();
+            image = image_stitching_detail::scaledFreeImageRect(placement.centerPixels, source,
+                                                                *placement.pixelsPerPixel);
+        }
+        const auto bounds = image_stitching_detail::freeCanvasBounds(
+            gesture.stationary.united(image), cachedSettings.border);
+        if (bounds.isEmpty() || image.isEmpty()) {
+            if (!gesture.guides.isEmpty()) {
+                gesture.guides.clear();
+                owner->update();
+            }
+            return;
+        }
+        if (dragging && placement == gesture.pending && guides == gesture.guides)
+            return;
+        gesture.pending = placement;
+        gesture.canvas = bounds;
+        gesture.guides = std::move(guides);
+        pendingImage = image;
+        dragging = true;
+        geometryChanged();
+    }
     void cancelDetails() {
         for (const auto& job : detailJobs)
             job.handle.cancel();
         detailJobs.clear();
     }
+    void releaseDetails() {
+        detailTimer->stop();
+        cancelDetails();
+        details.clear();
+        detailCacheBytes = 0;
+        previewStatisticsChanged();
+    }
+    void scheduleDetails() {
+        if (!detailsVisible || !rendering)
+            return;
+        // Geometry changes may debounce interaction, but must not postpone a queued restoration.
+        if (!restoreDetailsOnShow || !detailTimer->isActive())
+            detailTimer->start(restoreDetailsOnShow ? 0 : 70);
+    }
     qint64 previewBytes() const {
-        return basePreviewBytes + detailCacheBytes + pendingPreviewBytes;
+        return (document ? document->previewBytes() : 0) + detailCacheBytes + pendingPreviewBytes;
     }
     void previewStatisticsChanged() {
         owner->setProperty("detailPreviewBytes", previewBytes());
@@ -602,8 +728,9 @@ struct ImageStitchingPreviewCanvas::Impl {
             item.height() * detail.transformedPixels.height() / detail.fullSize.height()};
     }
     void requestDetails() {
-        if (!rendering || document->outputType() == ImageStitchingOutputType::PdfDocument ||
-            !layout.isValid())
+        restoreDetailsOnShow = false;
+        if (!detailsVisible || !rendering || !document ||
+            document->outputType() == ImageStitchingOutputType::PdfDocument || !layout.isValid())
             return;
         for (qsizetype index = 0; index < document->items().size(); ++index) {
             const auto& item = document->items()[index];
@@ -745,8 +872,10 @@ struct ImageStitchingPreviewCanvas::Impl {
                     const bool accepted = current != detailJobs.cend() && current->ticket == ticket;
                     if (accepted)
                         detailJobs.remove(id);
-                    if (accepted && result.succeeded() &&
-                        revisions.value(id) == prepared->revision && !prepared->image.isNull()) {
+                    const auto* currentItem =
+                        accepted && document ? itemById(*document, id) : nullptr;
+                    if (result.succeeded() && currentItem &&
+                        currentItem->revision == prepared->revision && !prepared->image.isNull()) {
                         prepared->used = ++detailClock;
                         if (const auto cachedDetail = details.constFind(id);
                             cachedDetail != details.cend())
@@ -757,7 +886,7 @@ struct ImageStitchingPreviewCanvas::Impl {
                     }
                     previewStatisticsChanged();
                     if (!accepted || result.succeeded())
-                        detailTimer->start();
+                        scheduleDetails();
                 });
             if (job.isValid()) {
                 detailJobs.insert(item.id, {job, ticket, item.revision});
@@ -775,6 +904,7 @@ struct ImageStitchingPreviewCanvas::Impl {
         panning = false;
         handle = SnowCanvasSelectionHandle::None;
         pendingImage = {};
+        freeDrag.reset();
         owner->unsetCursor();
         owner->setProperty("swapTargetId", QVariant::fromValue(quint64{0}));
     }
@@ -788,8 +918,9 @@ struct ImageStitchingPreviewCanvas::Impl {
         if (id == pressedId && dragging)
             return pendingImage;
         const auto index = indexById.value(id, -1);
-        return index >= 0 && index < layout.imageRects.size() ? QRectF(layout.imageRects[index])
-                                                              : QRectF{};
+        return index >= 0 && index < layout.imageRects.size()
+                   ? QRectF(layout.imageRects[index]).translated(layout.origin)
+                   : QRectF{};
     }
     QRectF viewportRect(quint64 id) const {
         return mapped(itemRect(id));
@@ -798,26 +929,60 @@ struct ImageStitchingPreviewCanvas::Impl {
         return index >= 0 && index < order.size() ? viewportRect(order[index]) : QRectF{};
     }
     QRectF clipViewportRect(quint64 id) const {
+        if (freeMode())
+            return viewportRect(id);
         const auto index = indexById.value(id, -1);
         return layout.isValid() && index >= 0 && index < layout.clipRects.size()
                    ? mapped(layout.clipRects[index])
                    : QRectF{};
     }
-    quint64 hit(QPointF position, bool includeWhitespace = false) const {
+    quint64 hitCell(QPointF position) const {
         if (!layout.isValid() || zoom <= 0)
             return 0;
+        if (freeMode())
+            return hitImage(position);
         for (const auto id : order)
-            if (clipViewportRect(id).contains(position) &&
-                (includeWhitespace || viewportRect(id).contains(position)))
+            if (clipViewportRect(id).contains(position))
                 return id;
         return 0;
+    }
+    quint64 hitImage(QPointF position) const {
+        if (!layout.isValid() || zoom <= 0)
+            return 0;
+        if (freeMode()) {
+            for (auto it = order.crbegin(); it != order.crend(); ++it)
+                if (viewportRect(*it).contains(position))
+                    return *it;
+            return 0;
+        }
+        const auto selectedId = document->selectedId();
+        quint64 overflow = 0;
+        for (const auto id : order) {
+            const auto bounds = viewportRect(id);
+            if (!bounds.contains(position))
+                continue;
+            const auto cell = clipViewportRect(id);
+            if (cell.contains(position))
+                return id;
+            if (image_stitching_detail::showsImageOverflow(bounds, cell, id == selectedId))
+                overflow = id;
+        }
+        return overflow;
+    }
+    SnowCanvasSelectionHandle handleAt(QPointF point) const {
+        if (!editing)
+            return SnowCanvasSelectionHandle::None;
+        return snowCanvasImageSelectionHandleAt(viewportRect(document->selectedId()), point);
     }
     void paintImage(QPainter& painter, quint64 id) const {
         const auto bounds = viewportRect(id);
         if (!bounds.intersects(owner->rect()))
             return;
+        const auto* item = itemById(*document, id);
+        if (!item)
+            return;
         const auto detail = details.constFind(id);
-        if (detail != details.cend() && detail->revision == revisions.value(id)) {
+        if (detail != details.cend() && detail->revision == item->revision) {
             const auto tileBounds = detailViewport(*detail, bounds);
             QPainterPath imageArea;
             imageArea.addRect(bounds);
@@ -825,16 +990,19 @@ struct ImageStitchingPreviewCanvas::Impl {
             tileArea.addRect(tileBounds);
             painter.save();
             painter.setClipPath(imageArea.subtracted(tileArea), Qt::IntersectClip);
-            drawTransformedPreview(painter, bounds, previews.value(id),
-                                   previewTransforms.value(id));
+            drawTransformedPreview(painter, bounds, item->preview, item->transform);
             painter.restore();
             painter.drawImage(tileBounds, detail->image);
         } else {
-            drawTransformedPreview(painter, bounds, previews.value(id),
-                                   previewTransforms.value(id));
+            drawTransformedPreview(painter, bounds, item->preview, item->transform);
         }
     }
-    void geometryChanged() {
+    void geometryChanged(bool showZoomReadout = false) {
+        const QSize size = canvasBounds().size().toSize();
+        if (displayedSize != size) {
+            displayedSize = size;
+            emit owner->previewSizeChanged(size);
+        }
         owner->setProperty("zoom", zoom);
         owner->setProperty("viewportOffset", offset);
         previewStatisticsChanged();
@@ -871,14 +1039,16 @@ struct ImageStitchingPreviewCanvas::Impl {
             toolbar->move(x, y);
             toolbar->raise();
         }
+        zoomReadout->setScale(zoom, showZoomReadout);
         owner->update();
-        detailTimer->start();
+        scheduleDetails();
     }
     void refresh() {
         cancelGesture();
         if (!rendering || document->outputType() == ImageStitchingOutputType::PdfDocument) {
             detailTimer->stop();
             cancelDetails();
+            previewStatisticsChanged();
             return;
         }
         const bool firstRefresh = !initialized;
@@ -890,31 +1060,24 @@ struct ImageStitchingPreviewCanvas::Impl {
             geometryChanged();
             return;
         }
+        const bool directionChanged = cachedSettings.direction != nextSettings.direction;
         cachedSettings = nextSettings;
+        if (directionChanged)
+            owner->retranslateUi();
         initialized = true;
         const bool wasEmpty = order.isEmpty();
         const auto anchor = viewportRect(document->selectedId()).center();
         const bool anchored = !itemRect(document->selectedId()).isEmpty();
         const auto nextLayout = document->layout();
-        const bool layoutChanged = nextLayout.size != layout.size ||
-                                   nextLayout.rects != layout.rects ||
-                                   nextLayout.error != layout.error;
+        const bool layoutChanged =
+            nextLayout.origin != layout.origin || nextLayout.size != layout.size ||
+            nextLayout.rects != layout.rects || nextLayout.error != layout.error;
         const bool placementChanged = nextLayout.imageRects != layout.imageRects;
         layout = nextLayout;
         QVector<quint64> nextOrder;
         nextOrder.reserve(document->items().size());
-        QSet<quint64> retained;
-        basePreviewBytes = 0;
-        for (const auto& item : document->items()) {
+        for (const auto& item : document->items())
             nextOrder.push_back(item.id);
-            retained.insert(item.id);
-            basePreviewBytes += item.preview.sizeInBytes();
-            if (!revisions.contains(item.id) || revisions.value(item.id) != item.revision) {
-                previews.insert(item.id, item.preview);
-                previewTransforms.insert(item.id, item.transform);
-                revisions.insert(item.id, item.revision);
-            }
-        }
         const bool orderChanged = nextOrder != order;
         if (orderChanged) {
             order = std::move(nextOrder);
@@ -922,24 +1085,17 @@ struct ImageStitchingPreviewCanvas::Impl {
             for (qsizetype index = 0; index < order.size(); ++index)
                 indexById.insert(order[index], index);
         }
-        for (auto it = previews.begin(); it != previews.end();) {
-            if (!retained.contains(it.key())) {
-                revisions.remove(it.key());
-                previewTransforms.remove(it.key());
-                it = previews.erase(it);
-            } else {
-                ++it;
-            }
-        }
         for (auto it = details.begin(); it != details.end();) {
-            if (!retained.contains(it.key()) || revisions.value(it.key()) != it->revision) {
+            const auto* item = itemById(*document, it.key());
+            if (!item || item->revision != it->revision) {
                 detailCacheBytes -= it->image.sizeInBytes();
                 it = details.erase(it);
             } else
                 ++it;
         }
         for (auto it = detailJobs.begin(); it != detailJobs.end();) {
-            if (!retained.contains(it.key()) || revisions.value(it.key()) != it->revision) {
+            const auto* item = itemById(*document, it.key());
+            if (!item || item->revision != it->revision) {
                 it->handle.cancel();
                 it = detailJobs.erase(it);
             } else {
@@ -948,17 +1104,20 @@ struct ImageStitchingPreviewCanvas::Impl {
         }
         if (wasEmpty && !order.isEmpty())
             automaticFit = true;
-        if (automaticFit && layoutChanged && layout.isValid()) {
-            owner->fitToCanvas();
-            return;
-        } else if (!automaticFit && (layoutChanged || orderChanged) && anchored &&
-                   !itemRect(document->selectedId()).isEmpty()) {
-            offset += anchor - viewportRect(document->selectedId()).center();
+        if (!swappingImages) {
+            if (automaticFit && layoutChanged && layout.isValid()) {
+                owner->fitToCanvas();
+                return;
+            }
+            if (!freeMode() && !automaticFit && (layoutChanged || orderChanged) && anchored &&
+                !itemRect(document->selectedId()).isEmpty())
+                offset += anchor - viewportRect(document->selectedId()).center();
         }
         if (document->items().isEmpty()) {
             automaticFit = true;
             offset = {};
             zoom = 1;
+            zoomReadout->dismiss();
         }
         // Even an empty initial layout must project its state into newly created controls.
         if (firstRefresh || layoutChanged || orderChanged || placementChanged)
@@ -966,7 +1125,7 @@ struct ImageStitchingPreviewCanvas::Impl {
         else {
             previewStatisticsChanged();
             owner->update();
-            detailTimer->start();
+            scheduleDetails();
         }
     }
 };
@@ -983,13 +1142,15 @@ ImageStitchingPreviewCanvas::ImageStitchingPreviewCanvas(ImageStitchingDocument*
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setAcceptDrops(true);
-    d.checker = checkerboard(this);
     d.detailTimer = new QTimer(this);
+    d.detailTimer->setObjectName(QStringLiteral("collageDetailTimer"));
     d.detailTimer->setSingleShot(true);
-    d.detailTimer->setInterval(70);
     connect(d.detailTimer, &QTimer::timeout, this, [this] { m_impl->requestDetails(); });
     d.toolbar = new CanvasActionToolbar(this);
     d.toolbar->setObjectName(QStringLiteral("collageImageToolbar"));
+    d.zoomReadout = new CanvasStatusReadout(this);
+    d.zoomReadout->setObjectName(QStringLiteral("collagePreviewZoom"));
+    d.zoomReadout->layoutIn(rect());
     const std::array<adqt::icons::IconRef, 8> refs{
         icons::RotateRight(),
         icons::RotateLeft(),
@@ -1040,10 +1201,7 @@ ImageStitchingPreviewCanvas::ImageStitchingPreviewCanvas(ImageStitchingDocument*
         m_impl->geometryChanged();
     });
     connect(&adqt::theme::ThemeManager::instance(), &adqt::theme::ThemeManager::themeChanged, this,
-            [this] {
-                m_impl->checker = checkerboard(this);
-                update();
-            });
+            [this] { update(); });
     retranslateUi();
     d.refresh();
 }
@@ -1066,7 +1224,7 @@ QRectF ImageStitchingPreviewCanvas::imageViewportRect(quint64 id) const {
 QRectF ImageStitchingPreviewCanvas::cellViewportRect(quint64 id) const {
     return m_impl->clipViewportRect(id);
 }
-void ImageStitchingPreviewCanvas::fitToCanvas() {
+void ImageStitchingPreviewCanvas::fitToCanvas(bool showZoomReadout) {
     auto& d = *m_impl;
     d.cancelGesture();
     if (!d.layout.isValid())
@@ -1076,8 +1234,9 @@ void ImageStitchingPreviewCanvas::fitToCanvas() {
                        qreal(std::max(1, height() - 48)) / d.layout.size.height()});
     d.offset = (QPointF(width(), height()) -
                 QPointF(d.layout.size.width(), d.layout.size.height()) * d.zoom) /
-               2;
-    d.geometryChanged();
+                   2 -
+               d.layout.origin * d.zoom;
+    d.geometryChanged(showZoomReadout);
 }
 void ImageStitchingPreviewCanvas::centerImage(quint64 id) {
     auto& d = *m_impl;
@@ -1092,10 +1251,14 @@ void ImageStitchingPreviewCanvas::centerImage(quint64 id) {
     d.zoom = std::min({d.zoom, qreal(std::max(1, width() - 48)) / bounds.width(),
                        qreal(std::max(1, height() - 48)) / bounds.height()});
     d.offset = QPointF(width() / 2.0, height() / 2.0) - bounds.center() * d.zoom;
-    d.geometryChanged();
+    d.geometryChanged(true);
 }
 void ImageStitchingPreviewCanvas::preserveViewport() {
     m_impl->automaticFit = false;
+}
+bool ImageStitchingPreviewCanvas::swapImages(quint64 source, quint64 target) {
+    const QScopedValueRollback<bool> swapping(m_impl->swappingImages, true);
+    return m_impl->document->swapItems(source, target);
 }
 void ImageStitchingPreviewCanvas::setEditingEnabled(bool enabled, bool replacementAllowed) {
     if (m_impl->editing == enabled && m_impl->replacementAllowed == replacementAllowed)
@@ -1112,11 +1275,8 @@ void ImageStitchingPreviewCanvas::setRenderingEnabled(bool enabled) {
     d.rendering = enabled;
     d.cancelGesture();
     if (!enabled) {
-        d.detailTimer->stop();
-        d.cancelDetails();
-        d.details.clear();
-        d.detailCacheBytes = 0;
-        d.previewStatisticsChanged();
+        d.restoreDetailsOnShow = false;
+        d.releaseDetails();
     } else {
         d.refresh();
     }
@@ -1124,8 +1284,13 @@ void ImageStitchingPreviewCanvas::setRenderingEnabled(bool enabled) {
 void ImageStitchingPreviewCanvas::retranslateUi() {
     setAccessibleName(text("Image stitching preview"));
     setAccessibleDescription(
-        text("Drag an image to move or swap it; drag selection handles to "
-             "scale around its center. Drag with the middle mouse button to pan; scroll to zoom"));
+        m_impl->freeMode() ? text("Drag to move an image. Hold %1 to snap to other images. Drag "
+                                  "a handle to resize around the center.")
+                                 .arg(shortcuts::ShortcutDisplayService::instance().modifierText(
+                                     kFreeSnapKey.keyboardModifiers()))
+                           : text("Drag an image to move or swap it; drag selection handles to "
+                                  "scale around its center. Drag with the middle mouse button to "
+                                  "pan; scroll to zoom"));
     const std::array<const char*, 8> labels{
         "Rotate clockwise by 90°", "Rotate counterclockwise by 90°",
         "Flip horizontally",       "Flip vertically",
@@ -1137,12 +1302,12 @@ void ImageStitchingPreviewCanvas::retranslateUi() {
     }
     update();
 }
-void ImageStitchingPreviewCanvas::paintEvent(QPaintEvent*) {
+void ImageStitchingPreviewCanvas::paintEvent(QPaintEvent* event) {
     const auto& d = *m_impl;
     const auto theme = adqt::theme::ThemeManager::instance().resolveTheme(this);
     QPainter painter(this);
-    painter.fillRect(rect(), QBrush(d.checker));
-    if (d.document->items().isEmpty()) {
+    painter.fillRect(rect(), canvasCheckerboard(theme));
+    if (!d.document || d.document->items().isEmpty()) {
         return;
     }
     if (!d.layout.isValid()) {
@@ -1151,21 +1316,16 @@ void ImageStitchingPreviewCanvas::paintEvent(QPaintEvent*) {
                          d.layout.error);
         return;
     }
-    const QRectF output(d.offset, QSizeF(d.layout.size) * d.zoom);
+    const auto output = d.mapped(d.canvasBounds());
     painter.fillRect(output, d.document->settings().background);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     const auto selectedId = d.document->selectedId();
-    if (!d.viewportRect(selectedId).isEmpty()) {
-        QPainterPath outside;
-        outside.addRect(QRectF(rect()));
-        QPainterPath inside;
-        inside.addRect(d.clipViewportRect(selectedId));
-        painter.save();
-        painter.setClipPath(outside.subtracted(inside));
-        painter.setOpacity(.25);
-        d.paintImage(painter, selectedId);
-        painter.restore();
-    }
+    if (!d.freeMode())
+        for (const auto id : d.order) {
+            image_stitching_detail::paintImageOverflow(painter, rect(), d.viewportRect(id),
+                                                       d.clipViewportRect(id), id == selectedId,
+                                                       [&] { d.paintImage(painter, id); });
+        }
     for (const auto id : d.order) {
         painter.save();
         painter.setClipRect(d.clipViewportRect(id));
@@ -1173,31 +1333,46 @@ void ImageStitchingPreviewCanvas::paintEvent(QPaintEvent*) {
         painter.restore();
     }
     image_stitching_detail::paintPreviewBorder(painter, output, theme.colorBorder);
-    for (const auto id : d.order)
-        image_stitching_detail::paintPreviewBorder(painter, d.clipViewportRect(id),
-                                                   QColor(0xf0, 0xf0, 0xf0));
+    if (d.freeDrag && !d.freeDrag->guides.isEmpty()) {
+        const qreal halfSpacing = d.cachedSettings.spacing / 2.0;
+        QTransform transform;
+        transform.translate(d.offset.x(), d.offset.y());
+        transform.scale(d.zoom, d.zoom);
+        transform.translate(-halfSpacing, -halfSpacing);
+        snowCanvasPaintSnapGuides(painter, d.freeDrag->guides, transform, event->region());
+    }
+    if (!d.freeMode())
+        for (const auto id : d.order)
+            image_stitching_detail::paintPreviewBorder(painter, d.clipViewportRect(id),
+                                                       QColor(0xf0, 0xf0, 0xf0));
     if (d.targetId && d.targetId != d.pressedId)
         snowCanvasPaintSelectionMarquee(painter, d.clipViewportRect(d.targetId));
     snowCanvasPaintImageSelection(painter, d.viewportRect(selectedId));
 }
 void ImageStitchingPreviewCanvas::resizeEvent(QResizeEvent*) {
     m_impl->cancelGesture();
+    m_impl->zoomReadout->layoutIn(rect());
     if (m_impl->automaticFit)
         fitToCanvas();
     m_impl->geometryChanged();
 }
 void ImageStitchingPreviewCanvas::hideEvent(QHideEvent* event) {
-    // Hiding also occurs while the owning window destroys its document.
-    // Retire transient UI work without reading model state here.
-    m_impl->cancelGesture();
-    m_impl->detailTimer->stop();
-    m_impl->cancelDetails();
+    auto& d = *m_impl;
+    // Native minimization sends a hide event while QWidget::isVisible() stays true.
+    d.detailsVisible = false;
+    d.cancelGesture();
+    d.zoomReadout->dismiss();
+    d.restoreDetailsOnShow =
+        d.restoreDetailsOnShow || !d.details.isEmpty() || !d.detailJobs.isEmpty();
+    d.releaseDetails();
     QWidget::hideEvent(event);
 }
 void ImageStitchingPreviewCanvas::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
-    m_impl->refresh();
-    m_impl->geometryChanged();
+    auto& d = *m_impl;
+    d.detailsVisible = true;
+    d.refresh();
+    d.geometryChanged();
 }
 void ImageStitchingPreviewCanvas::mousePressEvent(QMouseEvent* event) {
     auto& d = *m_impl;
@@ -1212,12 +1387,10 @@ void ImageStitchingPreviewCanvas::mousePressEvent(QMouseEvent* event) {
     } else if (event->button() == Qt::LeftButton) {
         d.cancelGesture();
         d.automaticFit = false;
-        const auto handle =
-            d.editing ? snowCanvasImageSelectionHandleAt(d.viewportRect(d.document->selectedId()),
-                                                         event->position())
-                      : SnowCanvasSelectionHandle::None;
-        const auto selected = handle == SnowCanvasSelectionHandle::None ? d.hit(event->position())
-                                                                        : d.document->selectedId();
+        const auto handle = d.handleAt(event->position());
+        const auto selected = handle == SnowCanvasSelectionHandle::None
+                                  ? d.hitImage(event->position())
+                                  : d.document->selectedId();
         d.document->select(selected);
         if (d.editing && selected) {
             d.initialImage = d.itemRect(selected);
@@ -1226,9 +1399,12 @@ void ImageStitchingPreviewCanvas::mousePressEvent(QMouseEvent* event) {
             d.handle = handle;
             d.press = event->position();
             const int index = d.document->indexOf(selected);
-            d.pendingPlacement = {
-                d.initialImage.center() - QRectF(d.layout.clipRects[index]).center(),
-                d.initialImage.width() / transformedSize(d.document->items()[index]).width()};
+            if (d.freeMode())
+                d.beginFreeDrag(index);
+            else
+                d.pendingPlacement = {
+                    d.initialImage.center() - QRectF(d.layout.clipRects[index]).center(),
+                    d.initialImage.width() / transformedSize(d.document->items()[index]).width()};
             setCursor(handle == SnowCanvasSelectionHandle::None
                           ? Qt::ClosedHandCursor
                           : image_stitching_detail::resizeCursor(handle));
@@ -1246,6 +1422,12 @@ void ImageStitchingPreviewCanvas::mouseMoveEvent(QMouseEvent* event) {
         if (!d.dragging &&
             (event->position() - d.press).manhattanLength() < QApplication::startDragDistance())
             return;
+        if (d.freeDrag) {
+            d.updateFreeDrag(event->position(),
+                             event->modifiers().testAnyFlags(kFreeSnapKey.keyboardModifiers()));
+            event->accept();
+            return;
+        }
         const auto delta = (event->position() - d.press) / d.zoom;
         const auto pending =
             d.handle == SnowCanvasSelectionHandle::None
@@ -1265,17 +1447,14 @@ void ImageStitchingPreviewCanvas::mouseMoveEvent(QMouseEvent* event) {
         d.pendingPlacement = candidate.staticPlacement;
         d.pendingImage = resolved;
         const auto target =
-            d.handle == SnowCanvasSelectionHandle::None ? d.hit(event->position(), true) : 0;
+            d.handle == SnowCanvasSelectionHandle::None ? d.hitCell(event->position()) : 0;
         d.targetId = target != d.pressedId ? target : 0;
         if (d.handle == SnowCanvasSelectionHandle::None)
             setCursor(d.targetId ? Qt::DragMoveCursor : Qt::ClosedHandCursor);
         setProperty("swapTargetId", QVariant::fromValue(d.targetId));
         d.geometryChanged();
     } else {
-        const auto handle =
-            d.editing ? snowCanvasImageSelectionHandleAt(d.viewportRect(d.document->selectedId()),
-                                                         event->position())
-                      : SnowCanvasSelectionHandle::None;
+        const auto handle = d.handleAt(event->position());
         if (handle == SnowCanvasSelectionHandle::None)
             unsetCursor();
         else
@@ -1296,14 +1475,18 @@ void ImageStitchingPreviewCanvas::mouseReleaseEvent(QMouseEvent* event) {
             mouseMoveEvent(&finalMove);
         }
         const auto id = d.pressedId;
-        const auto target =
-            d.handle == SnowCanvasSelectionHandle::None ? d.hit(event->position(), true) : 0;
+        const auto target = !d.freeDrag && d.handle == SnowCanvasSelectionHandle::None
+                                ? d.hitCell(event->position())
+                                : 0;
+        const auto freePlacement = d.freeDrag ? std::optional(d.freeDrag->pending) : std::nullopt;
         const auto placement = d.pendingPlacement;
         const bool commit = d.dragging && d.editing;
         d.cancelGesture();
         if (commit) {
-            if (target && target != id)
-                d.document->swapItems(id, target);
+            if (freePlacement)
+                d.document->setFreePlacement(id, *freePlacement);
+            else if (target && target != id)
+                swapImages(id, target);
             else
                 d.document->setStaticPlacement(id, placement);
         }
@@ -1325,14 +1508,16 @@ void ImageStitchingPreviewCanvas::wheelEvent(QWheelEvent* event) {
         d.offset = event->position() - (event->position() - d.offset) * (next / d.zoom);
         d.zoom = next;
         d.automaticFit = false;
-        d.geometryChanged();
+        d.geometryChanged(true);
     }
     event->accept();
 }
 void ImageStitchingPreviewCanvas::keyPressEvent(QKeyEvent* event) {
     auto& d = *m_impl;
-    if (event->key() == Qt::Key_F || event->key() == Qt::Key_Home) {
-        fitToCanvas();
+    if (event->key() == kFreeSnapKey.key() && d.freeDrag && d.dragging && !event->isAutoRepeat()) {
+        d.updateFreeDrag(d.freeDrag->pointer, true);
+    } else if (event->key() == Qt::Key_F || event->key() == Qt::Key_Home) {
+        fitToCanvas(true);
     } else if ((event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) && d.editing) {
         d.document->remove(d.document->selectedId());
     } else if (event->key() == Qt::Key_Escape) {
@@ -1353,13 +1538,29 @@ void ImageStitchingPreviewCanvas::keyPressEvent(QKeyEvent* event) {
     }
     event->accept();
 }
+void ImageStitchingPreviewCanvas::keyReleaseEvent(QKeyEvent* event) {
+    auto& d = *m_impl;
+    if (event->key() == kFreeSnapKey.key() && d.freeDrag && d.dragging && !event->isAutoRepeat()) {
+        d.updateFreeDrag(d.freeDrag->pointer, false);
+        event->accept();
+    } else {
+        QWidget::keyReleaseEvent(event);
+    }
+}
+void ImageStitchingPreviewCanvas::focusOutEvent(QFocusEvent* event) {
+    if (m_impl->freeDrag) {
+        m_impl->cancelGesture();
+        m_impl->geometryChanged();
+    }
+    QWidget::focusOutEvent(event);
+}
 void ImageStitchingPreviewCanvas::dragEnterEvent(QDragEnterEvent* event) {
     m_impl->cancelGesture();
     if (m_impl->editing && dragItem(event->mimeData(), m_impl->document))
         event->acceptProposedAction();
 }
 void ImageStitchingPreviewCanvas::dragMoveEvent(QDragMoveEvent* event) {
-    m_impl->targetId = m_impl->hit(event->position(), true);
+    m_impl->targetId = m_impl->hitCell(event->position());
     if (m_impl->targetId && m_impl->targetId != dragItem(event->mimeData(), m_impl->document))
         event->acceptProposedAction();
     else
@@ -1371,10 +1572,10 @@ void ImageStitchingPreviewCanvas::dragLeaveEvent(QDragLeaveEvent*) {
     update();
 }
 void ImageStitchingPreviewCanvas::dropEvent(QDropEvent* event) {
-    const auto target = m_impl->hit(event->position(), true);
+    const auto target = m_impl->hitCell(event->position());
     const auto source = dragItem(event->mimeData(), m_impl->document);
     m_impl->targetId = 0;
-    if (m_impl->editing && target && source && m_impl->document->swapItems(source, target))
+    if (m_impl->editing && target && source && swapImages(source, target))
         event->acceptProposedAction();
     update();
 }
@@ -1473,7 +1674,8 @@ struct ImageStitchingEditorWidget::Impl {
         for (const auto& item : document->items()) {
             const auto size = transformedSize(item);
             reference =
-                std::max(reference, settings.direction != ImageStitchingDirection::Horizontal
+                std::max(reference, settings.direction != ImageStitchingDirection::Horizontal &&
+                                            settings.direction != ImageStitchingDirection::Free
                                         ? size.width()
                                         : size.height());
             if (settings.sizing == ImageStitchingSizing::Uniform)
@@ -1483,11 +1685,16 @@ struct ImageStitchingEditorWidget::Impl {
     }
     void syncLengthInputs(int reference) {
         const auto settings = document->settings();
-        const auto description = text(settings.direction == ImageStitchingDirection::Custom
-                                          ? "Percentage of the grid cell width"
-                                      : settings.direction == ImageStitchingDirection::Vertical
-                                          ? "Percentage of the widest image after sizing"
-                                          : "Percentage of the tallest image after sizing");
+        const auto description =
+            text(settings.direction == ImageStitchingDirection::Free
+                     ? (settings.sizing == ImageStitchingSizing::Uniform
+                            ? "Percentage of the first image’s original height after rotation"
+                            : "Percentage of the greatest original image height after rotation")
+                 : settings.direction == ImageStitchingDirection::Custom
+                     ? "Percentage of the grid cell width"
+                 : settings.direction == ImageStitchingDirection::Vertical
+                     ? "Percentage of the widest image after sizing"
+                     : "Percentage of the tallest image after sizing");
         const auto sync = [reference, &description](LengthEditor& editor, int pixels,
                                                     const char* pixelName,
                                                     const char* percentageName) {
@@ -1530,7 +1737,8 @@ struct ImageStitchingEditorWidget::Impl {
         add->setEnabled(!loading && !exporting);
         add->setBusy(loading);
         clear->setEnabled(!exporting && !document->items().isEmpty());
-        reverse->setEnabled(!loading && !exporting && document->items().size() > 1);
+        reverse->setEnabled(!loading && !exporting && document->items().size() > 1 &&
+                            document->settings().direction != ImageStitchingDirection::Free);
         fit->setEnabled(canvas->canFitToCanvas());
         form->setEnabled(!exporting);
         for (auto* thumbnail : thumbnailById)
@@ -1563,6 +1771,11 @@ struct ImageStitchingEditorWidget::Impl {
             canvas->fitToCanvas();
         emit owner->settingsEdited(field);
     }
+    void showStaticDimensions(QSize size) {
+        dimensions->setText(
+            size.isEmpty() ? QString{} : text("%1 × %2 px").arg(size.width()).arg(size.height()));
+        dimensions->setVisible(!size.isEmpty());
+    }
     void refreshPdfDescription() {
         const auto settings = document->lastValidPdfSettings();
         const bool templateMode =
@@ -1587,26 +1800,42 @@ struct ImageStitchingEditorWidget::Impl {
         total->setText(text("Total: %1 pages")
                            .arg(imageStitchingPdfPageCount(document->items().size(), settings)));
     }
+    bool pruneThumbnails() {
+        const auto count = thumbnailById.size();
+        for (auto it = thumbnailById.begin(); it != thumbnailById.end();) {
+            if (document->indexOf(it.key()) >= 0) {
+                ++it;
+                continue;
+            }
+            thumbnailLayout->removeWidget(it.value());
+            it.value()->hide();
+            it.value()->deleteLater();
+            it = thumbnailById.erase(it);
+        }
+        return count != thumbnailById.size();
+    }
     void refresh(bool force = false) {
         syncing = true;
         const bool pdf = document->outputType() == ImageStitchingOutputType::PdfDocument;
         if (pdf)
             originalPreview->close();
         outputType->setCurrentValue(pdf ? QStringLiteral("pdf") : QStringLiteral("static"));
-        pdfSettingsField->setVisible(pdf);
+        pdfSettingsField->setItemHidden(!pdf);
         pdfSettings->setVisible(pdf);
         const bool templateMode = pdf && document->lastValidPdfSettings().stitchingMethod ==
                                              ImageStitchingPdfStitchingMethod::TemplateBased;
         pdfGrid->setVisible(pdf && !templateMode);
         pdfTemplate->setVisible(templateMode);
         for (auto* field : fields)
-            field->setVisible(!pdf);
-        gridField->setVisible(!pdf &&
-                              document->settings().direction == ImageStitchingDirection::Custom);
+            field->setItemHidden(pdf);
+        gridField->setItemHidden(pdf ||
+                                 document->settings().direction != ImageStitchingDirection::Custom);
         canvas->setRenderingEnabled(!pdf);
         if (pdf) {
             canvas->hide();
             thumbnailRow->hide();
+            if (pruneThumbnails())
+                thumbnails->adjustSize();
             emptyState->hide();
             dropHint->hide();
             refreshPdfDescription();
@@ -1631,14 +1860,9 @@ struct ImageStitchingEditorWidget::Impl {
             cachedSettings = nextSettings;
             return;
         }
-        if (force || nextSettings.direction != cachedSettings.direction) {
-            direction->setCurrentValue(nextSettings.direction == ImageStitchingDirection::Vertical
-                                           ? QStringLiteral("vertical")
-                                       : nextSettings.direction ==
-                                               ImageStitchingDirection::Horizontal
-                                           ? QStringLiteral("horizontal")
-                                           : QStringLiteral("custom"));
-            gridField->setVisible(nextSettings.direction == ImageStitchingDirection::Custom);
+        const bool directionChanged = nextSettings.direction != cachedSettings.direction;
+        if (force || directionChanged) {
+            direction->setCurrentValue(imageStitchingDirectionKey(nextSettings.direction));
         }
         if (force || nextSettings.rows != cachedSettings.rows)
             rows->setValue(nextSettings.rows);
@@ -1651,6 +1875,7 @@ struct ImageStitchingEditorWidget::Impl {
         const int reference = lengthReference();
         if (force || reference != referencePixels ||
             nextSettings.direction != cachedSettings.direction ||
+            nextSettings.sizing != cachedSettings.sizing ||
             nextSettings.border != cachedSettings.border ||
             nextSettings.spacing != cachedSettings.spacing)
             syncLengthInputs(reference);
@@ -1658,22 +1883,8 @@ struct ImageStitchingEditorWidget::Impl {
         cachedSettings = nextSettings;
         initialized = true;
         syncing = false;
-        QSet<quint64> retained;
-        for (const auto& item : document->items())
-            retained.insert(item.id);
-        bool thumbnailsChanged = false;
         const bool countChanged = thumbnailById.size() != document->items().size();
-        for (auto it = thumbnailById.begin(); it != thumbnailById.end();) {
-            if (!retained.contains(it.key())) {
-                thumbnailLayout->removeWidget(it.value());
-                it.value()->hide();
-                it.value()->deleteLater();
-                it = thumbnailById.erase(it);
-                thumbnailsChanged = true;
-            } else {
-                ++it;
-            }
-        }
+        bool thumbnailsChanged = pruneThumbnails();
         QHash<QWidget*, int> thumbnailPositions;
         for (int index = 0; index < thumbnailLayout->count(); ++index)
             thumbnailPositions.insert(thumbnailLayout->itemAt(index)->widget(), index);
@@ -1683,6 +1894,9 @@ struct ImageStitchingEditorWidget::Impl {
             if (!thumbnail) {
                 thumbnail = new ImageStitchingThumbnail(document, item.id, thumbnails);
                 thumbnail->selected = [this](quint64 id) { canvas->centerImage(id); };
+                thumbnail->swapRequested = [this](quint64 source, quint64 target) {
+                    return canvas->swapImages(source, target);
+                };
                 thumbnail->editStarted = [this] { canvas->preserveViewport(); };
                 thumbnail->replaceRequested = [this](quint64 id) {
                     emit owner->replaceImageRequested(id);
@@ -1717,12 +1931,9 @@ struct ImageStitchingEditorWidget::Impl {
         positionDropHint();
         const auto layout = document->layout();
         fit->setEnabled(layout.isValid());
-        dimensions->setText(
-            layout.isValid() ? text("%1 × %2 px").arg(layout.size.width()).arg(layout.size.height())
-                             : QString{});
-        dimensions->setVisible(layout.isValid());
+        showStaticDimensions(layout.isValid() ? layout.size : QSize{});
         total->setText(text("Total: %1 images").arg(document->items().size()));
-        if (countChanged || force)
+        if (countChanged || force || directionChanged)
             enabled();
     }
     void theme() {
@@ -1737,19 +1948,12 @@ struct ImageStitchingEditorWidget::Impl {
             palette.setColor(QPalette::Disabled, QPalette::WindowText, theme.colorTextDisabled);
             label->setPalette(palette);
         }
-        auto labelPalette = owner->palette();
-        labelPalette.setColor(QPalette::WindowText, theme.colorTextSecondary);
-        dimensions->setPalette(labelPalette);
-        total->setPalette(labelPalette);
+        for (auto* label : {dimensions, total})
+            styles::applyOutputDescriptionStyle(*label, form->font(), theme);
         emptyState->refreshTheme();
         dropHint->refreshTheme();
         const auto metric = styles::ThemeManager::instance().themeColorScheme().metricAlias;
         outputDescription->layout()->setSpacing(metric.marginSM);
-        for (auto* label : {dimensions, total}) {
-            QFont font = owner->font();
-            font.setPixelSize(metric.fontSizeSM);
-            label->setFont(font);
-        }
         owner->update();
         for (auto* thumbnail : thumbnailById)
             thumbnail->update();
@@ -1793,6 +1997,10 @@ ImageStitchingEditorWidget::ImageStitchingEditorWidget(ImageStitchingDocument* d
     d.canvas = new ImageStitchingPreviewCanvas(document, this);
     d.originalPreview = new image_stitching_detail::OriginalPreview(
         document, this, "collageOriginalViewer", "ImageStitchingEditorWidget");
+    connect(d.canvas, &ImageStitchingPreviewCanvas::previewSizeChanged, this, [this](QSize size) {
+        if (m_impl->document->outputType() == ImageStitchingOutputType::StaticImage)
+            m_impl->showStaticDimensions(size);
+    });
     connect(d.canvas, &ImageStitchingPreviewCanvas::replaceImageRequested, this,
             &ImageStitchingEditorWidget::replaceImageRequested);
     connect(d.canvas, &ImageStitchingPreviewCanvas::previewOriginalRequested, this,
@@ -1862,6 +2070,7 @@ ImageStitchingEditorWidget::ImageStitchingEditorWidget(ImageStitchingDocument* d
     d.outputType->addOption({}, QStringLiteral("pdf"));
     d.outputTypeField = d.form->addField({}, d.outputType, QStringLiteral("output_type"));
     d.direction = segmented("collageDirection", "vertical", "horizontal", 0);
+    d.direction->addOption({}, QStringLiteral("free"));
     d.direction->addOption({}, QStringLiteral("custom"));
     auto* grid = new QWidget(d.form);
     grid->setObjectName(QStringLiteral("collageCustomGrid"));
@@ -2015,7 +2224,7 @@ ImageStitchingEditorWidget::ImageStitchingEditorWidget(ImageStitchingDocument* d
     d.canvasToolbar->addSeparator();
     d.fit = d.canvasToolbar->addAction(icons::Fullscreen(), "collageFitToCanvas");
     d.fit->setEnabled(d.canvas->canFitToCanvas());
-    connect(d.fit, &QAbstractButton::clicked, this, [this] { m_impl->canvas->fitToCanvas(); });
+    connect(d.fit, &QAbstractButton::clicked, this, [this] { m_impl->canvas->fitToCanvas(true); });
     d.clear = d.canvasToolbar->addAction(icons::IconDelete(), "collageClearAll");
     d.clear->setAccentRole(AdButton::AccentRole::Danger);
     d.canvas->installEventFilter(this);
@@ -2058,11 +2267,7 @@ ImageStitchingEditorWidget::ImageStitchingEditorWidget(ImageStitchingDocument* d
     connect(d.direction, &AdSegmented::currentValueChanged, this, [this](const QVariant& value) {
         m_impl->settingsChanged(
             QStringLiteral("direction"), [&value](ImageStitchingSettings& settings) {
-                settings.direction = value.toString() == QStringLiteral("horizontal")
-                                         ? ImageStitchingDirection::Horizontal
-                                     : value.toString() == QStringLiteral("custom")
-                                         ? ImageStitchingDirection::Custom
-                                         : ImageStitchingDirection::Vertical;
+                settings.direction = imageStitchingDirectionFromKey(value.toString());
             });
     });
     connect(d.rows, &AdInputNumber::valueChanged, this, [this](double value) {
@@ -2172,7 +2377,8 @@ void ImageStitchingEditorWidget::retranslateUi() {
     d.pdfTemplate->retranslateUi();
     d.direction->setOptionLabel(0, text("Vertical"));
     d.direction->setOptionLabel(1, text("Horizontal"));
-    d.direction->setOptionLabel(2, text("Custom"));
+    d.direction->setOptionLabel(2, text("Free"));
+    d.direction->setOptionLabel(3, text("Custom"));
     d.direction->setAccessibleName(text("Layout direction"));
     d.rowsLabel->setText(text("Rows"));
     d.columnsLabel->setText(text("Columns"));

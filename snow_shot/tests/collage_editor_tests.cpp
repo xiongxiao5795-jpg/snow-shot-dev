@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "snow_shot/presentation/components/collageeditorwidget.h"
+#include "snow_shot/presentation/canvasstatusreadout.h"
 #include "snow_shot/presentation/components/overlaycontrolbutton.h"
 #include "snow_shot/presentation/screenshotexportcoordinator.h"
 #include "snow_shot/storage/applicationstorage.h"
 #include "snow_draw_engine_qt/snow_canvas_overlay_style.h"
 #include "theme/theme_manager.h"
 #include "widgets/button.h"
+#include "widgets/form.h"
 #include "widgets/color_picker.h"
 #include "widgets/divider.h"
 #include "widgets/image.h"
@@ -26,11 +28,13 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPointer>
 #include <QRgba64>
 #include <QDir>
 #include <QFileInfo>
 #include <QThread>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QTranslator>
 #include <QWheelEvent>
 #include <QUrl>
@@ -82,9 +86,9 @@ void pump() {
     QApplication::processEvents();
 }
 void mouse(QWidget* widget, QEvent::Type type, QPointF point, Qt::MouseButton button,
-           Qt::MouseButtons buttons) {
+           Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
     QMouseEvent event(type, point, widget->mapToGlobal(point.toPoint()), button, buttons,
-                      Qt::NoModifier);
+                      modifiers);
     QApplication::sendEvent(widget, &event);
 }
 void wheel(QWidget* widget, QPointF point, int delta) {
@@ -378,7 +382,65 @@ void staticPlacementOverflowAndDetailAlpha() {
         require(canvas.grab().save(fixturePath), "save static editing visual fixture");
     document.select(0);
     require(renderCanvas(canvas).pixelColor(outside) == Qt::white,
-            "unselected overflow is clipped completely");
+            "unselected overflow is clipped while some of the image remains in its slot");
+}
+
+void reselectStaticImageOutsideItsSlot() {
+    ImageStitchingDocument document;
+    const auto first = document.append(image({120, 80}), QStringLiteral("first"));
+    const auto second = document.append(image({120, 80}, Qt::blue), QStringLiteral("second"));
+    auto settings = document.settings();
+    settings.border = 160;
+    document.setSettings(settings);
+    ImageStitchingPreviewCanvas canvas(&document);
+    canvas.resize(650, 540);
+    canvas.show();
+    pump();
+
+    const auto press = [&](QPointF point) {
+        mouse(&canvas, QEvent::MouseButtonPress, point, Qt::LeftButton, Qt::LeftButton);
+    };
+    const auto release = [&](QPointF point) {
+        mouse(&canvas, QEvent::MouseButtonRelease, point, Qt::LeftButton, Qt::NoButton);
+    };
+    const auto drag = [&](QPointF from, QPointF to) {
+        press(from);
+        mouse(&canvas, QEvent::MouseMove, to, Qt::NoButton, Qt::LeftButton);
+        release(to);
+    };
+
+    const auto slot = canvas.cellViewportRect(first);
+    const auto initial = canvas.imageViewportRect(first);
+    const QPointF partial(slot.left() - 16, initial.center().y());
+    const QPointF outside(slot.left() - initial.width() / 2 - 24, initial.center().y());
+    drag(initial.center(), partial);
+    require(canvas.imageViewportRect(first).intersects(slot),
+            "partial overflow must leave some of the image inside its slot");
+    drag(partial, outside);
+    require(document.selectedId() == first && !canvas.imageViewportRect(first).intersects(slot),
+            "dragging the selected overflow can move the entire image outside its slot");
+
+    const auto secondCenter = canvas.imageViewportRect(second).center();
+    press(secondCenter);
+    release(secondCenter);
+    require(document.selectedId() == second, "another image can deselect the displaced image");
+    const auto ghost = renderCanvas(canvas).pixelColor(outside.toPoint());
+    require(ghost.red() == 255 && std::abs(ghost.green() - 191) <= 2,
+            "a fully clipped image remains visible at quarter opacity after deselection");
+
+    press(outside);
+    release(outside);
+    require(document.selectedId() == first, "clicking the displaced image selects it again");
+    drag(outside, initial.center());
+    require((canvas.imageViewportRect(first).center() - initial.center()).manhattanLength() <=
+                canvas.zoom(),
+            "the displaced image can be dragged back into its slot");
+
+    require(document.setStaticPlacement(first, {(secondCenter - slot.center()) / canvas.zoom(), 1}),
+            "overlap fixture moves the first image over the second");
+    press(secondCenter);
+    release(secondCenter);
+    require(document.selectedId() == second, "an in-slot image takes precedence over overflow");
 }
 
 void centeredStaticResizeMoveAndCancellation() {
@@ -522,6 +584,161 @@ void centeredStaticResizeMoveAndCancellation() {
     release(target);
     require(document.items()[0].id == second && document.selectedId() == first,
             "body dragging swaps by the release slot, not the previous pointer position");
+}
+
+void freeCanvasGestures() {
+    ImageStitchingDocument document;
+    const auto first = document.append(image({100, 80}), QStringLiteral("first"));
+    const auto second = document.append(image({100, 80}, Qt::blue), QStringLiteral("second"));
+    ImageStitchingEditorWidget editor(&document);
+    editor.resize(1100, 700);
+    editor.show();
+    pump();
+    auto settings = document.settings();
+    settings.direction = ImageStitchingDirection::Free;
+    settings.spacing = 5;
+    document.setSettings(settings);
+    auto* canvas = editor.canvas();
+    canvas->fitToCanvas();
+    auto* dimensions = editor.outputDescriptionWidget()->findChild<QLabel*>(
+        QStringLiteral("collageOutputDimensions"));
+    auto* reverse = button(&editor, "collageReverseImages");
+    auto* form = editor.findChild<adqt::widgets::AdForm*>(QStringLiteral("collageSettingsForm"));
+    form->setColon(!form->colon());
+    require(!editor.findChild<QWidget*>(QStringLiteral("collageCustomGrid"))->isVisible(),
+            "refreshing the settings form keeps grid dimensions hidden in Free mode");
+    const auto firstRect = canvas->imageViewportRect(first);
+    const auto secondRect = canvas->imageViewportRect(second);
+    const auto zoom = canvas->zoom();
+    require(zoom == 1 && !reverse->isEnabled(),
+            "Free disables reverse immediately on an existing collection");
+    const auto press = [&](QPointF p) {
+        mouse(canvas, QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+    };
+    const auto move = [&](QPointF p) {
+        mouse(canvas, QEvent::MouseMove, p, Qt::NoButton, Qt::LeftButton);
+    };
+    const auto release = [&](QPointF p) {
+        mouse(canvas, QEvent::MouseButtonRelease, p, Qt::LeftButton, Qt::NoButton);
+    };
+    const auto key = [&](QEvent::Type type, int code) {
+        QKeyEvent event(type, code, Qt::NoModifier);
+        QApplication::sendEvent(canvas, &event);
+    };
+#ifdef Q_OS_MACOS
+    require(canvas->accessibleDescription().contains(QStringLiteral("⌘")),
+            "Free snap hint names Command on macOS");
+#else
+    require(canvas->accessibleDescription().contains(QStringLiteral("Ctrl")),
+            "Free snap hint names Ctrl");
+#endif
+    const auto start = firstRect.center();
+    press(start);
+    move(start - QPointF(20, 30));
+    require(canvas->zoom() == zoom && canvas->imageViewportRect(second) == secondRect &&
+                dimensions->text() == QStringLiteral("225 × 110 px"),
+            "live growth at negative coordinates keeps the stationary image and zoom fixed");
+    move(start - QPointF(1e7, 1e7));
+    require(canvas->imageViewportRect(first) == firstRect.translated(-20, -30) &&
+                dimensions->text() == QStringLiteral("225 × 110 px"),
+            "oversize drag holds the last valid preview");
+    move(start + QPointF(20, 0));
+    require(dimensions->text() == QStringLiteral("185 × 80 px") &&
+                canvas->imageViewportRect(second) == secondRect,
+            "returning inside the limit shrinks the live bounds without moving other images");
+    key(QEvent::KeyPress, Qt::Key_Escape);
+    require(canvas->imageViewportRect(first) == firstRect &&
+                dimensions->text() == QStringLiteral("205 × 80 px"),
+            "Escape restores both placement and canvas bounds");
+
+    const auto pointer = secondRect.center() + QPointF(3, 20);
+    press(secondRect.center());
+    move(pointer);
+    key(QEvent::KeyPress, Qt::Key_Meta);
+    require(canvas->imageViewportRect(second) == secondRect.translated(3, 20),
+            "the secondary modifier alone does not enable snapping");
+    mouse(canvas, QEvent::MouseMove, pointer, Qt::NoButton, Qt::LeftButton, Qt::MetaModifier);
+    require(canvas->imageViewportRect(second) == secondRect.translated(3, 20),
+            "mouse events use the same snap modifier as key events");
+    key(QEvent::KeyRelease, Qt::Key_Meta);
+    key(QEvent::KeyPress, Qt::Key_Control);
+    require(canvas->imageViewportRect(second) == secondRect.translated(0, 20),
+            "pressing the primary modifier at a stationary pointer snaps the visible gap to the "
+            "odd spacing value");
+    const auto guided = canvas->grab().toImage();
+    key(QEvent::KeyRelease, Qt::Key_Control);
+    require(canvas->imageViewportRect(second) == secondRect.translated(3, 20),
+            "releasing the primary modifier immediately restores the raw pointer placement");
+    move(pointer - QPointF(3, 0));
+    require(canvas->imageViewportRect(second) == secondRect.translated(0, 20) &&
+                guided != canvas->grab().toImage(),
+            "aligned rectangles show guides only while the primary modifier is held");
+    key(QEvent::KeyPress, Qt::Key_Escape);
+    mouse(canvas, QEvent::MouseButtonPress, secondRect.center(), Qt::LeftButton, Qt::LeftButton,
+          Qt::ControlModifier);
+    mouse(canvas, QEvent::MouseMove, pointer, Qt::NoButton, Qt::LeftButton, Qt::ControlModifier);
+    require(canvas->imageViewportRect(second) == secondRect.translated(0, 20),
+            "holding the primary modifier before dragging enables snapping");
+    mouse(canvas, QEvent::MouseButtonRelease, pointer, Qt::LeftButton, Qt::NoButton,
+          Qt::ControlModifier);
+    require(canvas->imageViewportRect(second) == secondRect.translated(0, 20),
+            "release commits the snapped position while the primary modifier is held");
+    press(canvas->imageViewportRect(second).center());
+    move(start);
+    release(start);
+    require(document.items()[0].id == first && !document.items()[1].freePlacement->pixelsPerPixel &&
+                canvas->imageViewportRect(first) == firstRect &&
+                canvas->imageViewportRect(second) == firstRect && canvas->zoom() == zoom,
+            "dropping on an image commits overlap without swapping, scaling, or anchoring the "
+            "viewport to the drag");
+    const auto overlapColor = [&] {
+        const auto pixels = canvas->grab().toImage();
+        return pixels.pixelColor((start * pixels.devicePixelRatio()).toPoint());
+    };
+    document.select(first);
+    press(start);
+    release(start);
+    require(document.selectedId() == second && overlapColor() == QColor(Qt::blue),
+            "the top list item wins both painting and selection");
+    const auto corner = snowCanvasImageSelectionCorners(firstRect)[2];
+    press(corner);
+    move(corner + QPointF(50, 40));
+    release(corner + QPointF(50, 40));
+    require(document.items()[1].freePlacement->pixelsPerPixel == 2.0 &&
+                canvas->imageViewportRect(second).center() == start &&
+                canvas->imageViewportRect(second).size() == QSizeF(200, 160),
+            "corner resize stores a source-relative proportional scale around the fixed center");
+
+    const auto upperRect = canvas->imageViewportRect(second);
+    require(upperRect.contains(corner), "the upper image covers the lower image's handle");
+    document.select(first);
+    press(corner);
+    move(corner - QPointF(25, 20));
+    release(corner - QPointF(25, 20));
+    const auto resizedFirst = canvas->imageViewportRect(first);
+    require(document.selectedId() == first &&
+                document.items()[0].freePlacement->pixelsPerPixel == 0.5 &&
+                resizedFirst.center() == start && resizedFirst.size() == QSizeF(50, 40) &&
+                canvas->imageViewportRect(second) == upperRect,
+            "a covered selection handle resizes the selected image without moving the upper one");
+
+    QMimeData mime;
+    mime.setData(QStringLiteral("application/x-snow-shot-collage-item"),
+                 QByteArray::number(reinterpret_cast<quintptr>(&document)) + ':' +
+                     QByteArray::number(second));
+    auto* target = editor.findChild<QWidget*>(QStringLiteral("collageThumbnail_%1").arg(first));
+    QDragEnterEvent enter(QPointF(20, 20), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &enter);
+    QDropEvent drop(QPointF(20, 20), Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &drop);
+    require(drop.isAccepted() && document.items()[1].id == first &&
+                canvas->imageViewportRect(first) == resizedFirst &&
+                canvas->imageViewportRect(second).center() == start &&
+                overlapColor() == QColor(Qt::red),
+            "thumbnail drop exchanges stacking order and keeps both image centers");
+    settings.direction = ImageStitchingDirection::Vertical;
+    document.setSettings(settings);
+    require(reverse->isEnabled(), "leaving Free restores reverse availability");
 }
 
 void thumbnailScrollBarOverlaysTheList() {
@@ -958,6 +1175,8 @@ void floatingFitToCanvasFollowsViewport() {
     ImageStitchingEditorWidget editor(&document);
     auto* canvas = editor.canvas();
     auto* fit = button(&editor, "collageFitToCanvas");
+    auto* hint = canvas->findChild<CanvasStatusReadout*>(QStringLiteral("collagePreviewZoom"));
+    require(hint && hint->isHidden(), "the empty canvas must not show a zoom readout");
     require(!fit->isEnabled(),
             "the empty preview must initialize its fit action before the editor is shown");
     editor.resize(1000, 700);
@@ -987,13 +1206,22 @@ void floatingFitToCanvasFollowsViewport() {
     const auto second = document.append(image({400, 800}, Qt::blue), QStringLiteral("second"));
     pump();
     require(fit->isEnabled(), "adding images must enable the floating fit action");
+    require(hint->isHidden(), "automatic fitting must not show the zoom readout");
     verifyToolbar();
     const auto fittedZoom = canvas->zoom();
     const auto fittedOffset = canvas->offset();
     wheel(canvas, {120, 100}, 240);
+    require(hint->isVisible() && hint->x() == 8 &&
+                canvas->height() - hint->geometry().bottom() - 1 == 8 &&
+                hint->text() == QStringLiteral("Scale: %1%").arg(canvas->zoom() * 100, 0, 'f', 0) &&
+                hint->dismissalTimer()->isActive() && hint->dismissalTimer()->interval() == 1000,
+            "collage wheel zoom must show a transient readout in the bottom left corner");
+    const int timerId = hint->dismissalTimer()->timerId();
     mouse(canvas, QEvent::MouseButtonPress, {50, 50}, Qt::MiddleButton, Qt::MiddleButton);
     mouse(canvas, QEvent::MouseMove, {140, 125}, Qt::NoButton, Qt::MiddleButton);
     mouse(canvas, QEvent::MouseButtonRelease, {140, 125}, Qt::MiddleButton, Qt::NoButton);
+    require(hint->dismissalTimer()->timerId() == timerId,
+            "panning must not extend the collage zoom readout");
     verifyToolbar();
     const auto selection = document.selectedId();
     click(fit);
@@ -1003,6 +1231,13 @@ void floatingFitToCanvasFollowsViewport() {
                 QRectF(canvas->rect()).contains(canvas->imageViewportRect(first)) &&
                 QRectF(canvas->rect()).contains(canvas->imageViewportRect(second)),
             "clicking fit must restore the full preview without changing selection");
+    require(hint->isVisible() &&
+                hint->text() == QStringLiteral("Scale: %1%").arg(fittedZoom * 100, 0, 'f', 0),
+            "manually fitting the collage reports the fitted zoom percentage");
+    hint->dismissalTimer()->stop();
+    require(QMetaObject::invokeMethod(hint->dismissalTimer(), "timeout", Qt::DirectConnection) &&
+                hint->isHidden(),
+            "the shared timeout hides the collage zoom readout");
     editor.resize(850, 550);
     pump();
     verifyToolbar();
@@ -1022,6 +1257,8 @@ void floatingFitToCanvasFollowsViewport() {
     pump();
     require(fit->isVisible() && !fit->isEnabled(),
             "clearing the result disables fit in the empty collection toolbar");
+    require(hint->isHidden() && !hint->dismissalTimer()->isActive(),
+            "clearing the result dismisses an active zoom readout");
 }
 void arrangementChangesFitToCanvas() {
     ImageStitchingDocument document;
@@ -1147,15 +1384,22 @@ void fitPanZoomAndNavigation() {
 }
 void releaseOnlySwapAndCrossWindowIsolation() {
     ImageStitchingDocument document;
-    const auto first = document.append(image({120, 80}), QStringLiteral("A"));
-    const auto second = document.append(image({120, 80}), QStringLiteral("B"));
+    const auto first = document.append(image({360, 240}), QStringLiteral("A"));
+    const auto second = document.append(image({288, 360}), QStringLiteral("B"));
     ImageStitchingEditorWidget editor(&document);
     editor.resize(1000, 650);
     editor.show();
     pump();
     auto* canvas = editor.canvas();
-    auto a = canvas->imageViewportRect(first).center();
-    auto b = canvas->imageViewportRect(second).center();
+    wheel(canvas, canvas->rect().center(), 120);
+    mouse(canvas, QEvent::MouseButtonPress, {40, 40}, Qt::MiddleButton, Qt::MiddleButton);
+    mouse(canvas, QEvent::MouseMove, {63, 56}, Qt::NoButton, Qt::MiddleButton);
+    mouse(canvas, QEvent::MouseButtonRelease, {63, 56}, Qt::MiddleButton, Qt::NoButton);
+    const auto zoom = canvas->zoom();
+    const auto offset = canvas->offset();
+    const auto initialSize = document.layout().size;
+    const auto a = canvas->imageViewportRect(first).center();
+    const auto b = canvas->imageViewportRect(second).center();
     mouse(canvas, QEvent::MouseButtonPress, a, Qt::LeftButton, Qt::LeftButton);
     mouse(canvas, QEvent::MouseMove, b, Qt::NoButton, Qt::LeftButton);
     require(document.items()[0].id == first, "drag must not swap before release");
@@ -1165,8 +1409,13 @@ void releaseOnlySwapAndCrossWindowIsolation() {
     mouse(canvas, QEvent::MouseButtonPress, a, Qt::LeftButton, Qt::LeftButton);
     mouse(canvas, QEvent::MouseMove, b, Qt::NoButton, Qt::LeftButton);
     mouse(canvas, QEvent::MouseButtonRelease, b, Qt::LeftButton, Qt::NoButton);
-    require(document.items()[0].id == second && document.items()[1].id == first,
-            "release over valid target must swap images");
+    pump();
+    require(
+        document.items()[0].id == second && document.items()[1].id == first &&
+            document.selectedId() == first && document.layout().size != initialSize,
+        "release over a valid target swaps images, updating the layout and retaining selection");
+    require(canvas->zoom() == zoom && canvas->offset() == offset,
+            "canvas drag must retain zoom and pan across a swap that changes the layout size");
     auto* thumbnail = editor.findChild<QWidget*>(QStringLiteral("collageThumbnail_%1").arg(first));
     require(thumbnail != nullptr && thumbnail->property("collageItemId").toULongLong() == first,
             "thumbnail identity must follow canvas swaps");
@@ -1183,15 +1432,37 @@ void releaseOnlySwapAndCrossWindowIsolation() {
     local.setData(QStringLiteral("application/x-snow-shot-collage-item"),
                   QByteArray::number(reinterpret_cast<quintptr>(&document)) + ':' +
                       QByteArray::number(second));
-    auto* target = editor.findChild<QWidget*>(QStringLiteral("collageThumbnail_%1").arg(first));
+    canvas->fitToCanvas();
+    const auto fittedZoom = canvas->zoom();
+    const auto fittedOffset = canvas->offset();
+    auto* source = editor.findChild<QWidget*>(QStringLiteral("collageThumbnail_%1").arg(second));
+    require(source != nullptr, "drag source thumbnail must exist");
+    mouse(source, QEvent::MouseButtonPress, {20, 20}, Qt::LeftButton, Qt::LeftButton);
+    require(canvas->zoom() == fittedZoom && canvas->offset() == fittedOffset,
+            "pressing a thumbnail must leave the view in place until click or drag is resolved");
+    mouse(source, QEvent::MouseButtonRelease, {-2, -2}, Qt::LeftButton, Qt::NoButton);
     QDragEnterEvent localEnter(QPointF(20, 20), Qt::MoveAction, &local, Qt::LeftButton,
                                Qt::NoModifier);
-    QApplication::sendEvent(target, &localEnter);
+    QApplication::sendEvent(thumbnail, &localEnter);
     require(localEnter.isAccepted(), "same collage thumbnail drag must be accepted");
     QDropEvent drop({20, 20}, Qt::MoveAction, &local, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(target, &drop);
+    QApplication::sendEvent(thumbnail, &drop);
+    pump();
     require(drop.isAccepted() && document.items()[0].id == first,
             "thumbnail drop must swap document and preview order");
+    require(canvas->zoom() == fittedZoom && canvas->offset() == fittedOffset,
+            "thumbnail drop must retain the fitted viewport when the layout changes");
+
+    const auto canvasTarget = canvas->cellViewportRect(first).center();
+    QDragEnterEvent canvasEnter(canvasTarget, Qt::MoveAction, &local, Qt::LeftButton,
+                                Qt::NoModifier);
+    QApplication::sendEvent(canvas, &canvasEnter);
+    QDropEvent canvasDrop(canvasTarget, Qt::MoveAction, &local, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(canvas, &canvasDrop);
+    pump();
+    require(canvasDrop.isAccepted() && document.items()[0].id == second &&
+                canvas->zoom() == fittedZoom && canvas->offset() == fittedOffset,
+            "dropping a thumbnail onto the canvas must swap images without shifting the view");
 }
 void invalidLayoutKeepsSelectionAndTransformsUsable() {
     ImageStitchingDocument document;
@@ -1658,6 +1929,19 @@ void spacingPercentagesFollowImageReference() {
     document.setSettings(settings);
     require(border->value() == 5 && spacing->value() == 3,
             "original vertical percentages must use the widest image");
+    settings.direction = ImageStitchingDirection::Free;
+    document.setSettings(settings);
+    require(border->value() == 20 && spacing->value() == 10,
+            "Free original percentage uses the greatest original height");
+    const auto current = document.items().front().freePlacement.value();
+    document.setFreePlacement(first, {current.centerPixels, 5.0});
+    settings.sizing = ImageStitchingSizing::Uniform;
+    document.setSettings(settings);
+    require(border->value() == 25 && spacing->value() == 13,
+            "manual scale is excluded from the Free percentage reference");
+    spacing->setValue(25);
+    require(document.settings().spacing == 20, "Free percentage edits store rounded output pixels");
+    settings.sizing = ImageStitchingSizing::Original;
     settings.direction = ImageStitchingDirection::Horizontal;
     document.setSettings(settings);
     require(border->value() == 20 && spacing->value() == 10,
@@ -1798,6 +2082,50 @@ void customGridDimensionChangesFitToCanvas() {
             "custom dimension edits must publish their persistence fields");
 }
 
+void switchingToPdfReleasesRemovedStaticPreviews() {
+    const qint64 baseline = imageStitchingResourceUsage().reservedBytes;
+    ImageStitchingDocument document;
+    const QSize size(64, 48);
+    auto source = captureImageStitchingImage(size, [&] { return image(size); });
+    require(!source.isNull(), "allocate a preview with a tracked pixel owner");
+    const auto* pixels = source.constBits();
+    require(document.append(std::move(source), QStringLiteral("static image")) &&
+                document.items().front().preview.constBits() == pixels,
+            "the static preview shares its document image pixels");
+    const auto firstId = document.items().front().id;
+    const auto secondId = document.append(image(size), QStringLiteral("second image"));
+    ImageStitchingEditorWidget editor(&document);
+    editor.resize(1000, 650);
+    editor.show();
+    pump();
+    const auto thumbnail = [&](quint64 id) {
+        return editor.findChild<QWidget*>(QStringLiteral("collageThumbnail_%1").arg(id));
+    };
+    const QPointer<QWidget> first(thumbnail(firstId));
+    const QPointer<QWidget> second(thumbnail(secondId));
+    require(first && second, "both static thumbnails exist before switching views");
+
+    document.setOutputType(ImageStitchingOutputType::PdfDocument);
+    require(document.remove(firstId), "remove a page while the static view is hidden");
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    require(!first && second && thumbnail(secondId) == second &&
+                editor.canvas()->property("detailPreviewBytes").toLongLong() ==
+                    document.items().front().preview.sizeInBytes(),
+            "PDF removal retires only the obsolete thumbnail and updates preview accounting");
+    document.clear();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    require(!second && editor.canvas()->property("detailPreviewBytes").toLongLong() == 0,
+            "clearing the PDF releases all static thumbnail widgets and preview bytes");
+    QElapsedTimer timer;
+    timer.start();
+    while (imageStitchingResourceUsage().reservedBytes != baseline && timer.elapsed() < 1000) {
+        pump();
+        QThread::msleep(2);
+    }
+    require(imageStitchingResourceUsage().reservedBytes == baseline,
+            "the hidden canvas and thumbnails release removed image pixels in PDF mode");
+}
+
 void detailTilesRemainBoundedAndOriginalsUnchanged() {
     ImageStitchingDocument document;
     const auto source = image({3840, 2160}, QColor(20, 40, 60, 110));
@@ -1806,6 +2134,11 @@ void detailTilesRemainBoundedAndOriginalsUnchanged() {
     ImageStitchingEditorWidget editor(&document);
     editor.resize(1200, 800);
     editor.show();
+    const auto* detailTimer =
+        editor.canvas()->findChild<QTimer*>(QStringLiteral("collageDetailTimer"));
+    require(detailTimer && detailTimer->isActive() && detailTimer->interval() > 0,
+            "the initial detail request must use the interaction debounce");
+    const int debounceMs = detailTimer->interval();
     pump();
     wheel(editor.canvas(), {300, 250}, 240);
     QElapsedTimer timer;
@@ -1832,8 +2165,36 @@ void detailTilesRemainBoundedAndOriginalsUnchanged() {
     require(source.cacheKey() == key && document.items()[0].image.cacheKey() == key,
             "preview interactions must preserve original raster storage");
     const auto before = editor.canvas()->zoom();
+    editor.hide();
+    require(!detailTimer->isActive() && editor.canvas()->property("detailTileCount").toInt() == 0 &&
+                document.items()[0].image.cacheKey() == key,
+            "hiding the preview releases high-resolution tiles and retains the document source");
+    editor.show();
+    require(detailTimer->isActive() && detailTimer->interval() == 0,
+            "showing a preview that released tiles must queue immediate restoration");
+    editor.showMinimized();
+    require(!detailTimer->isActive() && editor.canvas()->property("detailTileCount").toInt() == 0,
+            "minimizing must cancel queued restoration");
+    editor.canvas()->setEditingEnabled(false);
+    editor.canvas()->setEditingEnabled(true);
+    require(!detailTimer->isActive(), "geometry updates must not schedule detail while minimized");
+    editor.showNormal();
+    editor.canvas()->setEditingEnabled(false);
+    editor.canvas()->setEditingEnabled(true);
+    require(detailTimer->isActive() && detailTimer->interval() == 0,
+            "a rapid re-show and geometry updates must retain immediate restoration");
+    timer.restart();
+    while (editor.canvas()->property("detailTileCount").toInt() == 0 && timer.elapsed() < 10000) {
+        pump();
+        QThread::msleep(5);
+    }
+    require(editor.canvas()->property("detailTileCount").toInt() > 0 &&
+                qFuzzyCompare(editor.canvas()->zoom(), before),
+            "a reshown preview regenerates detail at the preserved zoom");
     document.rotate(document.items()[0].id, true);
     require(qFuzzyCompare(editor.canvas()->zoom(), before), "rotation must preserve preview zoom");
+    require(detailTimer->isActive() && detailTimer->interval() == debounceMs,
+            "ordinary detail requests must resume the interaction debounce after restoration");
 }
 
 void backgroundEditsPreservePendingNumericInput() {
@@ -2139,6 +2500,12 @@ void cancelledDetailsRetainPreviewAccountingUntilRetirement() {
     }
     require(editor.canvas()->property("detailPendingCount").toInt() == 1,
             "detail retirement fixture must hold one queued preview");
+    editor.hide();
+    editor.show();
+    const auto* timerOnShow =
+        editor.canvas()->findChild<QTimer*>(QStringLiteral("collageDetailTimer"));
+    require(timerOnShow && timerOnShow->isActive() && timerOnShow->interval() == 0,
+            "showing a canvas with interrupted in-flight detail schedules immediate restoration");
     document.clear();
     require(editor.canvas()->property("detailPendingCount").toInt() == 1 &&
                 editor.canvas()->property("detailPreviewBytes").toLongLong() > 0,
@@ -2214,6 +2581,8 @@ void languageChangesPreserveSettingsAndRefreshLabels() {
                 direction->optionLabel(1) ==
                     QCoreApplication::translate("ImageStitchingEditorWidget", "Horizontal") &&
                 direction->optionLabel(2) ==
+                    QCoreApplication::translate("ImageStitchingEditorWidget", "Free") &&
+                direction->optionLabel(3) ==
                     QCoreApplication::translate("ImageStitchingEditorWidget", "Custom") &&
                 sizing->optionLabel(1) ==
                     QCoreApplication::translate("ImageStitchingEditorWidget", "Original size"),
@@ -2333,7 +2702,13 @@ int renderPreview(const QString& path, bool dark, bool percentage, bool empty) {
     settings.background = QColor(255, 255, 255, 90);
     if (QApplication::arguments().contains(QStringLiteral("--custom")))
         settings.direction = ImageStitchingDirection::Custom;
+    else if (QApplication::arguments().contains(QStringLiteral("--free")))
+        settings.direction = ImageStitchingDirection::Free;
     document.setSettings(settings);
+    if (settings.direction == ImageStitchingDirection::Free) {
+        document.setFreePlacement(document.items()[1].id, {{750, 185}, {}});
+        document.setFreePlacement(document.items()[2].id, {{520, 390}, {}});
+    }
     if (empty)
         document.clear();
     ImageStitchingEditorWidget editor(&document);
@@ -2400,6 +2775,7 @@ int main(int argc, char** argv) {
         if (arguments.contains(QStringLiteral("--static-editing-only"))) {
             centeredStaticResizeMoveAndCancellation();
             staticPlacementOverflowAndDetailAlpha();
+            reselectStaticImageOutsideItsSlot();
             ScreenshotExportCoordinator::shared().shutdown();
             std::cout << "Static stitching editing tests passed\n";
             return 0;
@@ -2463,9 +2839,12 @@ int main(int argc, char** argv) {
             std::cout << "Collage fit control tests passed\n";
             return 0;
         }
+        switchingToPdfReleasesRemovedStaticPreviews();
+        freeCanvasGestures();
         selectionOutlineMatchesPdfHandles();
         centeredStaticResizeMoveAndCancellation();
         staticPlacementOverflowAndDetailAlpha();
+        reselectStaticImageOutsideItsSlot();
         externalImageDrops();
         replacementHighlightMatchesDrawEngineMarquee();
         thumbnailScrollBarOverlaysTheList();

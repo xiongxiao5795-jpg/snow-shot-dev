@@ -37,17 +37,20 @@ int main(int argc, char** argv) {
     manager.initialize();
 
     const auto catalogs = manager.availableLanguages();
-    require(catalogs.size() == 3, "the three embedded catalogs should be discovered");
+    require(catalogs.size() == 4, "all four embedded catalogs should be discovered");
     require(catalogs.at(0).localeName == QStringLiteral("en_US"),
             "the source catalog should sort first");
-    require(catalogs.at(1).localeName == QStringLiteral("zh_CN") &&
-                catalogs.at(2).localeName == QStringLiteral("zh_TW"),
+    require(catalogs.at(1).localeName == QStringLiteral("ru_RU") &&
+                catalogs.at(2).localeName == QStringLiteral("zh_CN") &&
+                catalogs.at(3).localeName == QStringLiteral("zh_TW"),
             "remaining catalogs should sort by canonical locale name");
     require(catalogs.at(0).nativeName == QStringLiteral("English"),
             "English should expose its catalog native name");
-    require(catalogs.at(1).nativeName == QString::fromUtf8("简体中文"),
+    require(catalogs.at(1).nativeName == QString::fromUtf8("Русский"),
+            "Russian should expose its catalog native name");
+    require(catalogs.at(2).nativeName == QString::fromUtf8("简体中文"),
             "Simplified Chinese should expose its catalog native name");
-    require(catalogs.at(2).nativeName == QString::fromUtf8("繁體中文"),
+    require(catalogs.at(3).nativeName == QString::fromUtf8("繁體中文"),
             "Traditional Chinese should expose its catalog native name");
     require(manager.languagePreference() == QStringLiteral("en_US"),
             "English should use the canonical en_US preference");
@@ -75,6 +78,10 @@ int main(int argc, char** argv) {
             "source-language catalog compaction must preserve singular and plural forms");
 
     require(manager.setLanguage(QStringLiteral("zh_CN")), "Simplified Chinese should load");
+    require(QCoreApplication::translate("SettingsCatalog",
+                                        "Keep selection width and height consistent") ==
+                QString::fromUtf8("保持选区宽高一致"),
+            "Simplified Chinese should describe the square selection shortcut");
     require(QCoreApplication::translate("SettingsCatalog", "Mouse wheel opacity step") ==
                     QString::fromUtf8("鼠标滚轮不透明度步长") &&
                 QCoreApplication::translate("SettingsCatalog", "Mouse wheel zoom step") ==
@@ -106,6 +113,9 @@ int main(int argc, char** argv) {
             "Ant Design Qt should follow Simplified Chinese");
     require(settings.language() == QStringLiteral("zh_CN"),
             "a selected locale should persist immediately");
+    require(QCoreApplication::translate("ScreenshotPinnedWindow", "Window management") ==
+                QString::fromUtf8("窗口管理"),
+            "Simplified Chinese should translate the pinned window management menu");
     require(QCoreApplication::translate("PinnedWindowManagementPageWidget",
                                         "Pin to screen management") ==
                 QString::fromUtf8("固定到屏幕管理"),
@@ -118,6 +128,16 @@ int main(int argc, char** argv) {
             "Simplified Chinese management should use the same window terminology");
 
     require(manager.setLanguage(QStringLiteral("zh_TW")), "Traditional Chinese should load");
+    require(QCoreApplication::translate("MouseOperations", "Side button 1 (back) drag") ==
+                    QString::fromUtf8("側鍵 1（後退）拖曳") &&
+                QCoreApplication::translate("MouseOperations",
+                                            "Side button 2 (forward) single-click") ==
+                    QString::fromUtf8("側鍵 2（前進）單擊"),
+            "Traditional Chinese mouse gestures name the button, direction and action");
+    require(QCoreApplication::translate("SettingsCatalog",
+                                        "Keep selection width and height consistent") ==
+                QString::fromUtf8("保持選取範圍長寬一致"),
+            "Traditional Chinese should describe the square selection shortcut");
     require(QCoreApplication::translate("CanvasStatusReadout", "Scale: %1%") ==
                     QString::fromUtf8("縮放：%1%") &&
                 QCoreApplication::translate("CanvasStatusReadout", "Locked") ==
@@ -142,6 +162,9 @@ int main(int argc, char** argv) {
                 QCoreApplication::translate("SettingsCatalog", "Increase scale by 10%") ==
                     QString::fromUtf8("縮放比例增加 10%"),
             "Traditional Chinese must translate pinned image adjustment commands");
+    require(QCoreApplication::translate("ScreenshotPinnedWindow", "Window management") ==
+                QString::fromUtf8("視窗管理"),
+            "Traditional Chinese should translate the pinned window management menu");
     require(QCoreApplication::translate("PinnedWindowManagementPageWidget",
                                         "Pin to screen management") ==
                 QString::fromUtf8("固定到螢幕管理"),
@@ -153,9 +176,36 @@ int main(int argc, char** argv) {
                 QString::fromUtf8("尚無固定到螢幕視窗"),
             "Traditional Chinese management should use the same window terminology");
 
+    require(manager.setLanguage(QStringLiteral("ru")), "Russian should load by its language tag");
+    require(manager.languagePreference() == QStringLiteral("ru_RU") &&
+                manager.currentLocale().name() == QStringLiteral("ru_RU") &&
+                settings.language() == QStringLiteral("ru_RU"),
+            "Russian should become active and persist as ru_RU");
+    require(QCoreApplication::translate("SettingsCatalog",
+                                        "Keep selection width and height consistent") ==
+                QString::fromUtf8("Сохранять ширину и высоту выделения одинаковыми"),
+            "Russian should describe the square selection shortcut");
+    require(
+        QCoreApplication::translate("PinnedWindowManagementPageWidget", "%n pinned window(s)",
+                                    nullptr, 1) == QString::fromUtf8("1 закреплённое окно") &&
+            QCoreApplication::translate("PinnedWindowManagementPageWidget", "%n pinned window(s)",
+                                        nullptr, 2) == QString::fromUtf8("2 закреплённых окна") &&
+            QCoreApplication::translate("PinnedWindowManagementPageWidget", "%n pinned window(s)",
+                                        nullptr, 5) == QString::fromUtf8("5 закреплённых окон"),
+        "the embedded Russian catalog must preserve all three plural forms");
+    require(QCoreApplication::translate("QFileDialog", "File &name:") ==
+                QString::fromUtf8("&Имя файла:"),
+            "the embedded Russian catalog must include Qt's file dialog translations");
+    require(adqt::locale::LocaleManager::instance().locale().name() == QStringLiteral("ru_RU") &&
+                QCoreApplication::translate("adqt::widgets::AdPagination", "Previous page") ==
+                    QString::fromUtf8("Предыдущая страница"),
+            "shared controls should follow the Russian application locale");
+
     require(manager.setLanguage(QStringLiteral("en_US")) &&
                 QCoreApplication::translate("CanvasStatusReadout", "Locked") ==
-                    QStringLiteral("Locked"),
+                    QStringLiteral("Locked") &&
+                QCoreApplication::translate("adqt::widgets::AdPagination", "Previous page") ==
+                    QStringLiteral("Previous page"),
             "switching back to compact English must remove previous localized translations");
 
     require(manager.setLanguage(QStringLiteral("system")),

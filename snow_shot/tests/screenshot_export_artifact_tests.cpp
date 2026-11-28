@@ -1,6 +1,5 @@
 #include "snow_shot/presentation/screenshotexportartifact.h"
 #include "snow_shot/presentation/screenshothidpiimagescaling.h"
-#include "snow_shot/presentation/screenshotexportcache.h"
 #include "../src/presentation/services/screenshotexportfiletransfer_p.h"
 #include <QUuid>
 #include "snow_shot/presentation/screenshotselectionshadowrenderer.h"
@@ -1377,7 +1376,7 @@ void windowNamesSurviveAsynchronousFileExports() {
             "window variable settings must initialize");
     const auto shutdown = qScopeGuard([&] { storage.shutdown(); });
     const snow_shot::storage::ScreenshotSettings settings;
-    const QString folder = directory.filePath(QStringLiteral("{AN}/{YYYY}"));
+    const QString folder = directory.filePath(QStringLiteral("{AN}/{SCREEN}/{YYYY}"));
     const QString filename = QStringLiteral("{WN}_{HH-mm-ss}");
     require(settings.setImageSaveDirectory(folder) && settings.setAutoSaveFilenameFormat(filename),
             "window templates must persist");
@@ -1391,7 +1390,8 @@ void windowNamesSurviveAsynchronousFileExports() {
                 deliver = std::move(callback);
                 return true;
             }));
-        artifact.setWindowNames({QStringLiteral("Browser"), QStringLiteral("Tab {YYYY}/A")});
+        artifact.setExportContext({QStringLiteral("Browser"), QStringLiteral("Tab {YYYY}/A"),
+                                   QStringLiteral("Display-2")});
         std::optional<ScreenshotExportTaskResult> result;
         const auto complete = [&](ScreenshotExportTaskResult value) { result = std::move(value); };
         require(quick ? artifact.requestQuickSave(&receiver, complete, timestamp)
@@ -1400,19 +1400,19 @@ void windowNamesSurviveAsynchronousFileExports() {
                             complete, {}, timestamp),
                 "window metadata export must be accepted");
         // A pending save owns its names even if its artifact is reused before image delivery.
-        artifact.setWindowNames({QStringLiteral("Changed"), QStringLiteral("Changed")});
+        artifact.setExportContext({QStringLiteral("Changed"), QStringLiteral("Changed")});
         processUntil([&] { return static_cast<bool>(deliver); });
         deliver(testImage());
         processUntil([&] { return result.has_value(); });
         require(result->succeeded() &&
-                    result->savedPath.contains(QStringLiteral("/Browser/2026/")) &&
+                    result->savedPath.contains(QStringLiteral("/Browser/Display-2/2026/")) &&
                     QFileInfo(result->savedPath)
                         .fileName()
                         .startsWith(QStringLiteral("Tab {YYYY}_A_12-34-56")),
                 "automatic and quick saves must keep request metadata and literal title braces");
     }
     ScreenshotExportArtifact clipboard(ScreenshotExportSource::fromImage(testImage()));
-    clipboard.setWindowNames({QStringLiteral("App"), QStringLiteral("Window")});
+    clipboard.setExportContext({QStringLiteral("App"), QStringLiteral("Window")});
     bool copied = false;
     require(clipboard.requestClipboardFile(
                 &receiver, ScreenshotImageFileFormat::Png, QStringLiteral("{AN}_{WN}"), {},
@@ -1426,7 +1426,7 @@ void windowNamesSurviveAsynchronousFileExports() {
                     copied = true;
                 }),
             "clipboard request must be accepted");
-    clipboard.setWindowNames({QStringLiteral("Changed"), QStringLiteral("Changed")});
+    clipboard.setExportContext({QStringLiteral("Changed"), QStringLiteral("Changed")});
     processUntil([&] { return copied; });
     ScreenshotExportArtifact later(ScreenshotExportSource::fromImage(testImage()));
     std::optional<ScreenshotExportTaskResult> result;
@@ -1435,8 +1435,8 @@ void windowNamesSurviveAsynchronousFileExports() {
                 timestamp),
             "an export without live metadata must still save");
     processUntil([&] { return result.has_value(); });
-    require(result->succeeded() &&
-                result->savedPath.endsWith(QStringLiteral("/Unknown/2026/Unknown_12-34-56.png")),
+    require(result->succeeded() && result->savedPath.endsWith(QStringLiteral(
+                                       "/Unknown/Unknown/2026/Unknown_12-34-56.png")),
             "later exports must use Unknown rather than current desktop names");
 }
 
@@ -1947,12 +1947,6 @@ ScreenshotExportSource sharedEncodingSource(const QImage& image, bool loaded) {
 }
 
 void commandsShareEncodingsWithoutSharingCancellation(const QImage& image, bool loaded) {
-    ScreenshotExportCache::encodedBytes().clear();
-    ScreenshotExportCache::encodedFiles().clear();
-    const auto cleanup = qScopeGuard([] {
-        ScreenshotExportCache::encodedBytes().clear();
-        ScreenshotExportCache::encodedFiles().clear();
-    });
     const auto key = QUuid::createUuid().toByteArray();
     std::atomic_int encodings = 0;
     QSemaphore release;
@@ -1982,7 +1976,7 @@ void commandsShareEncodingsWithoutSharingCancellation(const QImage& image, bool 
                 "prepare PNG subscribers before holding the encoder");
     processUntil([&] { return ready == 2; });
     int callbacks = 0;
-    QByteArray held;
+    snow_shot::storage::PreparedPngImage held;
     require(first->requestPng(&receiver, ScreenshotCompressionLevel::Low,
                               [&](ScreenshotExportEncodingResult) { ++callbacks; }),
             "first shared PNG request starts");
@@ -1991,7 +1985,7 @@ void commandsShareEncodingsWithoutSharingCancellation(const QImage& image, bool 
                                [&](ScreenshotExportEncodingResult result) {
                                    require(result.succeeded(),
                                            "surviving command encodes successfully");
-                                   held = result.image.bytes();
+                                   held = std::move(result.image);
                                    ++callbacks;
                                }),
             "second shared PNG request starts");
@@ -2002,41 +1996,44 @@ void commandsShareEncodingsWithoutSharingCancellation(const QImage& image, bool 
     require(encodings == 1, "commands coalesce PNG encoding across first-owner cancellation");
     const auto expected =
         image.convertedToColorSpace(QColorSpace::SRgb).convertToFormat(QImage::Format_RGBA8888);
-    require(hasSamePixels(QImage::fromData(held, "PNG"), expected),
+    require(hasSamePixels(QImage::fromData(held.bytes(), "PNG"), expected),
             "shared PNG preserves source alpha and lazy color conversion");
+    require(second->requestPng(&receiver, ScreenshotCompressionLevel::Low,
+                               [&](ScreenshotExportEncodingResult result) {
+                                   require(result.image.sharedBytes() == held.sharedBytes(),
+                                           "the current command reuses its completed encoding");
+                                   ++callbacks;
+                               }),
+            "warm PNG request starts on the current command");
+    require(callbacks == 2 && encodings == 1, "current command needs no additional encoder");
+    const std::weak_ptr<const QByteArray> lifetime = held.sharedBytes();
+    second->cancel();
+    require(hasSamePixels(QImage::fromData(held.bytes(), "PNG"), expected),
+            "borrowed PNG stays readable after its originating command ends");
+    held = {};
+    processUntil([&] { return lifetime.expired(); });
     second.reset();
     auto repeated = make();
     require(repeated->requestPng(
                 &receiver, ScreenshotCompressionLevel::Low,
                 [&](ScreenshotExportEncodingResult result) {
-                    require(result.image.bytes().constData() == held.constData(),
-                            "completed encoding reuses immutable storage after commands die");
+                    require(
+                        result.succeeded() &&
+                            hasSamePixels(QImage::fromData(result.image.bytes(), "PNG"), expected),
+                        "a fresh command encodes the same source");
                     ++callbacks;
                 }),
-            "warm cross-command PNG request starts");
-    require(callbacks == 2 && encodings == 1, "warm PNG needs no worker or source pixels");
-    require(ScreenshotExportCache::encodedBytes().retainedBytes() == held.size(),
-            "shared PNG is charged once and excludes pixel donors");
+            "fresh PNG request starts after the current consumer releases its bytes");
+    processUntil([&] { return callbacks == 3; });
+    require(encodings == 2, "completed PNG storage is released with its last owner");
     require(repeated->requestPng(&receiver, ScreenshotCompressionLevel::High,
                                  [&](ScreenshotExportEncodingResult result) {
                                      require(result.succeeded(), "different compression encodes");
                                      ++callbacks;
                                  }),
             "different compression request starts");
-    processUntil([&] { return callbacks == 3; });
-    require(encodings == 2, "compression options separate shared entries");
-    repeated.reset();
-    ScreenshotExportCache::encodedBytes().clear();
-    auto afterTrim = make();
-    require(afterTrim->requestPng(&receiver, ScreenshotCompressionLevel::Low,
-                                  [&](ScreenshotExportEncodingResult result) {
-                                      require(result.image.bytes() == held,
-                                              "eviction preserves outstanding bytes");
-                                      ++callbacks;
-                                  }),
-            "PNG re-encodes after memory trim");
     processUntil([&] { return callbacks == 4; });
-    require(encodings == 3, "memory trim releases cached outputs");
+    require(encodings == 3, "compression options separate the current command's encodings");
     auto changed = make(key + "changed");
     require(changed->requestPng(&receiver, ScreenshotCompressionLevel::Low,
                                 [&](ScreenshotExportEncodingResult result) {
@@ -2050,12 +2047,10 @@ void commandsShareEncodingsWithoutSharingCancellation(const QImage& image, bool 
 
 void commandsSharePreparedFilesAndKeepIndependentDestinations(const QImage& image, bool loaded,
                                                               bool spool) {
-    ScreenshotExportCache::encodedBytes().clear();
-    ScreenshotExportCache::encodedFiles().clear();
-    const auto cleanup = qScopeGuard([] {
-        ScreenshotExportCache::encodedBytes().clear();
-        ScreenshotExportCache::encodedFiles().clear();
-    });
+    const auto spools = [] {
+        return QDir::temp().entryList({QStringLiteral("snow-shot-export-*")}, QDir::Dirs);
+    };
+    const auto startingSpools = spool ? spools() : QStringList{};
     const auto key = QUuid::createUuid().toByteArray();
     QTemporaryDir directory;
     QObject receiver;
@@ -2090,6 +2085,7 @@ void commandsSharePreparedFilesAndKeepIndependentDestinations(const QImage& imag
     processUntil([&] { return ready == 3; });
     int completed = 0;
     QByteArray expected;
+    std::shared_ptr<QFile> retainedReader;
     auto saved = [&](ScreenshotExportTaskResult result) {
         QFile file(result.savedPath);
         require(result.succeeded() && file.open(QIODevice::ReadOnly),
@@ -2098,6 +2094,8 @@ void commandsSharePreparedFilesAndKeepIndependentDestinations(const QImage& imag
         if (expected.isEmpty())
             expected = bytes;
         require(bytes == expected, "independent destinations reuse identical encoded bytes");
+        if (result.reader)
+            retainedReader = std::move(result.reader);
         ++completed;
     };
     const ScreenshotImageEncodingOptions options{87, ScreenshotCompressionLevel::Low};
@@ -2110,7 +2108,8 @@ void commandsSharePreparedFilesAndKeepIndependentDestinations(const QImage& imag
             "first file subscriber owns the initial encoding request");
     processUntil([&] { return encodings == 1; });
     require(first->requestSaveToPath(&receiver, directory.filePath("first"),
-                                     ScreenshotImageFileFormat::Webp, options, saved) &&
+                                     ScreenshotImageFileFormat::Webp, options, saved, {}, {},
+                                     true) &&
                 second->requestSaveToPath(&receiver, directory.filePath("second"),
                                           ScreenshotImageFileFormat::Webp, options, saved),
             "concurrent commands start prepared file saves");
@@ -2127,36 +2126,43 @@ void commandsSharePreparedFilesAndKeepIndependentDestinations(const QImage& imag
     require(reference.succeeded() && referenceFile.open(QIODevice::ReadOnly) &&
                 referenceFile.readAll() == expected,
             "shared file bytes preserve native pixels and lazy color conversion");
+    QString stagingFile;
+    if (spool) {
+        for (const auto& entry : spools()) {
+            if (startingSpools.contains(entry))
+                continue;
+            QFile file(QDir::temp().filePath(entry + QStringLiteral("/encoded")));
+            if (file.open(QIODevice::ReadOnly) && file.readAll() == expected) {
+                stagingFile = file.fileName();
+                break;
+            }
+        }
+        require(!stagingFile.isEmpty(), "the active command owns a prepared file on disk");
+    }
+    require(first->requestSaveToPath(&receiver, directory.filePath("third"),
+                                     ScreenshotImageFileFormat::Webp, options, saved),
+            "the current command can save its prepared file again");
+    processUntil([&] { return completed == 3; });
+    require(encodings == 1, "the current command reuses its prepared file");
+
     first.reset();
     second.reset();
-    require((spool ? ScreenshotExportCache::encodedFiles() : ScreenshotExportCache::encodedBytes())
-                    .retainedBytes() == expected.size(),
-            "shared file cache charges only encoded bytes");
+    if (spool) {
+        const QString stagingDirectory = QFileInfo(stagingFile).absolutePath();
+        processUntil([&] { return !QFileInfo::exists(stagingDirectory); });
+    }
+    require(retainedReader && retainedReader->readAll() == expected,
+            "a returned reader survives the command and its prepared encoding");
     auto repeated = make();
-    require(repeated->requestSaveToPath(&receiver, directory.filePath("third"),
+    require(repeated->requestSaveToPath(&receiver, directory.filePath("fresh"),
                                         ScreenshotImageFileFormat::Webp, options, saved),
-            "warm prepared file save starts");
-    processUntil([&] { return completed == 3; });
-    require(encodings == 1, "prepared files survive original command destruction");
-    repeated.reset();
-    ScreenshotExportCache::encodedBytes().clear();
-    ScreenshotExportCache::encodedFiles().clear();
-    auto afterTrim = make();
-    require(afterTrim->requestSaveToPath(&receiver, directory.filePath("after-trim"),
-                                         ScreenshotImageFileFormat::Webp, options, saved),
-            "prepared file save starts after cache eviction");
+            "a fresh command can save after the previous prepared file is released");
     processUntil([&] { return completed == 4; });
-    require(encodings == 2, "evicting prepared files releases their shared encoding");
+    require(encodings == 2, "a fresh command prepares a new encoding");
 }
 
-void sharedEncodingCachesReleaseNativePixels() {
+void completedEncodingCommandsReleaseNativePixels() {
     for (const auto format : {ScreenshotImageFileFormat::Png, ScreenshotImageFileFormat::Webp}) {
-        ScreenshotExportCache::encodedBytes().clear();
-        ScreenshotExportCache::encodedFiles().clear();
-        const auto cleanup = qScopeGuard([] {
-            ScreenshotExportCache::encodedBytes().clear();
-            ScreenshotExportCache::encodedFiles().clear();
-        });
         auto pixels = std::make_shared<QImage>(
             testImage().convertToFormat(QImage::Format_ARGB32_Premultiplied));
         const std::weak_ptr<QImage> lifetime = pixels;
@@ -2172,20 +2178,20 @@ void sharedEncodingCachesReleaseNativePixels() {
         auto artifact = std::make_unique<ScreenshotExportArtifact>(std::move(source));
         QTemporaryDir directory;
         QObject receiver;
-        bool completed = false;
+        QString savedPath;
         require(artifact->requestSaveToPath(
                     &receiver, directory.filePath("output"), format, {},
                     [&](ScreenshotExportTaskResult result) {
                         require(result.succeeded(), "native snapshot encodes for lifetime test");
-                        completed = true;
+                        savedPath = result.savedPath;
                     }),
                 "native snapshot encoding starts");
-        processUntil([&] { return completed; });
+        processUntil([&] { return !savedPath.isEmpty(); });
         require(!lifetime.expired(), "the command still owns the original native pixel storage");
         artifact.reset();
         processUntil([&] { return lifetime.expired(); });
-        require(ScreenshotExportCache::encodedBytes().retainedBytes() > 0,
-                "completed shared encodings retain bytes without retaining source pixels");
+        require(QFileInfo::exists(savedPath),
+                "retiring a command releases native pixels and preserves the final output");
     }
 }
 
@@ -2217,7 +2223,42 @@ void sharedEncodingsCoverNativeAndConvertedImages() {
         for (const bool spool : {false, true})
             commandsSharePreparedFilesAndKeepIndependentDestinations(image, loaded, spool);
     }
-    sharedEncodingCachesReleaseNativePixels();
+    completedEncodingCommandsReleaseNativePixels();
+}
+
+void encodersScanOpacityOnlyWhenNeeded() {
+    using snow::image::Format;
+    const QImage image = testImage();
+    int scans = 0;
+    auto rows = rowSourceFor(image, {});
+    rows.classifyAlpha = [&scans](const std::function<bool()>&) {
+        ++scans;
+        return ScreenshotImageAlphaContent::Opaque;
+    };
+    const auto encode = [&](Format format, const snow::image::EncodeOptions& options = {}) {
+        QBuffer buffer;
+        require(buffer.open(QIODevice::WriteOnly) &&
+                    snow_shot::image_codec::encodeToDevice(rows, &buffer, format, options),
+                "the row-backed encoding fixture must succeed");
+        return buffer.data();
+    };
+
+    const auto bmp = encode(Format::bmp);
+    require(scans == 0 && hasSamePixels(QImage::fromData(bmp, "BMP"), image),
+            "BMP must encode the original pixels without scanning for opacity");
+    encode(Format::tiff);
+    encode(Format::webp);
+    require(scans == 0, "TIFF and WebP must skip the opacity scan");
+
+    const auto png = QImage::fromData(encode(Format::png), "PNG");
+    require(scans == 1 && !png.hasAlphaChannel() && hasSamePixels(png, image),
+            "PNG must use verified opacity to omit alpha and preserve the pixels");
+
+    snow::image::EncodeOptions verified;
+    verified.verified_alpha_content = snow::image::AlphaContent::opaque;
+    const auto verifiedPng = QImage::fromData(encode(Format::png, verified), "PNG");
+    require(scans == 1 && !verifiedPng.hasAlphaChannel() && hasSamePixels(verifiedPng, image),
+            "PNG must reuse explicitly verified opacity without scanning");
 }
 
 void pdfPayloadReusePreservesDestinationMetadata() {
@@ -4479,6 +4520,8 @@ int main(int argc, char** argv) {
         auto& diagnostics = snow_shot::diagnostics::DiagnosticsService::instance();
         require(diagnostics.initialize(logging), "export diagnostics must initialize");
         if (application.arguments().contains(QStringLiteral("--file-encodings-only"))) {
+            encodersScanOpacityOnlyWhenNeeded();
+            sharedEncodingsCoverNativeAndConvertedImages();
             fileEncodingsCoalesceAndNormalizeOptions();
             diagnostics.shutdown();
             return EXIT_SUCCESS;
@@ -4639,6 +4682,7 @@ int main(int argc, char** argv) {
         }
         nonPngSaveReadsPixelsWithoutEncodingPng();
         stagedFilesPublishExclusivelyWithBoundedFallback();
+        encodersScanOpacityOnlyWhenNeeded();
         sharedEncodingsCoverNativeAndConvertedImages();
         fileEncodingsCoalesceAndNormalizeOptions();
         pdfPayloadReusePreservesDestinationMetadata();

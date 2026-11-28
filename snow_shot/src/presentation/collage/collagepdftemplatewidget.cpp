@@ -4,6 +4,7 @@
 #include "collagethumbnailactions_p.h"
 #include "collageoriginalpreview_p.h"
 
+#include "snow_shot/presentation/canvasstatusreadout.h"
 #include "snow_shot/presentation/components/canvasactiontoolbar.h"
 #include "snow_shot/presentation/components/icons/snowshoticons.h"
 #include "snow_shot/presentation/components/imagedropsurface.h"
@@ -318,6 +319,7 @@ struct ImageStitchingPdfTemplateCanvas::Impl {
     bool panning = false;
     CanvasActionToolbar* toolbar = nullptr;
     CanvasActionToolbar* selectionToolbar = nullptr;
+    CanvasStatusReadout* zoomReadout = nullptr;
     std::array<AdButton*, 8> actions{};
     AdButton* add = nullptr;
     AdButton* clear = nullptr;
@@ -530,11 +532,21 @@ struct ImageStitchingPdfTemplateCanvas::Impl {
         return 0;
     }
     quint64 hitImage(const QPointF& position) const {
-        for (const auto& cell : page.cells)
-            if (cell.itemId && mapped(cell.clipMillimeters).contains(position) &&
-                mapped(cell.imageMillimeters).contains(position))
+        const auto selectedId = document->selectedId();
+        quint64 overflow = 0;
+        for (const auto& cell : page.cells) {
+            if (!cell.itemId)
+                continue;
+            const auto bounds = mapped(cell.imageMillimeters);
+            if (!bounds.contains(position))
+                continue;
+            const auto clip = mapped(cell.clipMillimeters);
+            if (clip.contains(position))
                 return cell.itemId;
-        return 0;
+            if (image_stitching_detail::showsImageOverflow(bounds, clip, cell.itemId == selectedId))
+                overflow = cell.itemId;
+        }
+        return overflow;
     }
     void cancelGesture() {
         if (panning) {
@@ -554,7 +566,7 @@ struct ImageStitchingPdfTemplateCanvas::Impl {
         owner->setProperty("swapTargetId", QVariant::fromValue(quint64{0}));
         owner->update();
     }
-    void geometry() {
+    void geometry(bool showZoomReadout = false) {
         empty->setGeometry(owner->rect());
         available = QRectF(24, 24, std::max(1, owner->width() - 48),
                            std::max(1, owner->height() - 24 - 56));
@@ -592,6 +604,7 @@ struct ImageStitchingPdfTemplateCanvas::Impl {
         owner->setProperty("pageIndex", pageIndex);
         owner->setProperty("zoom", zoom);
         owner->setProperty("viewportOffset", offset);
+        zoomReadout->setScale(zoom, showZoomReadout && page.isValid());
         if (detailTimer)
             detailTimer->start();
         owner->update();
@@ -632,6 +645,8 @@ struct ImageStitchingPdfTemplateCanvas::Impl {
             zoom = 1;
             offset = {};
         }
+        if (!page.isValid())
+            zoomReadout->dismiss();
         enabled();
         if (pageIndex != previous)
             emit owner->pageChanged(pageIndex);
@@ -655,6 +670,9 @@ ImageStitchingPdfTemplateCanvas::ImageStitchingPdfTemplateCanvas(ImageStitchingD
     setAcceptDrops(true);
     d.empty = new ImageDropSurface(false, this);
     d.empty->setObjectName(QStringLiteral("collagePdfTemplateEmptyState"));
+    d.zoomReadout = new CanvasStatusReadout(this);
+    d.zoomReadout->setObjectName(QStringLiteral("collagePdfTemplateZoom"));
+    d.zoomReadout->layoutIn(rect());
     auto* emptyLayout = static_cast<QVBoxLayout*>(d.empty->layout());
     d.emptyAdd = new AdButton(d.empty);
     d.emptyAdd->setObjectName(QStringLiteral("collagePdfTemplateEmptyAddImages"));
@@ -755,7 +773,7 @@ void ImageStitchingPdfTemplateCanvas::fitToCanvas() {
     d.cancelGesture();
     d.zoom = 1;
     d.offset = {};
-    d.geometry();
+    d.geometry(true);
 }
 void ImageStitchingPdfTemplateCanvas::setPageIndex(int index) {
     auto& d = *m_impl;
@@ -843,18 +861,15 @@ void ImageStitchingPdfTemplateCanvas::paintEvent(QPaintEvent*) {
     }
     painter.fillRect(d.paper, Qt::white);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    if (const auto* selected = d.cellFor(d.document->selectedId())) {
-        QPainterPath outside;
-        outside.addRect(QRectF(rect()));
-        QPainterPath inside;
-        inside.addRect(d.mapped(selected->clipMillimeters));
-        painter.save();
-        painter.setClipPath(outside.subtracted(inside));
-        painter.setOpacity(.25);
-        paintImage(painter, d.mapped(selected->imageMillimeters),
-                   d.document->items()[selected->itemIndex],
-                   d.detailFor(d.document->items()[selected->itemIndex]));
-        painter.restore();
+    const auto selectedId = d.document->selectedId();
+    for (const auto& cell : d.page.cells) {
+        if (!cell.itemId)
+            continue;
+        const auto bounds = d.mapped(cell.imageMillimeters);
+        const auto& item = d.document->items()[cell.itemIndex];
+        image_stitching_detail::paintImageOverflow(
+            painter, rect(), bounds, d.mapped(cell.clipMillimeters), cell.itemId == selectedId,
+            [&] { paintImage(painter, bounds, item, d.detailFor(item)); });
     }
     for (const auto& cell : d.page.cells) {
         const auto bounds = d.mapped(cell.clipMillimeters);
@@ -876,11 +891,12 @@ void ImageStitchingPdfTemplateCanvas::paintEvent(QPaintEvent*) {
         if (const auto* target = d.cellFor(d.targetId))
             snowCanvasPaintSelectionMarquee(painter, d.mapped(target->clipMillimeters));
     }
-    if (const auto* selected = d.cellFor(d.document->selectedId()))
+    if (const auto* selected = d.cellFor(selectedId))
         snowCanvasPaintImageSelection(painter, d.mapped(selected->imageMillimeters));
 }
 void ImageStitchingPdfTemplateCanvas::resizeEvent(QResizeEvent*) {
     m_impl->cancelGesture();
+    m_impl->zoomReadout->layoutIn(rect());
     m_impl->geometry();
 }
 void ImageStitchingPdfTemplateCanvas::mousePressEvent(QMouseEvent* event) {
@@ -1021,7 +1037,7 @@ void ImageStitchingPdfTemplateCanvas::wheelEvent(QWheelEvent* event) {
         d.zoom = nextZoom;
         d.offset = nextOrigin -
                    (d.available.center() - QPointF(pageSize.width() / 2, pageSize.height() / 2));
-        d.geometry();
+        d.geometry(true);
     }
     event->accept();
 }
@@ -1053,6 +1069,7 @@ void ImageStitchingPdfTemplateCanvas::keyPressEvent(QKeyEvent* event) {
 void ImageStitchingPdfTemplateCanvas::hideEvent(QHideEvent* event) {
     m_impl->cancelGesture();
     m_impl->cancelDetails();
+    m_impl->zoomReadout->dismiss();
     QWidget::hideEvent(event);
 }
 void ImageStitchingPdfTemplateCanvas::showEvent(QShowEvent* event) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "snow_shot/presentation/screenshotexportcoordinator.h"
 #include "snow_shot/presentation/imageeditingdocument.h"
 #include "snow_shot/presentation/screenshotpinnedwindow.h"
 #include "snow_shot/platform/selectedfiles.h"
@@ -9,6 +10,7 @@ namespace adqt::widgets {
 class AdModal;
 }
 class ScreenshotToolPalette;
+class ScreenshotAirDropService;
 class ScreenshotPrintService;
 class ScreenshotRecognitionSessionController;
 namespace snow_shot::presentation {
@@ -21,6 +23,7 @@ struct ImageEditingServices {
     ScreenshotPrintService* printing = nullptr;
     std::function<bool(QImage, std::function<void(bool)>)> pin = {};
     std::function<void(QWidget*, std::function<void(QStringList)>)> chooseFiles = {};
+    ScreenshotAirDropService* airDrop = nullptr;
 };
 class ImageEditingWindow final : public QObject {
     Q_OBJECT
@@ -57,6 +60,9 @@ class ImageEditingWindow final : public QObject {
 
   private:
     friend class ImageEditingWindowCoordinator;
+    void presentFileImage(ImageEditingSource source,
+                          std::shared_ptr<ImageStitchingImportReservation> reservation,
+                          bool rejected);
     void loadImportedImage(QStringList paths,
                            std::optional<ScreenshotClipboardContentSnapshot> snapshot,
                            std::shared_ptr<ImageStitchingImportReservation> reservation,
@@ -71,13 +77,14 @@ class ImageEditingWindowCoordinator final : public QObject {
     explicit ImageEditingWindowCoordinator(ImageEditingServices services,
                                            QObject* parent = nullptr);
     ~ImageEditingWindowCoordinator() override;
-    void presentFiles(const QStringList& paths);
+    void presentFiles(const QStringList& paths, bool skipUnreadable = false);
     void presentDroppedImage(ScreenshotClipboardContentSnapshot snapshot,
                              std::shared_ptr<ImageStitchingImportReservation> reservation);
     void presentSelectedFiles(std::shared_ptr<platform::SelectedFileBackend> backend,
                               platform::SelectedFileTarget target);
     void presentHistory(const storage::CaptureHistoryRecord& record);
     void presentSource(ScreenshotExportSource source);
+    bool presentDocument(ImageEditingSource source, std::function<void(bool)> completion);
     void presentPinnedRecord(const QString& id);
     void confirmShutdown(std::function<void(bool)> completion);
     // Owner-thread final admission only: commit current drafts without prompting.
@@ -96,6 +103,7 @@ class ImageEditingWindowCoordinator final : public QObject {
   private:
     ImageEditingWindow* createWindow();
     ImageEditingServices m_services;
+    ScreenshotExportQueue m_fileImports{ScreenshotExportCoordinator::shared(), nullptr, 1};
     QVector<QPointer<ImageEditingWindow>> m_windows;
     quint64 m_windowRevision = 0;
     bool m_handoffPreparing = false;

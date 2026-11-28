@@ -1,5 +1,4 @@
-#include "snow_shot/shortcuts/screenshotshortcutcontext.h"
-#include "snow_shot/shortcuts/pinnedshortcutcontext.h"
+#include "snow_shot/shortcuts/localshortcutcontext.h"
 #include "snow_shot/storage/configurationstore.h"
 #include "snow_shot/clouduploadconfiguration.h"
 #include "snow_shot/app/edition.h"
@@ -9,6 +8,7 @@
 #endif
 
 #include "snow_shot/storage/configurationschema.h"
+#include "snow_shot/storage/settingsadapters.h"
 #include "snow_shot/storage/storagelogging.h"
 #include "snow_shot/shortcuts/shortcutbinding.h"
 
@@ -21,6 +21,9 @@
 #include <QJsonParseError>
 #include <QMutexLocker>
 #include <QSaveFile>
+#include <QScopedValueRollback>
+#include <QPointer>
+#include <QThreadPool>
 #include <QSet>
 #include <QThread>
 
@@ -30,6 +33,7 @@
 namespace snow_shot::storage {
 namespace {
 const QString kSchemaVersionKey = QStringLiteral("storage/schema_version");
+const QString kCloudSyncStateKey = QStringLiteral("_cloud_settings_sync");
 #if SNOW_SHOT_ENABLE_API_CONFIGURATION
 const QString kCustomModelsKey = QStringLiteral("api_configuration/custom_models");
 #endif
@@ -86,9 +90,17 @@ QMap<QString, QJsonValue> overlayFromDocument(const QJsonObject& document) {
             overlay.insert(entry.key, raw);
         }
     }
-    for (const QString& legacyKey : {QStringLiteral("screenshot/auto_save_after_copy"),
-                                     QStringLiteral("interface/app_font_size_percentage"),
-                                     QStringLiteral("screenshot_selection/selection_target")}) {
+    for (const QString& legacyKey :
+         {QStringLiteral("system/annotation_mode_when_opening_for_editing"),
+          QStringLiteral("context_menu_shortcuts/edit_with_snow_shot"),
+          QStringLiteral("capture_history/enabled"),
+          QStringLiteral("screenshot/auto_save_after_copy"),
+          QStringLiteral("screenshot/auto_save_after_execution_actions"),
+          QStringLiteral("screenshot/copy_after_pinning_to_screen"),
+          QStringLiteral("screenshot/screenshot_sound_notification"),
+          QStringLiteral("interface/app_font_size_percentage"),
+          QStringLiteral("pin_to_screen_shortcuts/show_text_recognition_results"),
+          QStringLiteral("screenshot_selection/selection_target")}) {
         bool present = false;
         const QJsonValue raw = valueAtPath(document, legacyKey, &present);
         if (present) {
@@ -104,7 +116,7 @@ void reconcileLocalShortcutDefaults(MaterializedConfiguration& result,
     if (defaultedKeys.isEmpty())
         return;
 
-    QMap<QString, QList<std::pair<QString, shortcuts::ShortcutBinding>>> assignedByScope;
+    QList<std::pair<QString, shortcuts::ShortcutBinding>> assigned;
     QStringList defaultedLocalKeys;
     const auto bindingsForKey = [&result](const QString& key) {
         return shortcuts::shortcutBindingsFromJson(
@@ -120,34 +132,23 @@ void reconcileLocalShortcutDefaults(MaterializedConfiguration& result,
         if (defaultedKeys.contains(entry.key)) {
             defaultedLocalKeys.push_back(entry.key);
         } else {
-            auto& assigned = assignedByScope[entry.key.section(u'/', 0, 0)];
             for (const auto& binding : bindingsForKey(entry.key))
-                assigned.append({entry.key.section(u'/', 1), binding});
+                assigned.append({entry.key, binding});
         }
     }
     for (const QString& key : defaultedLocalKeys) {
-        auto& assigned = assignedByScope[key.section(u'/', 0, 0)];
         const auto defaults = bindingsForKey(key);
-        const auto actionsMayConflict = [&key](const QString& otherAction) {
-            const QString action = key.section(u'/', 1);
-            if (key.startsWith(QStringLiteral("screenshot_shortcuts/")))
-                return shortcuts::screenshotShortcutActionsMayConflict(action, otherAction);
-            if (key.startsWith(QStringLiteral("pin_to_screen_shortcuts/")))
-                return shortcuts::pinnedShortcutActionsMayConflict(action, otherAction);
-            return true;
-        };
         shortcuts::ShortcutBindingList retained;
         for (const auto& binding : defaults) {
-            if (std::any_of(assigned.cbegin(), assigned.cend(),
-                            [&binding, &actionsMayConflict](const auto& existing) {
-                                return actionsMayConflict(existing.first) &&
-                                       shortcuts::bindingsConflict(
-                                           existing.second, binding,
-                                           shortcuts::ShortcutPolicy::Application);
-                            }))
+            if (std::any_of(
+                    assigned.cbegin(), assigned.cend(), [&binding, &key](const auto& existing) {
+                        return shortcuts::localShortcutKeysMayConflict(key, existing.first) &&
+                               shortcuts::bindingsConflict(existing.second, binding,
+                                                           shortcuts::ShortcutPolicy::Application);
+                    }))
                 continue;
             retained.push_back(binding);
-            assigned.push_back({key.section(u'/', 1), binding});
+            assigned.push_back({key, binding});
         }
         if (retained.size() == defaults.size())
             continue;
@@ -160,6 +161,51 @@ void reconcileLocalShortcutDefaults(MaterializedConfiguration& result,
     }
 }
 
+#ifdef Q_OS_WIN
+void migrateLegacyMenuProfiles(QJsonObject& document, const QMap<QString, QJsonValue>& overlay,
+                               const QJsonValue& scope) {
+    auto journal = document.value(kCloudSyncStateKey).toObject();
+    if (journal.value(QStringLiteral("version")).toInt() != 1)
+        return;
+
+    // Scope and the single access key belonged to this installation before v12. Capture
+    // them while reading that file, before restoring another account can change them.
+    const auto scopeKey = QStringLiteral("system/context_menu_mode");
+    const auto annotationKey = QStringLiteral("system/annotation_mode_when_opening_for_editing");
+    const auto pinKey = QStringLiteral("context_menu_shortcuts/pin_to_screen");
+    const auto annotateKey = QStringLiteral("context_menu_shortcuts/pin_to_screen_and_annotate");
+    const auto access = ConfigurationSchema::normalize(
+        pinKey, overlay.value(QStringLiteral("context_menu_shortcuts/edit_with_snow_shot")));
+    const auto migrate = [&](QJsonObject values) {
+        if (!values.contains(scopeKey))
+            values.insert(scopeKey, scope);
+        if (!values.contains(annotationKey))
+            values.insert(annotationKey, true);
+        const auto& shortcut = values.value(annotationKey).toBool(true) ? annotateKey : pinKey;
+        if (access.valid && !values.contains(shortcut))
+            values.insert(shortcut, access.value);
+        return values;
+    };
+
+    const auto baseline = QStringLiteral("signed_out");
+    journal.insert(baseline, migrate(journal.value(baseline).toObject()));
+    const auto profilesKey = QStringLiteral("profiles");
+    auto profiles = journal.value(profilesKey).toObject();
+    for (auto it = profiles.begin(); it != profiles.end(); ++it) {
+        auto profile = it.value().toObject();
+        const auto valuesKey = QStringLiteral("values");
+        profile.insert(valuesKey, migrate(profile.value(valuesKey).toObject()));
+        if (!profile.value(QStringLiteral("joined")).toBool()) {
+            const auto seedKey = QStringLiteral("seed");
+            profile.insert(seedKey, migrate(profile.value(seedKey).toObject()));
+        }
+        it.value() = profile;
+    }
+    journal.insert(profilesKey, profiles);
+    document.insert(kCloudSyncStateKey, journal);
+}
+#endif
+
 MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValue>& overlay,
                                                    const QMap<QString, QJsonValue>& defaults,
                                                    QJsonObject document, int schemaVersion,
@@ -169,9 +215,30 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
     result.document = std::move(document);
     const bool mutateDocument = compatibility != ConfigurationCompatibility::FutureVersion;
     const bool replaceAll = policy == ConfigurationOverlayPolicy::ReplaceAll;
-    const QMap<QString, QJsonValue> currentOverlay =
-        mutateDocument ? ConfigurationSchema::migrateLegacyValues(overlay) : overlay;
+    QMap<QString, QJsonValue> currentOverlay =
+        mutateDocument ? ConfigurationSchema::migrateLegacyValues(
+                             overlay, schemaVersion,
+                             defaults.value(QStringLiteral("system/context_menu_mode")).toString())
+                       : overlay;
+    mouse::reconcile(currentOverlay);
     if (mutateDocument) {
+        for (const auto& [group, key] :
+             {std::pair{QStringLiteral("system"),
+                        QStringLiteral("annotation_mode_when_opening_for_editing")},
+              std::pair{QStringLiteral("context_menu_shortcuts"),
+                        QStringLiteral("edit_with_snow_shot")}}) {
+            auto fields = result.document.value(group).toObject();
+            if (!fields.take(key).isUndefined()) {
+                result.document.insert(group, fields);
+                result.dirty = !replaceAll;
+            }
+        }
+        auto history = result.document.value(QStringLiteral("capture_history")).toObject();
+        if (history.contains(QStringLiteral("enabled"))) {
+            history.remove(QStringLiteral("enabled"));
+            result.document.insert(QStringLiteral("capture_history"), history);
+            result.dirty = !replaceAll;
+        }
         QJsonObject interfaceValues = result.document.value(QStringLiteral("interface")).toObject();
         if (interfaceValues.contains(QStringLiteral("app_font_size_percentage"))) {
             interfaceValues.remove(QStringLiteral("app_font_size_percentage"));
@@ -179,9 +246,20 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
             result.dirty = !replaceAll;
         }
         QJsonObject screenshot = result.document.value(QStringLiteral("screenshot")).toObject();
-        if (screenshot.contains(QStringLiteral("auto_save_after_copy"))) {
-            screenshot.remove(QStringLiteral("auto_save_after_copy"));
-            result.document.insert(QStringLiteral("screenshot"), screenshot);
+        for (const auto& key : {QStringLiteral("auto_save_after_copy"),
+                                QStringLiteral("auto_save_after_execution_actions"),
+                                QStringLiteral("copy_after_pinning_to_screen"),
+                                QStringLiteral("screenshot_sound_notification")}) {
+            if (screenshot.contains(key)) {
+                screenshot.remove(key);
+                result.document.insert(QStringLiteral("screenshot"), screenshot);
+                result.dirty = !replaceAll;
+            }
+        }
+        auto pinnedShortcuts =
+            result.document.value(QStringLiteral("pin_to_screen_shortcuts")).toObject();
+        if (!pinnedShortcuts.take(QStringLiteral("show_text_recognition_results")).isUndefined()) {
+            result.document.insert(QStringLiteral("pin_to_screen_shortcuts"), pinnedShortcuts);
             result.dirty = !replaceAll;
         }
         QJsonObject screenshotSelection =
@@ -429,7 +507,28 @@ MaterializedConfiguration materializeConfiguration(const QMap<QString, QJsonValu
     }
 
     reconcileLocalShortcutDefaults(result, defaultedShortcutKeys, mutateDocument, replaceAll);
+    QSet<QString> assignedMenuKeys;
+    for (auto it = result.values.lowerBound(QStringLiteral("context_menu_shortcuts/"));
+         it != result.values.end() && it.key().startsWith(u"context_menu_shortcuts/"); ++it) {
+        const auto bindings = shortcuts::shortcutBindingsFromJson(it.value(), false);
+        if (bindings.isEmpty())
+            continue;
+        const auto& key = bindings.first().portableText;
+        if (assignedMenuKeys.contains(key)) {
+            it.value() = QJsonArray{};
+            if (mutateDocument) {
+                insertPath(&result.document, it.key(), it.value());
+                result.dirty = true;
+            }
+        }
+        assignedMenuKeys.insert(key);
+    }
 
+#ifdef Q_OS_WIN
+    if (!replaceAll && schemaVersion < 12)
+        migrateLegacyMenuProfiles(result.document, overlay,
+                                  result.values.value(QStringLiteral("system/context_menu_mode")));
+#endif
     int resolvedVersion = schemaVersion;
     const int currentVersion = ConfigurationSchema::currentVersion();
     if (mutateDocument && resolvedVersion < currentVersion) {
@@ -515,8 +614,20 @@ ConfigurationStore::ConfigurationStore(QString configurationFile, bool readAvail
       m_defaults(configurationDefaults(defaults)) {
     m_flushTimer.setSingleShot(true);
     m_flushTimer.setInterval(std::max(0, debounceMilliseconds));
-    connect(&m_flushTimer, &QTimer::timeout, this, [this]() { static_cast<void>(flushNow()); });
+    connect(&m_flushTimer, &QTimer::timeout, this, [this] {
+        if (!isDirty())
+            return;
+        if (m_flushWorker)
+            flushAsync(this, {});
+        else
+            static_cast<void>(flushNow());
+    });
     load();
+}
+
+ConfigurationStore::~ConfigurationStore() {
+    if (m_flushWorker)
+        m_flushWorker->waitForDone();
 }
 
 int ConfigurationStore::currentSchemaVersion() {
@@ -537,6 +648,17 @@ QMap<QString, QJsonValue> ConfigurationStore::snapshot() const {
     return m_values;
 }
 
+mouse::Bindings ConfigurationStore::mouseBindings() const {
+    QMutexLocker locker(&m_mutex);
+    return m_mouseBindings;
+}
+
+std::optional<mouse::Action> ConfigurationStore::mouseAction(mouse::Category category,
+                                                             mouse::Binding binding) const {
+    QMutexLocker locker(&m_mutex);
+    return m_mouseBindings.match(category, binding);
+}
+
 quint64 ConfigurationStore::revision() const {
     QMutexLocker locker(&m_mutex);
     return m_revision;
@@ -553,12 +675,61 @@ bool ConfigurationStore::mutateIfRevision(quint64 expectedRevision,
 
 bool ConfigurationStore::isDirty() const {
     QMutexLocker locker(&m_mutex);
-    return m_dirty;
+    return m_dirty || m_journalSnapshot == JournalSnapshot::Scheduled;
+}
+
+void ConfigurationStore::afterPendingChanges(const std::function<void()>& transition) {
+    Q_ASSERT(QThread::currentThread() == thread());
+    QMutexLocker mutationLock(&m_mutationMutex);
+    {
+        QScopedValueRollback delivering(m_deliveringChanges, true);
+        while (!m_pendingChanges.isEmpty())
+            m_pendingChanges.takeFirst()();
+    }
+    if (transition)
+        transition();
 }
 
 bool ConfigurationStore::isWritable() const {
     QMutexLocker locker(&m_mutex);
     return m_writeAvailable && m_compatibility != ConfigurationCompatibility::FutureVersion;
+}
+
+void ConfigurationStore::setCloudSyncJournal(CloudSyncJournal journal,
+                                             std::function<QJsonObject()> snapshot) {
+    QMutexLocker lock(&m_mutationMutex);
+    Q_ASSERT(bool(journal) == bool(snapshot));
+    materializeCloudSyncJournal();
+    m_cloudSyncJournal = std::move(journal);
+    m_snapshotCloudSyncJournal = std::move(snapshot);
+}
+
+bool ConfigurationStore::deferCloudSyncStatus() {
+    QMutexLocker mutationLock(&m_mutationMutex);
+    QMutexLocker lock(&m_mutex);
+    if (!m_snapshotCloudSyncJournal || m_suspended || !m_writeAvailable ||
+        m_compatibility == ConfigurationCompatibility::FutureVersion)
+        return false;
+    if (m_journalSnapshot == JournalSnapshot::Current)
+        m_journalSnapshot = JournalSnapshot::OnNextFlush;
+    return true;
+}
+
+// The mutation lock keeps the snapshot and the matching preference values in one transaction.
+void ConfigurationStore::materializeCloudSyncJournal() {
+    if (m_journalSnapshot == JournalSnapshot::Current)
+        return;
+    const auto state = m_snapshotCloudSyncJournal();
+    QMutexLocker lock(&m_mutex);
+    m_journalSnapshot = JournalSnapshot::Current;
+    if (m_document.value(kCloudSyncStateKey).toObject() != state) {
+        if (state.isEmpty())
+            m_document.remove(kCloudSyncStateKey);
+        else
+            m_document.insert(kCloudSyncStateKey, state);
+        ++m_documentRevision;
+        m_dirty = true;
+    }
 }
 
 QString ConfigurationStore::lastError() const {
@@ -571,13 +742,36 @@ ConfigurationCompatibility ConfigurationStore::compatibility() const {
     return m_compatibility;
 }
 
-bool ConfigurationStore::setValue(const QString& key, const QJsonValue& value) {
-    return setValues({{key, value}});
+bool ConfigurationStore::setValue(const QString& key, const QJsonValue& value,
+                                  ConfigurationWriteOrigin origin) {
+    return setValues({{key, value}}, origin);
 }
 
-bool ConfigurationStore::setValues(const QMap<QString, QJsonValue>& values) {
+bool ConfigurationStore::setValues(const QMap<QString, QJsonValue>& values,
+                                   ConfigurationWriteOrigin origin) {
+    return setValuesImpl(values, origin, nullptr);
+}
+
+QJsonObject ConfigurationStore::cloudSyncState() const {
+    QMutexLocker mutationLock(&m_mutationMutex);
+    if (m_journalSnapshot != JournalSnapshot::Current)
+        return m_snapshotCloudSyncJournal();
+    QMutexLocker locker(&m_mutex);
+    return m_document.value(kCloudSyncStateKey).toObject();
+}
+
+bool ConfigurationStore::setCloudSyncState(const QJsonObject& state,
+                                           const QMap<QString, QJsonValue>& remoteValues) {
+    return setValuesImpl(remoteValues, ConfigurationWriteOrigin::Remote, &state);
+}
+
+bool ConfigurationStore::setValuesImpl(const QMap<QString, QJsonValue>& values,
+                                       ConfigurationWriteOrigin origin,
+                                       const QJsonObject* cloudSyncState) {
     QMutexLocker mutationLock(&m_mutationMutex);
     QMap<QString, QJsonValue> normalizedValues;
+    const bool mouseChanged = std::any_of(values.keyBegin(), values.keyEnd(),
+                                          [](const QString& key) { return mouse::isKey(key); });
     for (auto it = values.cbegin(); it != values.cend(); ++it) {
         if (!ConfigurationSchema::contains(it.key())) {
             rejectMutation(it.key(), QStringLiteral("The configuration key is not supported"));
@@ -592,7 +786,22 @@ bool ConfigurationStore::setValues(const QMap<QString, QJsonValue>& values) {
         normalizedValues.insert(it.key(), normalized.value);
     }
 
+    QMap<QString, QJsonValue> menuShortcuts;
+    for (auto it = normalizedValues.lowerBound(QStringLiteral("context_menu_shortcuts/"));
+         it != normalizedValues.end() && it.key().startsWith(u"context_menu_shortcuts/"); ++it)
+        menuShortcuts.insert(it.key(), it.value());
+    if (!menuShortcuts.isEmpty() && !localShortcutChangesValid(snapshot(), menuShortcuts)) {
+        rejectMutation(menuShortcuts.firstKey(),
+                       tr("This context menu shortcut is already assigned"));
+        return false;
+    }
+    if (mouseChanged && !mouse::changesValid(snapshot(), normalizedValues)) {
+        rejectMutation(normalizedValues.firstKey(), tr("The mouse operation is already assigned."));
+        return false;
+    }
     QVector<QPair<QString, QJsonValue>> changed;
+    QMap<QString, QJsonValue> previous;
+    bool documentChanged = false;
     {
         QMutexLocker locker(&m_mutex);
         if (m_suspended || !m_writeAvailable ||
@@ -603,39 +812,79 @@ bool ConfigurationStore::setValues(const QMap<QString, QJsonValue>& values) {
             return false;
         }
         for (auto it = normalizedValues.cbegin(); it != normalizedValues.cend(); ++it) {
-            if (m_values.value(it.key()) == it.value()) {
+            const auto before = m_values.value(it.key());
+            previous.insert(it.key(), before);
+            if (before == it.value()) {
                 continue;
             }
             m_values.insert(it.key(), it.value());
             insertPath(&m_document, it.key(), it.value());
             changed.push_back({it.key(), it.value()});
         }
-        if (changed.isEmpty()) {
-            return true;
+        const bool stateChanged =
+            cloudSyncState && m_document.value(kCloudSyncStateKey).toObject() != *cloudSyncState;
+        if (cloudSyncState)
+            m_journalSnapshot = JournalSnapshot::Current;
+        if (stateChanged) {
+            if (cloudSyncState->isEmpty())
+                m_document.remove(kCloudSyncStateKey);
+            else
+                m_document.insert(kCloudSyncStateKey, *cloudSyncState);
         }
-        m_dirty = true;
-        ++m_revision;
+        if (mouseChanged)
+            m_mouseBindings = mouse::Bindings(m_values);
+        documentChanged = stateChanged || !changed.isEmpty();
+        if (documentChanged) {
+            m_dirty = true;
+            ++m_documentRevision;
+        }
+        if (!changed.isEmpty())
+            ++m_revision;
     }
 
-    announceChanges(std::move(changed));
+    announceChanges(origin, std::move(previous), std::move(normalizedValues), std::move(changed),
+                    documentChanged);
     return true;
 }
 
-void ConfigurationStore::announceChanges(QVector<QPair<QString, QJsonValue>> changed) {
-    const auto notify = [this, changed = std::move(changed)]() {
+void ConfigurationStore::announceChanges(ConfigurationWriteOrigin origin,
+                                         QMap<QString, QJsonValue> previous,
+                                         QMap<QString, QJsonValue> values,
+                                         QVector<QPair<QString, QJsonValue>> changed,
+                                         bool documentChanged) {
+    if (!documentChanged && values.isEmpty())
+        return;
+    if (m_cloudSyncJournal && !values.isEmpty() && origin != ConfigurationWriteOrigin::Remote &&
+        origin != ConfigurationWriteOrigin::Internal &&
+        m_cloudSyncJournal(origin, previous, values)) {
+        QMutexLocker lock(&m_mutex);
+        m_journalSnapshot = JournalSnapshot::Scheduled;
+        documentChanged = true;
+    }
+    auto notify = [this, origin, previous = std::move(previous), values = std::move(values),
+                   changed = std::move(changed), documentChanged]() {
+        if (!values.isEmpty())
+            emit valuesCommitted(origin, previous, values);
         for (const auto& item : changed) {
             emit valueChanged(item.first, item.second);
         }
-        scheduleFlush();
+        if (documentChanged)
+            scheduleFlush();
     };
-    if (QThread::currentThread() == thread()) {
+    const bool onStoreThread = QThread::currentThread() == thread();
+    if (onStoreThread && m_pendingChanges.isEmpty() && !m_deliveringChanges) {
         notify();
-    } else {
-        QMetaObject::invokeMethod(this, notify, Qt::QueuedConnection);
+        return;
     }
+    m_pendingChanges.append(std::move(notify));
+    if (onStoreThread && !m_deliveringChanges)
+        afterPendingChanges({});
+    else if (!onStoreThread && m_pendingChanges.size() == 1)
+        QMetaObject::invokeMethod(this, [this] { afterPendingChanges({}); }, Qt::QueuedConnection);
 }
 
-bool ConfigurationStore::applySnapshot(const QMap<QString, QJsonValue>& values, int schemaVersion) {
+bool ConfigurationStore::applySnapshot(const QMap<QString, QJsonValue>& values, int schemaVersion,
+                                       const QSet<QString>* explicitlyImported) {
     QMutexLocker mutationLock(&m_mutationMutex);
     const int currentVersion = ConfigurationSchema::currentVersion();
     if (schemaVersion <= 0) {
@@ -654,6 +903,20 @@ bool ConfigurationStore::applySnapshot(const QMap<QString, QJsonValue>& values, 
             : QString();
 
     QVector<QPair<QString, QJsonValue>> changed;
+    QMap<QString, QJsonValue> importedValues;
+    if (explicitlyImported) {
+        for (const auto& key : *explicitlyImported) {
+            const auto supplied = values.constFind(key);
+            if (supplied == values.cend())
+                continue;
+            const auto normalized = ConfigurationSchema::normalize(key, supplied.value());
+            if (normalized.valid && normalized.value == materialized.values.value(key))
+                importedValues.insert(key, normalized.value);
+        }
+    }
+    QMap<QString, QJsonValue> previousImported;
+    QMap<QString, QJsonValue> internalValues;
+    QMap<QString, QJsonValue> previousInternal;
     {
         QMutexLocker locker(&m_mutex);
         if (m_suspended || !m_writeAvailable ||
@@ -663,32 +926,44 @@ bool ConfigurationStore::applySnapshot(const QMap<QString, QJsonValue>& values, 
             return false;
         }
         for (auto it = materialized.values.cbegin(); it != materialized.values.cend(); ++it) {
-            if (m_values.value(it.key()) == it.value()) {
+            const auto before = m_values.value(it.key());
+            if (importedValues.contains(it.key()))
+                previousImported.insert(it.key(), before);
+            if (before == it.value()) {
                 continue;
+            }
+            if (!importedValues.contains(it.key())) {
+                previousInternal.insert(it.key(), before);
+                internalValues.insert(it.key(), it.value());
             }
             changed.push_back({it.key(), it.value()});
         }
-        if (changed.isEmpty()) {
-            locker.unlock();
-            if (!customModelsError.isEmpty()) {
-                qCWarning(storageLog) << customModelsError;
-                setLastError(customModelsError);
-            }
-            return true;
+        if (!changed.isEmpty()) {
+            if (m_document.contains(kCloudSyncStateKey))
+                materialized.document.insert(kCloudSyncStateKey,
+                                             m_document.value(kCloudSyncStateKey));
+            m_values = std::move(materialized.values);
+            m_mouseBindings = mouse::Bindings(m_values);
+            m_document = std::move(materialized.document);
+            m_dirty = true;
+            ++m_revision;
+            ++m_documentRevision;
         }
-        m_values = std::move(materialized.values);
-        m_document = std::move(materialized.document);
-        m_dirty = true;
-        ++m_revision;
     }
 
     if (!customModelsError.isEmpty()) {
         qCWarning(storageLog) << customModelsError;
         setLastError(customModelsError);
-    } else {
+    } else if (!changed.isEmpty()) {
         setLastError({});
     }
-    announceChanges(std::move(changed));
+    announceChanges(ConfigurationWriteOrigin::Import, std::move(previousImported),
+                    std::move(importedValues), {}, false);
+    const bool documentChanged = !changed.isEmpty();
+    announceChanges(explicitlyImported ? ConfigurationWriteOrigin::ImportDefaults
+                                       : ConfigurationWriteOrigin::Internal,
+                    std::move(previousInternal), std::move(internalValues), std::move(changed),
+                    documentChanged);
     return true;
 }
 
@@ -696,8 +971,10 @@ StorageResult ConfigurationStore::flushNow() {
     if (QThread::currentThread() == thread()) {
         m_flushTimer.stop();
     }
-    QMutexLocker ioLocker(&m_ioMutex);
     for (;;) {
+        QMutexLocker mutationLock(&m_mutationMutex);
+        QMutexLocker ioLocker(&m_ioMutex);
+        materializeCloudSyncJournal();
         QJsonObject document;
         quint64 revision = 0;
         {
@@ -713,8 +990,11 @@ StorageResult ConfigurationStore::flushNow() {
                 return StorageResult::failure(error);
             }
             document = m_document;
-            revision = m_revision;
+            revision = m_documentRevision;
         }
+        // Explicit operations can journal their intent while holding the mutation lock.
+        // Save the captured document without holding that lock during disk I/O.
+        mutationLock.unlock();
 
         const QByteArray bytes = serializedDocument(document);
         QSaveFile file(m_configurationFile);
@@ -729,8 +1009,10 @@ StorageResult ConfigurationStore::flushNow() {
 
         {
             QMutexLocker locker(&m_mutex);
-            if (m_revision == revision) {
+            if (m_documentRevision == revision) {
                 m_dirty = false;
+                if (m_journalSnapshot == JournalSnapshot::Scheduled)
+                    continue;
                 locker.unlock();
                 setLastError({});
                 return StorageResult::ok();
@@ -739,12 +1021,44 @@ StorageResult ConfigurationStore::flushNow() {
     }
 }
 
+void ConfigurationStore::flushAsync(QObject* receiver,
+                                    std::function<void(StorageResult)> completion) {
+    Q_ASSERT(QThread::currentThread() == thread());
+    m_flushTimer.stop();
+    if (!m_flushWorker) {
+        m_flushWorker = std::make_unique<QThreadPool>();
+        m_flushWorker->setMaxThreadCount(1);
+    }
+    m_flushWorker->start([this, receiver = QPointer(receiver), completion = std::move(completion)] {
+        const auto result = flushNow();
+        if (completion) {
+            QMetaObject::invokeMethod(
+                this,
+                [receiver, completion, result] {
+                    if (receiver)
+                        completion(result);
+                },
+                Qt::QueuedConnection);
+        }
+    });
+}
+
 void ConfigurationStore::suspendWrites(bool suspended) {
-    QMutexLocker mutationLock(&m_mutationMutex);
-    QMutexLocker lock(&m_mutex);
-    m_suspended = suspended;
-    if (suspended)
-        m_flushTimer.stop();
+    {
+        QMutexLocker mutationLock(&m_mutationMutex);
+        // Account changes can still arrive during a storage move. Freeze the accepted edits
+        // before suspension so a checkpoint cannot capture a later, rejected transition.
+        if (suspended)
+            materializeCloudSyncJournal();
+        QMutexLocker lock(&m_mutex);
+        if (m_suspended == suspended)
+            return;
+        m_suspended = suspended;
+        if (suspended)
+            m_flushTimer.stop();
+    }
+    if (!suspended)
+        emit writesResumed();
 }
 
 void ConfigurationStore::relocate(const QString& directory) {
@@ -820,6 +1134,7 @@ void ConfigurationStore::load() {
     {
         QMutexLocker locker(&m_mutex);
         m_values = std::move(loaded);
+        m_mouseBindings = mouse::Bindings(m_values);
         m_document = std::move(document);
         m_compatibility = compatibility;
         m_dirty = dirty && compatibility != ConfigurationCompatibility::FutureVersion;

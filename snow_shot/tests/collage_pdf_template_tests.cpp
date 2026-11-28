@@ -2,6 +2,7 @@
 #include "snow_shot/presentation/components/collagepdftemplatewidget.h"
 #include "snow_shot/presentation/components/collageeditorwidget.h"
 #include "snow_shot/presentation/components/collagepdfpagegrid.h"
+#include "snow_shot/presentation/canvasstatusreadout.h"
 #include "snow_shot/presentation/components/imagedropsurface.h"
 #include "snow_shot/presentation/components/overlaycontrolbutton.h"
 #include "snow_shot/presentation/screenshotexportcoordinator.h"
@@ -25,7 +26,9 @@
 #include <QPalette>
 #include <QScrollBar>
 #include <QThread>
+#include <QTimer>
 #include <QTranslator>
+#include <QWheelEvent>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -617,6 +620,31 @@ void centeredResizeMoveResetAndCancellation() {
     saveFixture(widget, "centered-fit-after-reset.png");
 }
 
+void templateZoomReadoutFollowsViewport() {
+    ImageStitchingDocument document;
+    configure(document);
+    document.append(image({400, 200}, Qt::red), QStringLiteral("first"));
+    ImageStitchingPdfTemplateCanvas canvas(&document);
+    show(canvas);
+    auto* hint = canvas.findChild<CanvasStatusReadout*>(QStringLiteral("collagePdfTemplateZoom"));
+    require(hint && hint->isHidden(),
+            "initial PDF template fitting keeps the scale readout hidden");
+    const QPointF center = canvas.rect().center();
+    QWheelEvent event(center, canvas.mapToGlobal(center), {}, QPoint(0, 120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&canvas, &event);
+    require(hint->isVisible() && hint->text() == QStringLiteral("Scale: 115%") && hint->x() == 8 &&
+                canvas.height() - hint->geometry().bottom() - 1 == 8 &&
+                hint->dismissalTimer()->isActive(),
+            "the PDF template displays a transient scale relative to the fitted page");
+    button(canvas, "collagePdfTemplateFitToCanvas")->click();
+    require(hint->isVisible() && hint->text() == QStringLiteral("Scale: 100%"),
+            "the PDF template fit action displays its restored zoom");
+    canvas.hide();
+    require(hint->isHidden() && !hint->dismissalTimer()->isActive(),
+            "leaving the PDF template dismisses the zoom readout");
+}
+
 void automaticContainmentAcrossTemplatesAndLayoutChanges() {
     ImageStitchingDocument document;
     configure(document);
@@ -706,7 +734,8 @@ void clippingBlankCellsAndDetails() {
     document.select(0);
     pump();
     const auto clipped = canvas->grab().toImage().pixelColor(sample);
-    require(clipped == QColor(Qt::white), "unselected overflow must be strictly clipped");
+    require(clipped == QColor(Qt::white),
+            "unselected overflow is clipped while some of the image remains in its cell");
     document.select(first);
     waitUntil([&] { return widget.property("detailBytes").toLongLong() > 0; });
     require(widget.property("detailBytes").toLongLong() <= qint64{32} * 1024 * 1024,
@@ -734,6 +763,37 @@ void clippingBlankCellsAndDetails() {
     const auto blankGhost = canvas->grab().toImage().pixelColor(blankCenter.toPoint());
     require(blankGhost.green() > blankGhost.red() + 20 && blankGhost.red() > 100,
             "selected overflow must remain translucent over an unused cell's whitespace");
+}
+
+void reselectTemplateImageOutsideItsCell() {
+    ImageStitchingDocument document;
+    configure(document);
+    const auto id = document.append(image({320, 160}, Qt::red), QStringLiteral("First"));
+    ImageStitchingPdfTemplateCanvas canvas(&document);
+    show(canvas);
+
+    const auto initial = canvas.imageViewportRect(id);
+    const auto cell = canvas.cellViewportRect(id);
+    const auto page = canvas.pageViewportRect();
+    const QPointF outside(initial.center().x(), 2 * page.center().y() - cell.center().y());
+    drag(&canvas, initial.center(), outside);
+    require(document.selectedId() == id && !canvas.imageViewportRect(id).intersects(cell),
+            "the image can be placed entirely outside its template cell");
+
+    press(&canvas, initial.center());
+    release(&canvas, initial.center());
+    require(document.selectedId() == 0, "clicking the empty cell deselects the displaced image");
+    const auto render = canvas.grab();
+    const auto ghost = render.toImage().pixelColor((outside * render.devicePixelRatio()).toPoint());
+    require(ghost.red() == 255 && std::abs(ghost.green() - 191) <= 2,
+            "a fully clipped template image remains visible after deselection");
+
+    press(&canvas, outside);
+    release(&canvas, outside);
+    require(document.selectedId() == id, "clicking the displaced template image selects it");
+    drag(&canvas, outside, initial.center());
+    require((canvas.imageViewportRect(id).center() - initial.center()).manhattanLength() < .01,
+            "the displaced template image can be dragged back into its cell");
 }
 
 void longThinImagesPrepareVisibleSourceDetail() {
@@ -976,8 +1036,10 @@ int main(int argc, char** argv) {
         paginationThumbnailsAndSwaps();
         thumbnailReplacementAndDeletion();
         centeredResizeMoveResetAndCancellation();
+        templateZoomReadoutFollowsViewport();
         automaticContainmentAcrossTemplatesAndLayoutChanges();
         clippingBlankCellsAndDetails();
+        reselectTemplateImageOutsideItsCell();
         longThinImagesPrepareVisibleSourceDetail();
         detailedAlphaDoesNotBlendThePreviewTwice();
         actionsLanguageAndVisualFixtures();

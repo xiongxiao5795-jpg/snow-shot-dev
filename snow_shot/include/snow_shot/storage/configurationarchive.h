@@ -5,6 +5,7 @@
 
 #include <QJsonValue>
 #include <QMap>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -15,6 +16,7 @@ struct ConfigurationArchiveReadResult {
     int schemaVersion = 0;
     QString error;
     QStringList redactedCredentialIds;
+    QSet<QString> explicitlyImported;
     // Restores local save directories absent from the archive. Explicit values in
     // older archives take precedence over the receiving configuration.
     void preserveOmittedDirectories(const QMap<QString, QJsonValue>& current);
@@ -41,7 +43,9 @@ class ConfigurationArchive final {
 
     // Reads and validates an archive.  Unknown or invalid keys are dropped;
     // on success `values` holds only keys the current schema accepts.
-    [[nodiscard]] static ConfigurationArchiveReadResult read(const QString& archivePath);
+    [[nodiscard]] static ConfigurationArchiveReadResult
+    read(const QString& archivePath,
+         const QString& defaultContextMenuScope = QStringLiteral("image_files"));
 };
 
 } // namespace snow_shot::storage

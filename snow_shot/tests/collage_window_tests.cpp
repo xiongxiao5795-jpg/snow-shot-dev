@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include "saturated_export_queue.h"
 #include "snow_shot/presentation/collagewindow.h"
 #include "snow_shot/presentation/collagewindowcoordinator.h"
 #include "snow_shot/presentation/collagesettingsstore.h"
@@ -129,7 +130,8 @@ AdMessageHandle* statusMessage(ImageStitchingWindow& window) {
     auto* service = AdMessageService::instance(window.editor()->window());
     require(service != nullptr, "collage message service belongs to its window");
     for (auto* handle : service->findChildren<AdMessageHandle*>()) {
-        if (handle->key() == QStringLiteral("collageStatus") && handle->isOpen())
+        if (handle->isOpen() && (handle->key() == QStringLiteral("collageStatus") ||
+                                 handle->key() == QStringLiteral("collageExportResult")))
             return handle;
     }
     return nullptr;
@@ -241,6 +243,73 @@ void toolbarDropsAppendFilesAndInlineImage() {
                 items[1].image.pixelColor(0, 0) == QColor(Qt::green) &&
                 items[2].image.pixelColor(0, 0) == QColor(Qt::blue),
             "the existing stitching workspace appends each drop in order");
+}
+
+void unreadableShellImportsRetireWithoutBuildingUi() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "isolate unreadable shell paths");
+    const auto missing = directory.filePath(QStringLiteral("missing.png"));
+    ImageStitchingWindowCoordinator coordinator;
+    for (int i = 0; i < 2; ++i) {
+        coordinator.presentFiles({missing}, true);
+        const QPointer<ImageStitchingWindow> pending(coordinator.window());
+        require(pending && pending->loading() && !pending->isOpen() && !pending->editor() &&
+                    !pending->modal(),
+                "an unreadable shell batch starts without allocating the modal or editor");
+        waitUntil([&] { return !pending && !coordinator.window(); },
+                  "an all-unreadable shell batch releases its hidden session");
+    }
+
+    SaturatedExportQueue occupied(coordinator);
+    coordinator.presentFiles({missing}, true);
+    const QPointer<ImageStitchingWindow> pending(coordinator.window());
+    require(pending && pending->loading() && !pending->findChild<AdModal*>(),
+            "a queued shell batch has no editor to close");
+    coordinator.shutdown();
+    require(!coordinator.window(), "shutdown immediately clears hidden session ownership");
+    flushEvents();
+    require(!pending, "shutdown deletes the hidden session while export workers are occupied");
+}
+
+void explorerBatchesWaitForExport() {
+    QTemporaryDir directory;
+    const auto file = directory.filePath(QStringLiteral("image.png"));
+    const auto missing = directory.filePath(QStringLiteral("missing.png"));
+    require(image({8, 6}, Qt::red).save(file), "save Explorer selection fixture");
+    Ports ports;
+    ImageStitchingWindowCoordinator coordinator(nullptr, ports.services());
+    SaturatedExportQueue occupied(coordinator);
+    coordinator.presentFiles({missing}, true);
+    auto* window = coordinator.window();
+    coordinator.presentFiles({file}, true);
+    require(window && coordinator.window() == window && !window->findChild<AdModal*>(),
+            "a readable batch can join a pending unreadable batch before any UI is built");
+    occupied.release();
+    waitUntil([&] { return !window->loading(); }, "first Explorer batch finishes");
+    require(window->modal()->isOpen() && window->document()->items().size() == 1,
+            "the stitching window opens on the first readable image");
+    auto* frame = window->editor()->window();
+    frame->showMinimized();
+    coordinator.presentFiles({missing}, true);
+    waitUntil([&] { return !window->loading(); }, "unreadable selection finishes");
+    require(frame->isMinimized(), "unreadable Explorer selections leave the window minimized");
+    window->copy();
+    waitUntil([&] { return !ports.copies.isEmpty(); }, "hold a stitching export");
+    coordinator.presentFiles({file, file}, true);
+    ports.copies.last().complete(true, {});
+    waitUntil([&] { return !window->loading(); }, "queued selection finishes after export");
+    require(coordinator.window() == window && window->modal()->isOpen() &&
+                window->document()->items().size() == 3,
+            "a second Explorer selection appends in the same window after successful export");
+    require(!frame->isMinimized(), "the first accepted image restores the existing window");
+    window->save();
+    waitUntil([&] { return !ports.saves.isEmpty(); }, "hold a stitching save");
+    coordinator.presentFiles({file}, true);
+    ports.saves.last().complete(false, QStringLiteral("disk full"));
+    waitUntil([&] { return !window->loading(); }, "selection finishes after failed export");
+    require(window->document()->items().size() == 4 &&
+                messageError(*window) == QStringLiteral("disk full"),
+            "deferred imports preserve the failed export report");
 }
 
 void selectedFilesOpenAndAppendInOrder() {
@@ -898,7 +967,7 @@ void independentWindowsAndClosePolicy() {
                 firstSurface->findChild<QToolButton*>(QStringLiteral("ad-modal-maximize")),
             "collage windows expose native window-management capabilities and an icon");
     mainWindow.hide();
-    require(first.modal()->isOpen() && second.modal()->isOpen() && closeCaptureInputBlockers(),
+    require(first.modal()->isOpen() && second.modal()->isOpen() && prepareCaptureInput(),
             "main-window hiding and capture modal cleanup preserve independent collages");
     require(QApplication::activeModalWidget() == nullptr,
             "collages do not block the main application or screenshot overlays");
@@ -980,10 +1049,15 @@ void outputDescriptionsInFooter() {
                     total->width() >= total->sizeHint().width(),
                 "footer shows unclipped size then count on the left, aligned with its actions");
         const auto theme = adqt::theme::ThemeManager::instance().resolveTheme(window.editor());
-        require(dimensions->font().pixelSize() == total->font().pixelSize() &&
-                    dimensions->palette().color(QPalette::WindowText) == theme.colorTextSecondary &&
-                    total->palette().color(QPalette::WindowText) == theme.colorTextSecondary,
-                "both footer descriptions share the secondary text styling");
+        for (const auto* label : {dimensions, total}) {
+            const int lineHeight = label->fontMetrics().height();
+            require(label->font().pixelSize() == qMax(10, qRound(theme.fontSizeSM)) &&
+                        label->font().weight() == QFont::Normal &&
+                        label->minimumHeight() == lineHeight &&
+                        label->maximumHeight() == lineHeight &&
+                        label->palette().color(QPalette::WindowText) == theme.colorTextSecondary,
+                    "collage footer uses the save dialog's small secondary text style");
+        }
     };
     auto& themeManager = styles::ThemeManager::instance();
     const auto previousMode = themeManager.themeMode();
@@ -993,6 +1067,12 @@ void outputDescriptionsInFooter() {
         checkLayout();
     }
     themeManager.setThemeMode(previousMode);
+    auto& controlThemes = adqt::theme::ThemeManager::instance();
+    adqt::theme::ThemeOverride overrideValue;
+    overrideValue.fontSize = 19.0;
+    controlThemes.setScopeOverride(window.editor(), overrideValue);
+    checkLayout();
+    controlThemes.clearScopeOverride(window.editor());
     auto& languages = LanguageManager::instance();
     for (const auto* locale : {"zh_CN", "zh_TW"}) {
         require(languages.setLanguage(QString::fromLatin1(locale)),
@@ -1945,8 +2025,9 @@ void localizedLayoutControlsUpdateAndRememberSettings() {
         require(direction && sizing && dimensions && grid && rows && columns,
                 "window exposes its layout controls, custom grid and output size");
         require(!grid->isVisible() && !rows->isVisible() && !columns->isVisible() &&
-                    direction->option(2).value == QStringLiteral("custom") &&
-                    direction->optionLabel(2) ==
+                    direction->option(2).value == QStringLiteral("free") &&
+                    direction->option(3).value == QStringLiteral("custom") &&
+                    direction->optionLabel(3) ==
                         QCoreApplication::translate("ImageStitchingEditorWidget", "Custom"),
                 "Custom has a stable translated option and hides its grid in vertical layout");
         const auto select = [&](adqt::widgets::AdSegmented* control, int index) {
@@ -1995,6 +2076,12 @@ void localizedLayoutControlsUpdateAndRememberSettings() {
         require(reopened.document()->settings() == remembered,
                 "later layout edits must preserve the independent reopened window");
         select(direction, 2);
+        verify(ImageStitchingDirection::Free, ImageStitchingSizing::Uniform, {150, 60});
+        require(ImageStitchingSettingsStore(storage::ApplicationStorage::instance().configuration())
+                        .read()
+                        .direction == ImageStitchingDirection::Free,
+                "Free direction is persisted");
+        select(direction, 3);
         verify(ImageStitchingDirection::Custom, ImageStitchingSizing::Uniform, {240, 60});
         require(grid->isVisible() && rows->isVisible() && columns->isVisible() &&
                     rows->value() == 1 && columns->value() == 2 && rows->minimum() == 1 &&
@@ -2042,7 +2129,7 @@ void localizedLayoutControlsUpdateAndRememberSettings() {
                 "removing images must retain previously expanded grid dimensions");
         select(direction, 0);
         require(!grid->isVisible(), "switching away from Custom must hide its form field");
-        select(direction, 2);
+        select(direction, 3);
         require(rows->value() == 2 && columns->value() == 3 &&
                     window.document()->settings().customGridInitialized,
                 "returning to Custom must retain the initialized grid");
@@ -2262,10 +2349,12 @@ void exportCompletionFailureCancellationAndHistoryIsolation(const QString& direc
     const QString automaticDirectory = QDir(directory).filePath(QStringLiteral("automatic"));
     require(QDir().mkpath(automaticDirectory), "create isolated automatic-save destination");
     const storage::ScreenshotSettings settings;
-    require(settings.setAutoSaveAfterExecutionActions({QStringLiteral("copy_screenshot")}) &&
+    require(settings.setExportTasks(snow_shot::storage::ExportTrigger::ScreenshotCopy,
+                                    snow_shot::storage::ExportTask::AutoSave) &&
                 settings.setCopyImageFileToClipboard(false) &&
                 settings.setImageSaveDirectory(automaticDirectory) &&
-                settings.autoSaveAfterExecution(QStringLiteral("copy_screenshot")),
+                settings.exportTasks(storage::ExportTrigger::ScreenshotCopy)
+                    .testFlag(storage::ExportTask::AutoSave),
             "enable the existing screenshot auto-save setting in isolated real configuration");
     Ports ports;
     auto services = ports.services();
@@ -2333,7 +2422,8 @@ void exportCompletionFailureCancellationAndHistoryIsolation(const QString& direc
                 repository.recordsSnapshot().records == before.records &&
                 QDir(automaticDirectory).entryList(QDir::Files).isEmpty() &&
                 ports.saves.size() == 2 &&
-                settings.autoSaveAfterExecution(QStringLiteral("copy_screenshot")),
+                settings.exportTasks(storage::ExportTrigger::ScreenshotCopy)
+                    .testFlag(storage::ExportTask::AutoSave),
             "collage exports never add history or trigger screenshot automatic saving");
 }
 
@@ -2366,6 +2456,83 @@ void nativeClipboardLimitsRejectBeforePreparation() {
             "known native clipboard limits fail before expensive preparation and preserve saving");
 }
 #endif
+
+void freeLayoutExportPixels(const QString& directory) {
+    resetSettings();
+    Ports ports;
+    ImageStitchingWindow window(nullptr, ports.services());
+    window.present();
+    auto* document = window.document();
+    auto settings = document->settings();
+    settings.direction = ImageStitchingDirection::Free;
+    settings.background = Qt::transparent;
+    settings.border = 1;
+    document->setSettings(settings);
+    document->append(image({4, 4}, QColor(255, 0, 0, 128)), QStringLiteral("red"));
+    const auto upper =
+        document->append(image({4, 4}, QColor(0, 0, 255, 128)), QStringLiteral("blue"));
+    require(document->setFreePlacement(upper, {{0, -1}, {}}),
+            "position the upper image left of the lower one");
+    QImage expected(8, 7, QImage::Format_RGBA8888);
+    expected.fill(Qt::transparent);
+    for (int y = 0; y < expected.height(); ++y) {
+        for (int x = 0; x < expected.width(); ++x) {
+            const bool red = QRect(3, 2, 4, 4).contains(x, y);
+            const bool blue = QRect(1, 1, 4, 4).contains(x, y);
+            if (blue && red)
+                expected.setPixelColor(x, y, QColor(85, 0, 170, 192));
+            else if (blue)
+                expected.setPixelColor(x, y, QColor(0, 0, 255, 128));
+            else if (red)
+                expected.setPixelColor(x, y, QColor(255, 0, 0, 128));
+        }
+    }
+    const auto verify = [&](const QImage& actual) {
+        require(actual.size() == expected.size(),
+                "export uses the tight Free canvas with its border");
+        for (int y = 0; y < expected.height(); ++y)
+            for (int x = 0; x < expected.width(); ++x)
+                require(actual.pixelColor(x, y) == expected.pixelColor(x, y),
+                        "export has exact layered pixels and no preview adornments");
+    };
+    button(window, "collageImageEditing")->click();
+    require(ports.edits.size() == 1, "editor received a snapshot");
+    ScreenshotExportArtifact edit(ports.edits.takeFirst());
+    bool edited = false;
+    require(edit.requestImage(&window,
+                              [&](ScreenshotExportImageResult result) {
+                                  verify(result.image);
+                                  edited = true;
+                              }),
+            "request editor pixels");
+    waitUntil([&] { return edited; }, "editor snapshot rendered");
+    window.copy();
+    waitUntil([&] { return !ports.copies.isEmpty(); }, "clipboard snapshot prepared");
+    bool copied = false;
+    require(ports.copies.front().artifact->requestClipboard(
+                &window,
+                [&](ScreenshotExportClipboardResult result) {
+                    verify(QImage::fromData(result.payload.pngBytes(), "PNG"));
+                    copied = true;
+                }),
+            "request the encoded clipboard payload");
+    waitUntil([&] { return copied; }, "clipboard PNG prepared");
+    ports.copies.front().complete(false, {});
+    window.save();
+    waitUntil([&] { return !ports.saves.isEmpty(); }, "save snapshot prepared");
+    const auto path = QDir(directory).filePath(QStringLiteral("free-collage.png"));
+    bool saved = false;
+    require(ports.saves.front().artifact->requestSaveToPath(
+                &window, path, ScreenshotImageFileFormat::Png, {},
+                [&](const ScreenshotExportTaskResult& result) {
+                    require(result.succeeded(), "Free PNG was written");
+                    saved = true;
+                }),
+            "request PNG encoding");
+    waitUntil([&] { return saved; }, "PNG save complete");
+    verify(QImage(path));
+    ports.saves.front().complete(true, {});
+}
 
 void completedFileSaveUsesExistingWriter(const QString& directory) {
     resetSettings();
@@ -2696,6 +2863,9 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     if (arguments.contains(QStringLiteral("--selected-files-only"))) {
+        timed("Unopened Explorer imports release their session",
+              unreadableShellImportsRetireWithoutBuildingUi);
+        timed("Explorer selection during export", explorerBatchesWaitForExport);
         timed("Toolbar drop imports", toolbarDropsAppendFilesAndInlineImage);
         timed("Selected-file ordered imports", selectedFilesOpenAndAppendInOrder);
         timed("Empty selections and query failures", emptySelectionsAndFailuresKeepWindowOpen);
@@ -2834,6 +3004,7 @@ int main(int argc, char* argv[]) {
 #ifdef Q_OS_WIN
     timed("Native clipboard limits", nativeClipboardLimitsRejectBeforePreparation);
 #endif
+    timed("Free layout exports", [&] { freeLayoutExportPixels(directory.path()); });
     timed("Completed file save", [&] { completedFileSaveUsesExistingWriter(directory.path()); });
     timed("Save result lifetime",
           [&] { saveResultDefersImageStitchingCompletion(directory.path()); });

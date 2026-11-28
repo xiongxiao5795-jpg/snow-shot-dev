@@ -1,9 +1,11 @@
+#include "export_dialog_test_support.h"
 #include "physical_key_test_support.h"
 #include "snow_shot/presentation/screenshotsaveasfiledialog.h"
 #include "snow_shot/presentation/screenshotsavepreviewcanvas.h"
 #include "snow_shot/presentation/canvasstatusreadout.h"
 #include "snow_shot/presentation/screenshotexportartifact.h"
 #include "snow_shot/presentation/components/aspectratiolockbutton.h"
+#include "snow_shot/presentation/components/canvasactiontoolbar.h"
 #include "snow_shot/presentation/components/pathinput.h"
 #include "snow_shot/presentation/components/settingspagewidget.h"
 #include "snow_shot/presentation/globalshortcutmanager.h"
@@ -21,6 +23,7 @@
 #include "widgets/input_line_edit.h"
 #include "widgets/input_number.h"
 #include "widgets/modal.h"
+#include "widgets/detail/window_modality.h"
 #include "widgets/select.h"
 #include "widgets/segmented.h"
 #include "widgets/slider.h"
@@ -182,7 +185,8 @@ void reusablePathInputsAndSettings() {
                 "file settings must use FileAddOutlined");
     }
 }
-void snapshot(AdModal* modal, const QString& name) {
+} // namespace
+void captureExportTestWindow(adqt::widgets::AdModal* modal, const QString& name) {
     const QString directory = qEnvironmentVariable("SNOW_EXPORT_TEST_SCREENSHOT_DIR");
     if (directory.isEmpty())
         return;
@@ -192,6 +196,7 @@ void snapshot(AdModal* modal, const QString& name) {
                 QDir(directory).filePath(name + QStringLiteral(".png"))),
             "dialog snapshot could not be written");
 }
+namespace {
 AdModal* openDialog(QWidget& owner, const QImage& image,
                     ScreenshotSaveAsFileDialog::Saved saved = {},
                     ScreenshotSaveAsFileDialog::Finished finished = {},
@@ -267,8 +272,10 @@ void imageStitchingWindowModalityAndRetry(QWidget& owner) {
             return modal->contentWidget()->property("previewGeneration").toULongLong() > 0;
         });
         require(modal->windowModality() == Qt::WindowModal && modal->ownerWindow() == &owner &&
-                    modal->contentWidget()->window()->windowModality() == Qt::WindowModal &&
-                    neighbor.isVisible() && neighbor.isEnabled(),
+                    adqt::widgets::detail::blockingModalWindow(owner.windowHandle()) &&
+                    !adqt::widgets::detail::blockingModalWindow(
+                        modal->contentWidget()->window()->windowHandle()) &&
+                    !adqt::widgets::detail::blockingModalWindow(neighbor.windowHandle()),
                 "collage save is scoped to its owner and leaves other windows usable");
         modal->reject();
         processUntil([&] { return completions == 1; });
@@ -415,68 +422,45 @@ void persistence(const QTemporaryDir& temp) {
     snow_shot::presentation::GlobalShortcutManager shortcuts;
     settings::BuiltInSettingsBackend backend(shortcuts);
     constexpr auto pinCopyBinding =
-        settings::SettingsSwitchBinding::ScreenshotCopyAfterPinningToScreen;
-    const QString pinCopyKey = QStringLiteral("screenshot/copy_after_pinning_to_screen");
-    const auto* pinCopyField = settings::builtInSettingsRegistry().fieldForSwitch(pinCopyBinding);
-    require(pinCopyField && pinCopyField->pageId == QStringLiteral("screenshots") &&
-                pinCopyField->sectionId == QStringLiteral("screenshot-settings") &&
-                pinCopyField->configurationKey == pinCopyKey &&
-                pinCopyField->reset == settings::SettingsSectionReset::ScreenshotSettings,
-            "copy after pinning belongs to screenshot interaction settings");
-    require(!storage::ConfigurationSchema::defaultValue(pinCopyKey).toBool() &&
-                !adapter.copyAfterPinningToScreen() && !backend.switchValue(pinCopyBinding) &&
-                backend.switchEnabled(pinCopyBinding),
-            "copy after pinning defaults off and is available");
-    require(!storage::ConfigurationSchema::normalize(pinCopyKey, QStringLiteral("true")).valid,
-            "copy after pinning rejects non-boolean configuration values");
-    settings::SettingsRuntimeSession pinCopySession(settings::builtInSettingsRegistry(), backend);
-    require(pinCopySession.applySwitchValue(pinCopyBinding, true) &&
-                adapter.copyAfterPinningToScreen() && backend.switchValue(pinCopyBinding) &&
+        settings::exportTaskBinding(storage::ExportTrigger::ScreenshotPin);
+    const auto* field = settings::builtInSettingsRegistry().fieldForMultiSelect(pinCopyBinding);
+    require(field && field->sectionId == QStringLiteral("export-tasks") &&
+                field->reset == settings::SettingsSectionReset::ExportTasks,
+            "pin follow-ups belong to export tasks");
+    settings::SettingsRuntimeSession session(settings::builtInSettingsRegistry(), backend);
+    const QVariantList selected{QStringLiteral("copy_to_clipboard.normal"),
+                                QStringLiteral("auto_save"), QStringLiteral("auto_save.scrolling")};
+    const QVariantList stored{selected[1], selected[0], selected[2]};
+    require(session.applyMultiSelectValue(pinCopyBinding, selected) &&
+                backend.multiSelectValue(pinCopyBinding) == stored &&
+                !session.state(field->id).busy &&
+                adapter.exportTasks(storage::ExportTrigger::ScreenshotPin,
+                                    storage::ScreenshotType::Normal) ==
+                    (storage::ExportTask::CopyImage | storage::ExportTask::AutoSave) &&
+                adapter.exportTasks(storage::ExportTrigger::ScreenshotPin,
+                                    storage::ScreenshotType::Scrolling) ==
+                    storage::ExportTask::AutoSave &&
                 storage::ApplicationStorage::instance().configuration().flushNow().success,
-            "copy after pinning round-trips through the runtime settings session");
-    {
-        storage::ConfigurationStore reloaded(
-            QDir(storage::ApplicationStorage::instance().configurationDirectory())
-                .filePath(QStringLiteral("config.json")),
-            true, true, 60000);
-        require(reloaded.value(pinCopyKey).toBool(), "copy after pinning survives a reload");
-    }
-    require(backend.selectValue(settings::SettingsSelectBinding::ScreenshotSaveAsFileDialog) ==
-                QStringLiteral("snow_shot"),
-            "settings backend failed to read dialog selection");
-    require(backend.resetSection(settings::SettingsSectionReset::ScreenshotOutput) &&
-                adapter.saveAsFileDialog() == QStringLiteral("system"),
-            "screenshot output reset must restore the system dialog");
-    require(backend.applySelectValue(settings::SettingsSelectBinding::ScreenshotSaveAsFileDialog,
-                                     QStringLiteral("snow_shot")),
-            "settings backend failed to write dialog selection");
-    constexpr auto autoSaveBinding =
-        settings::SettingsMultiSelectBinding::ScreenshotAutoSaveAfterExecution;
-    const QStringList executionActions{
-        QStringLiteral("copy_screenshot"),         QStringLiteral("copy_scrolling_screenshot"),
-        QStringLiteral("copy_pinned_image"),       QStringLiteral("capture_focused_window"),
-        QStringLiteral("capture_current_monitor"), QStringLiteral("pin_to_screen")};
-    for (const QString& action : executionActions) {
-        require(backend.applyMultiSelectValue(autoSaveBinding, {action}) &&
-                    adapter.autoSaveAfterExecutionActions() == QStringList{action} &&
-                    backend.multiSelectValue(autoSaveBinding) == QVariantList{action},
-                "each automatic save scenario must round-trip through the settings backend");
-    }
-    const QStringList autoSaveActions{QStringLiteral("copy_screenshot"),
-                                      QStringLiteral("pin_to_screen")};
-    require(adapter.setAutoSaveAfterExecutionActions(autoSaveActions) &&
-                adapter.setCopyImageFileToClipboard(true) &&
-                backend.resetSection(settings::SettingsSectionReset::ScreenshotSettings) &&
-                !adapter.copyAfterPinningToScreen() && !backend.switchValue(pinCopyBinding) &&
-                adapter.autoSaveAfterExecutionActions() == autoSaveActions &&
-                adapter.copyImageFileToClipboard() &&
-                adapter.saveAsFileDialog() == QStringLiteral("snow_shot"),
-            "function reset must preserve screenshot output settings");
-    require(backend.resetSection(settings::SettingsSectionReset::ScreenshotOutput) &&
-                adapter.autoSaveAfterExecutionActions().isEmpty() &&
-                !adapter.copyImageFileToClipboard() &&
-                adapter.saveAsFileDialog() == QStringLiteral("system"),
-            "output reset must restore all moved screenshot settings");
+            "multiple pin tasks round-trip through the session and adapter");
+    require(backend.resetSection(settings::SettingsSectionReset::ScreenshotSettings) &&
+                backend.resetSection(settings::SettingsSectionReset::ScreenshotOutput) &&
+                adapter.saveAsFileDialog() == QStringLiteral("system") &&
+                backend.multiSelectValue(pinCopyBinding) == stored,
+            "screenshot interaction and image export resets preserve export tasks");
+    const QVariantList scopedOnly{QStringLiteral("auto_save.scrolling")};
+    require(session.applyMultiSelectValue(pinCopyBinding, scopedOnly) &&
+                backend.multiSelectValue(pinCopyBinding) == scopedOnly &&
+                !adapter.exportTasks(storage::ExportTrigger::ScreenshotPin,
+                                     storage::ScreenshotType::Normal) &&
+                adapter.exportTasks(storage::ExportTrigger::ScreenshotPin,
+                                    storage::ScreenshotType::Scrolling) ==
+                    storage::ExportTask::AutoSave,
+            "clearing the all-types selection preserves the scrolling selection");
+    require(adapter.setCopyImageFileToClipboard(true) &&
+                backend.resetSection(settings::SettingsSectionReset::ExportTasks) &&
+                backend.multiSelectValue(pinCopyBinding).isEmpty() &&
+                adapter.copyImageFileToClipboard(),
+            "the task reset leaves image export preferences intact");
 
     const QString pathKey = QStringLiteral("screenshot/save_path_shortcuts");
     const auto malformed =
@@ -639,7 +623,7 @@ void pdfDialogAndSettings(QWidget& owner, const QTemporaryDir& temp) {
     processUntil([&] { return child<QLabel>(content, "savePreviewStatus")->isHidden(); });
     require(canvas->outputImage().size() == QSize(320, 200),
             "stale preview results must not replace the final PDF image");
-    snapshot(modal, QStringLiteral("export-pdf-landscape"));
+    captureExportTestWindow(modal, QStringLiteral("export-pdf-landscape"));
     modal->acceptButton()->click();
     processUntil([&] { return !savedPath.isEmpty(); });
     require(savedPath.endsWith(QStringLiteral("pdf-preview-final.pdf")),
@@ -994,7 +978,7 @@ void canvasInteraction() {
     require(screenshot.pixelColor(qRound(200 * dpr), qRound(170 * dpr)) == QColor(Qt::red) &&
                 screenshot.pixelColor(qRound(400 * dpr), qRound(170 * dpr)) == QColor(Qt::green),
             "split canvas must render original on left and output on right");
-    require(pixel(295, 20) == QColor(Qt::white) && pixel(296, 20) != QColor(Qt::white) &&
+    require(pixel(295, 25) == pixel(294, 25) && pixel(296, 25) != pixel(295, 25) &&
                 pixel(303, 20) != pixel(304, 20),
             "comparison divider must use the viewer-style eight-pixel dark track");
     require(pixel(280, 200) == QColor(Qt::black) && pixel(292, 200).red() > 220 &&
@@ -1270,12 +1254,69 @@ void canvasWheelZoom() {
     require(canvas.zoom() == beforeHorizontal, "horizontal mouse scrolling must not zoom");
 }
 
+void canvasCheckerboardFollowsTheme() {
+    using namespace adqt::theme;
+    auto& manager = ThemeManager::instance();
+    const auto saved = manager.config();
+    const auto restoreTheme = qScopeGuard([&] { manager.setConfig(saved); });
+    ScreenshotSavePreviewCanvas canvas;
+    canvas.show();
+    for (const auto scheme : {ThemeScheme::Light, ThemeScheme::Dark}) {
+        manager.setColorScheme(scheme);
+        flush();
+        const auto theme = manager.resolveTheme(&canvas);
+        QImage swatch(1, 1, QImage::Format_ARGB32_Premultiplied);
+        swatch.fill(theme.colorBgContainer);
+        {
+            QPainter painter(&swatch);
+            painter.fillRect(swatch.rect(), theme.colorFillSecondary);
+        }
+        const auto base = theme.colorBgContainer;
+        const auto alternate = swatch.pixelColor(0, 0);
+        const auto frame = canvas.grab().toImage();
+        const auto pixel = [&](int x, int y) {
+            return frame.pixelColor(qRound(x * frame.devicePixelRatio()),
+                                    qRound(y * frame.devicePixelRatio()));
+        };
+        require(base != alternate && pixel(5, 5) == alternate && pixel(15, 15) == alternate &&
+                    pixel(15, 5) == base && pixel(5, 15) == base && pixel(25, 5) == alternate,
+                "export uses the collage theme colors, ten-pixel cells, and checker origin");
+    }
+}
+
 void canvasZoomHint() {
+    using snow_shot::presentation::components::CanvasActionToolbar;
     ScreenshotSavePreviewCanvas canvas;
     canvas.resize(600, 400);
-    canvas.setSource(fixture(), QSize(160, 100));
     canvas.show();
     flush();
+    auto* fit = child<AdButton>(&canvas, "savePreviewFit");
+    auto* actual = child<AdButton>(&canvas, "savePreviewActualSize");
+    auto* toolbar = static_cast<CanvasActionToolbar*>(fit->parentWidget());
+    require(toolbar->objectName() == QStringLiteral("savePreviewCanvasToolbar") &&
+                toolbar->parentWidget() == &canvas && actual->parentWidget() == toolbar &&
+                toolbar->isVisible() && !fit->isEnabled() && !actual->isEnabled(),
+            "the empty export preview has a floating toolbar with disabled zoom actions");
+    const auto requireToolbar = [&] {
+        require(canvas.rect().contains(toolbar->geometry()) &&
+                    std::abs(QRectF(toolbar->geometry()).center().x() -
+                             QRectF(canvas.rect()).center().x()) <= .5 &&
+                    canvas.height() - toolbar->geometry().bottom() - 1 == 16,
+                "the export toolbar shares the image editor bottom inset and centering");
+        for (auto* action : {fit, actual}) {
+            require(action->text().isEmpty() && action->iconRef().isValid() &&
+                        action->size() == QSize(26, 26) && action->isEnabled() &&
+                        action->focusPolicy() == Qt::StrongFocus &&
+                        action->accessibleName() == action->toolTip() &&
+                        canvas.childAt(action->mapTo(&canvas, action->rect().center())) == action,
+                    "both export zoom actions must be accessible above the comparison canvas");
+        }
+    };
+    canvas.setSource(fixture(), QSize(160, 100));
+    requireToolbar();
+    require(fit->toolTip() == QStringLiteral("Fit image to window") &&
+                actual->toolTip() == QStringLiteral("View at actual size (100%)"),
+            "export zoom actions must use the image editor tooltips");
     auto* hint = child<CanvasStatusReadout>(&canvas, "savePreviewZoom");
     auto* busy = child<CanvasStatusReadout>(&canvas, "savePreviewStatus");
     require(child<QLabel>(&canvas, "savePreviewZoom") == hint &&
@@ -1352,6 +1393,23 @@ void canvasZoomHint() {
                 hint->accessibleName() == hint->toolTip(),
             "transient export zoom must retain decimal precision and complete accessible text");
     expire();
+    requireToolbar();
+    canvas.setSplitRatio(0.37);
+    actual->click();
+    require(canvas.zoom() == 1 && canvas.splitRatio() == 0.37 && hint->isVisible() &&
+                hint->text() == QStringLiteral("Scale: 100%"),
+            "the actual-size action zooms the source to 100% and preserves the divider");
+    fit->click();
+    require(qAbs(canvas.zoom() - 0.05) < 0.000001 && canvas.pan().isNull() &&
+                canvas.splitRatio() == 0.37 && hint->isVisible(),
+            "the fit action recenters the preview without moving the divider");
+    expire();
+    canvas.setSource(fixture(), QSize(560, 360));
+    require(canvas.zoom() == 1, "the source fits initially without scaling");
+    actual->click();
+    canvas.resize(400, 300);
+    require(canvas.zoom() == 1 && hint->isHidden(),
+            "explicit actual size survives shrinking a window that already showed 100%");
     class HintTranslator final : public QTranslator {
       public:
         bool isEmpty() const override {
@@ -1359,7 +1417,8 @@ void canvasZoomHint() {
         }
         QString translate(const char* context, const char* source, const char*,
                           int) const override {
-            if (QByteArray(context) == "CanvasStatusReadout")
+            if (QByteArray(context) == "CanvasStatusReadout" ||
+                QByteArray(context) == "ScreenshotSavePreviewCanvas")
                 return QStringLiteral("Translated ") + QString::fromUtf8(source);
             return {};
         }
@@ -1368,11 +1427,15 @@ void canvasZoomHint() {
     QEvent languageChange(QEvent::LanguageChange);
     QApplication::sendEvent(hint, &languageChange);
     QApplication::sendEvent(busy, &languageChange);
+    QApplication::sendEvent(&canvas, &languageChange);
     require(hint->isHidden() && !timer->isActive() &&
                 hint->text().startsWith(QStringLiteral("Translated Scale: ")) &&
                 busy->isVisible() &&
                 busy->toolTip() == QStringLiteral("Translated Rendering preview"),
             "shared language updates must preserve hidden zoom and persistent rendering status");
+    require(fit->toolTip() == QStringLiteral("Translated Fit image to window") &&
+                actual->toolTip() == QStringLiteral("Translated View at actual size (100%)"),
+            "the floating toolbar must retranslate its actions on language changes");
     QApplication::removeTranslator(&translator);
     canvas.setBusy(false);
     require(busy->isHidden() && !busy->dismissalTimer()->isActive(),
@@ -1435,13 +1498,13 @@ void unchangedPreviewEdits(QWidget& owner) {
     auto* format = child<AdSelect>(content, "saveFormatSelect");
     processUntil([&] { return content->property("previewGeneration").toULongLong() > 0; });
     const quint64 generation = content->property("previewGeneration").toULongLong();
-    snapshot(modal, QStringLiteral("export-preview-idle"));
+    captureExportTestWindow(modal, QStringLiteral("export-preview-idle"));
     auto* canvas = child<ScreenshotSavePreviewCanvas>(content, "savePreviewCanvas");
     const QPoint cursor = canvas->rect().center();
     QWheelEvent wheel(cursor, canvas->mapToGlobal(cursor), {}, QPoint(0, 120), Qt::NoButton,
                       Qt::NoModifier, Qt::NoScrollPhase, false);
     QApplication::sendEvent(canvas, &wheel);
-    snapshot(modal, QStringLiteral("export-preview-zoom"));
+    captureExportTestWindow(modal, QStringLiteral("export-preview-zoom"));
     lock->click();
     lock->click();
     require(busy->isHidden(), "relocking unchanged dimensions must not schedule preview rendering");
@@ -1723,8 +1786,8 @@ void windowNameDefaultsAndShortcut(QWidget& owner, const QTemporaryDir& temp) {
     require(settings.setImageSaveDirectory(pattern) && settings.setLastManualSaveDirectory({}) &&
                 settings.setManualSaveFilenameFormat(QStringLiteral("{WN}_{YYYY}")),
             "window dialog templates must persist");
-    const storage::ScreenshotWindowNames names{QStringLiteral("Browser"),
-                                               QStringLiteral("Title {AN}/文档")};
+    const storage::ScreenshotExportContext names{QStringLiteral("Browser"),
+                                                 QStringLiteral("Title {AN}/文档")};
     const QDateTime timestamp =
         QDateTime::fromString(QStringLiteral("2026-10-16T12:34:56"), Qt::ISODate);
     const auto state = ScreenshotSaveDialogState::initial(QSize(160, 100), timestamp, names);
@@ -1733,7 +1796,7 @@ void windowNameDefaultsAndShortcut(QWidget& owner, const QTemporaryDir& temp) {
             "custom dialog defaults must expand both variables once");
     auto artifact =
         std::make_shared<ScreenshotExportArtifact>(ScreenshotExportSource::fromImage(fixture()));
-    artifact->setWindowNames(names);
+    artifact->setExportContext(names);
     require(ScreenshotSaveAsFileDialog::open(&owner, &owner, artifact),
             "window-name dialog must open");
     auto* modal = owner.findChild<AdModal*>(QStringLiteral("screenshotSaveAsFileModal"));
@@ -1796,7 +1859,7 @@ void dottedWindowNameDefaultsAndSaves(QWidget& owner, const QTemporaryDir& temp)
             "set a filename template whose title ends in an image extension");
     auto artifact =
         std::make_shared<ScreenshotExportArtifact>(ScreenshotExportSource::fromImage(fixture()));
-    artifact->setWindowNames({{}, QStringLiteral("image.png")});
+    artifact->setExportContext({{}, QStringLiteral("image.png")});
     QString savedPath;
     require(ScreenshotSaveAsFileDialog::open(&owner, &owner, artifact,
                                              [&](const QString& path) { savedPath = path; }),
@@ -1827,7 +1890,7 @@ void shortcutsAndCancellation(QWidget& owner, const QTemporaryDir& temp) {
     require(child<AdLineEdit>(content, "saveDirectoryInput")->text() ==
                 storage::ScreenshotSettings().imageSaveDirectory(),
             "App directory must select the configured directory");
-    snapshot(modal, QStringLiteral("export-before-shortcuts"));
+    captureExportTestWindow(modal, QStringLiteral("export-before-shortcuts"));
     require(child<AdButton>(content, "savePathAddButton")->isEnabled(),
             "Add save path must be enabled after loading");
     child<AdButton>(content, "savePathAddButton")->click();
@@ -1836,7 +1899,7 @@ void shortcutsAndCancellation(QWidget& owner, const QTemporaryDir& temp) {
     editor->acceptButton()->click();
     require(editor->isOpen() && storage::ScreenshotSettings().savePathShortcuts().isEmpty(),
             "empty shortcut must be rejected");
-    snapshot(modal, QStringLiteral("shortcut-validation"));
+    captureExportTestWindow(modal, QStringLiteral("shortcut-validation"));
     child<AdLineEdit>(editor->contentWidget(), "savePathNameInput")
         ->setText(QStringLiteral("Projects"));
     child<AdLineEdit>(editor->contentWidget(), "savePathValueInput")->setText(temp.path());
@@ -1974,16 +2037,16 @@ void previewAndSave(QWidget& owner, const QTemporaryDir& temp) {
             "quality must preserve the complete 0-100 range and endpoint labels");
     require(content->findChild<QWidget*>(QStringLiteral("saveLosslessBadge")) == nullptr,
             "quality must not retain the separate lossless badge");
-    snapshot(modal, QStringLiteral("export-light"));
+    captureExportTestWindow(modal, QStringLiteral("export-light"));
     if (!qEnvironmentVariable("SNOW_EXPORT_TEST_SCREENSHOT_DIR").isEmpty()) {
         adqt::theme::ThemeManager::instance().setColorScheme(adqt::theme::ThemeScheme::Dark);
-        snapshot(modal, QStringLiteral("export-dark"));
+        captureExportTestWindow(modal, QStringLiteral("export-dark"));
         adqt::theme::ThemeManager::instance().setColorScheme(adqt::theme::ThemeScheme::Light);
         modal->setPreferredWidth(680);
         content->setFixedHeight(360);
         static_cast<void>(modal->takeContentWidget());
         modal->setContentWidget(content);
-        snapshot(modal, QStringLiteral("export-compact"));
+        captureExportTestWindow(modal, QStringLiteral("export-compact"));
         modal->setPreferredWidth(1080);
         content->setFixedHeight(540);
         static_cast<void>(modal->takeContentWidget());
@@ -2015,7 +2078,7 @@ void previewAndSave(QWidget& owner, const QTemporaryDir& temp) {
                     quality->marks().value(quality->maximum()).label == QStringLiteral("Lossless"),
                 "lossless formats must show both controls and label quality 100 as Lossless");
         if (key == QStringLiteral("webp"))
-            snapshot(modal, QStringLiteral("export-lossless"));
+            captureExportTestWindow(modal, QStringLiteral("export-lossless"));
         quality->setValue(99);
     }
     format->setCurrentValue(QStringLiteral("jpeg"));
@@ -2188,6 +2251,12 @@ void sizeUnits(QWidget& owner, const QTemporaryDir& temp) {
     const QRect acceptGeometry = globalGeometry(accept);
     const QRegularExpression descriptionPattern(
         QStringLiteral("^160x100\\(100%\\) · \\d+(?:B|KB|MB|GB)$"));
+    const auto theme = adqt::theme::ThemeManager::instance().resolveTheme(content);
+    require(description->font().pixelSize() == qMax(10, qRound(theme.fontSizeSM)) &&
+                description->font().weight() == QFont::Normal &&
+                description->height() == description->fontMetrics().height() &&
+                description->palette().color(QPalette::WindowText) == theme.colorTextSecondary,
+            "save dialog footer uses small single-line secondary text");
     require(descriptionPattern.match(description->text()).hasMatch() &&
                 std::abs(descriptionGeometry.center().y() - acceptGeometry.center().y()) <= 1 &&
                 descriptionGeometry.right() < rejectGeometry.left() &&
@@ -2320,7 +2389,7 @@ void sizeUnits(QWidget& owner, const QTemporaryDir& temp) {
     QApplication::removeTranslator(&translator);
     flush();
     processUntil([&] { return child<QLabel>(content, "savePreviewStatus")->isHidden(); });
-    snapshot(modal, QStringLiteral("export-percentage"));
+    captureExportTestWindow(modal, QStringLiteral("export-percentage"));
     const auto translationDir = qEnvironmentVariable("SNOW_EXPORT_TEST_TRANSLATION_DIR");
     if (!translationDir.isEmpty()) {
         for (const auto& language : {QStringLiteral("zh_CN"), QStringLiteral("zh_TW")}) {
@@ -2338,7 +2407,7 @@ void sizeUnits(QWidget& owner, const QTemporaryDir& temp) {
                         dimensions->rect().contains(unit->geometry()) &&
                         unit->width() >= unit->minimumSizeHint().width(),
                     "translated size header must fit without clipping");
-            snapshot(modal, QStringLiteral("export-percentage-%1").arg(language));
+            captureExportTestWindow(modal, QStringLiteral("export-percentage-%1").arg(language));
             QApplication::removeTranslator(&catalog);
             flush();
         }
@@ -2385,7 +2454,7 @@ void shortcutWrappingAndLanguageChange(QWidget& owner, const QTemporaryDir& temp
     }
     for (auto* input : content->findChildren<AdLineEdit*>())
         require(input->width() > 100, "form inputs must retain usable width");
-    snapshot(modal, QStringLiteral("export-wrapped-shortcuts"));
+    captureExportTestWindow(modal, QStringLiteral("export-wrapped-shortcuts"));
     child<AdButton>(content, "savePathAddButton")->click();
     auto* editor = child<AdModal>(content, "savePathEditorModal");
     editor->acceptButton()->click();
@@ -2450,7 +2519,7 @@ void duplicateFilenameWarning(QWidget& owner, const QTemporaryDir& temp) {
     require(item->errorMessages().isEmpty() && modal->acceptButton()->isEnabled() &&
                 !content->findChild<AdModal*>(QStringLiteral("saveOverwriteModal")),
             "duplicate filename warning must not block Save or open a confirmation while typing");
-    snapshot(modal, QStringLiteral("duplicate-filename-warning"));
+    captureExportTestWindow(modal, QStringLiteral("duplicate-filename-warning"));
     ExportTestTranslator translator;
     require(QApplication::installTranslator(&translator), "test translator unavailable");
     flush();
@@ -2909,7 +2978,21 @@ void boundedPreviewAndNativeRegions() {
             require(samePixels(pipeline::readRegion(regional, region, cancellation, &error),
                                image.copy(region)),
                     "native region readers must bypass full-width row callbacks");
-            const QImage wide = fixture(QSize(3072, 1040));
+            QImage stripes(3072, 105, QImage::Format_RGBA8888);
+            for (int y = 0; y < stripes.height(); ++y) {
+                // Each blue row straddles two preview rows with one-third coverage each.
+                const QColor color = y % 3 == 1 ? QColor(0, 0, 255) : QColor(255, 0, 0, 0);
+                for (int x = 0; x < stripes.width(); ++x)
+                    stripes.setPixelColor(x, y, color);
+            }
+            const auto stripedSource = pipeline::prepare(
+                snow_shot::image_codec::srgbRowSource(stripes), cancellation, &error);
+            QImage expectedPreview(2048, 70, QImage::Format_RGBA8888);
+            expectedPreview.fill(QColor(0, 0, 255, 85));
+            require(samePixels(stripedSource.preview, expectedPreview),
+                    "fit previews must blend fractional row coverage in premultiplied space");
+            QImage wide = fixture(QSize(3072, 1040));
+            wide.setPixelColor(0, 0, QColor(84, 132, 168, 128));
             const auto wideRows = snow_shot::image_codec::srgbRowSource(wide);
             const QRect wideRegion(0, 8, 3072, 1024);
             const QImage wideDetail =
@@ -2942,10 +3025,13 @@ void boundedPreviewAndNativeRegions() {
                 return std::static_pointer_cast<void>(std::make_shared<int>(1));
             };
             const auto scalingSource = pipeline::prepare(scalingRows, cancellation, &error);
-            require(!scalingSource.preview.isNull() && scalingAdmissions->size() == 2 &&
-                        scalingAdmissions->back().second >=
+            require(!scalingSource.preview.isNull() && scalingReads->load() == 0 &&
+                        scalingSource.alphaContent == snow::image::AlphaContent::non_opaque &&
+                        scalingAdmissions->size() == 2 &&
+                        scalingAdmissions->front().first == scalingSource.preview.sizeInBytes() &&
+                        scalingAdmissions->back().second <
                             wide.sizeInBytes() + scalingSource.preview.sizeInBytes(),
-                    "backing preview scaling must admit Qt's complete premultiplied source copy");
+                    "A backed fit preview must detect alpha and scale in bounded scratch space");
             const QSize scalingSize(4097, 1024);
             auto scalingPixels =
                 pipeline::preparePixels(scalingSource, scalingSize, cancellation, &error);
@@ -3609,6 +3695,8 @@ void rejectedCalculationRetries(QWidget& owner, const QTemporaryDir& temp) {
 
 void runScreenshotSaveResultTests();
 
+void runImageCompressionTests();
+
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QApplication::setQuitOnLastWindowClosed(false);
@@ -3640,6 +3728,7 @@ int main(int argc, char* argv[]) {
         }
         if (app.arguments().contains(QStringLiteral("--canvas"))) {
             canvasInteraction();
+            canvasCheckerboardFollowsTheme();
             canvasNativeDetailPreservesTransparency();
             canvasZoomHint();
             canvasOriginalSizeBaseline();
@@ -3689,6 +3778,12 @@ int main(int argc, char* argv[]) {
             ScreenshotExportCoordinator::shared().shutdown();
             storage::ApplicationStorage::instance().shutdown();
             std::cout << "PDF dialog tests passed\n";
+            return 0;
+        }
+        if (app.arguments().contains(QStringLiteral("--image-compression"))) {
+            runImageCompressionTests();
+            ScreenshotExportCoordinator::shared().shutdown();
+            storage::ApplicationStorage::instance().shutdown();
             return 0;
         }
         if (app.arguments().contains(QStringLiteral("--remember-format"))) {

@@ -1,5 +1,6 @@
 #include "snow_shot/presentation/pinnedgeometry.h"
 #include "screenshotpinnedhidetotopcontroller.h"
+#include "screenshotpinnedopacity.h"
 #include "screenshotpinnedpointerpresence.h"
 #include "pinnedwindowplatform.h"
 
@@ -428,7 +429,10 @@ void ScreenshotPinnedHideToTopController::refreshOpacity() {
             m_restoring || m_state == State::Hidden
                 ? 0.0
                 : (m_state == State::Entering ? 1.0 - m_animation.currentValue().toReal() : 1.0);
-        m_owner->setWindowOpacity(qBound(25, m_hooks.opacity(), 100) / 100.0 * factor);
+        const int percent =
+            qBound(screenshot_pinned_opacity::kMinimumOpacityPercent, m_hooks.opacity(),
+                   screenshot_pinned_opacity::kMaximumOpacityPercent);
+        m_owner->setWindowOpacity(percent / 100.0 * factor);
     }
 }
 
@@ -556,23 +560,18 @@ void ScreenshotPinnedHideToTopController::retranslate() {
 
 bool ScreenshotPinnedHideToTopController::eventFilter(QObject* watched, QEvent* event) {
     if (watched == m_handle.get()) {
+        if (m_hooks.mouseAction && m_hooks.mouseAction(watched, event))
+            return true;
         if (event->type() == QEvent::Enter || event->type() == QEvent::Leave ||
             event->type() == QEvent::MouseMove) {
             refreshPointer();
         } else if (event->type() == QEvent::ContextMenu) {
-            m_hooks.contextMenu(static_cast<QContextMenuEvent*>(event)->globalPos());
+            auto* context = static_cast<QContextMenuEvent*>(event);
+            if (context->reason() != QContextMenuEvent::Mouse)
+                m_hooks.contextMenu(context->globalPos());
             return true;
         } else if (event->type() == QEvent::LanguageChange) {
             retranslate();
-        } else if (event->type() == QEvent::MouseButtonPress ||
-                   event->type() == QEvent::MouseButtonDblClick) {
-            const auto* mouse = static_cast<QMouseEvent*>(event);
-            if (mouse->button() == Qt::MiddleButton ||
-                (mouse->button() == Qt::LeftButton &&
-                 event->type() == QEvent::MouseButtonDblClick)) {
-                m_hooks.mouseAction(mouse->button() == Qt::LeftButton);
-                return true;
-            }
         }
     }
     return QObject::eventFilter(watched, event);

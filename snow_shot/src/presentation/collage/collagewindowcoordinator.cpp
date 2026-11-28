@@ -28,6 +28,11 @@ ImageStitchingWindow* ImageStitchingWindowCoordinator::ensureWindow() {
                 m_window.clear();
             window->deleteLater();
         });
+        connect(window, &ImageStitchingWindow::importFinished, this, [window] {
+            // A quiet shell import opens the window only after accepting an image.
+            if (!window->isOpen())
+                window->shutdown();
+        });
     }
     return m_window;
 }
@@ -49,10 +54,13 @@ void ImageStitchingWindowCoordinator::presentPinnedWindows(
         window->presentPinnedWindows(snapshots);
 }
 
-void ImageStitchingWindowCoordinator::presentFiles(const QStringList& paths) {
-    if (auto* window = ensureWindow()) {
-        window->present();
-        window->addFiles(paths);
+void ImageStitchingWindowCoordinator::presentFiles(const QStringList& paths, bool skipUnreadable) {
+    if (m_shutdown || paths.isEmpty())
+        return;
+    if (auto* window = skipUnreadable && m_window ? m_window.data() : ensureWindow()) {
+        if (!skipUnreadable)
+            window->present();
+        window->addFiles(paths, skipUnreadable);
     }
 }
 
@@ -74,6 +82,8 @@ void ImageStitchingWindowCoordinator::shutdown() {
 }
 
 bool ImageStitchingWindowCoordinator::presentSplitImagesAsPdf(ImageSplitSnapshot snapshot) {
+    if (!snapshot.isValid())
+        return false;
     if (auto* window = ensureWindow())
         return window->presentSplitImagesAsPdf(std::move(snapshot));
     return false;

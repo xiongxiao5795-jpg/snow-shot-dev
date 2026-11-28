@@ -8,8 +8,8 @@
 #include <QRectF>
 #include <QString>
 #include "snow_shot/presentation/globalmousetypes.h"
-#include "snow_shot/presentation/screenshotpinnedimagesnapshot.h"
-#include "snow_shot/presentation/imagesplitwindow.h"
+Q_MOC_INCLUDE("snow_shot/presentation/screenshotpinnedimagesnapshot.h")
+Q_MOC_INCLUDE("snow_shot/presentation/imagesplitwindow.h")
 
 #include <memory>
 #include <functional>
@@ -20,6 +20,8 @@ struct SelectedFileTarget;
 namespace snow_shot::presentation {
 class PinnedWindowGroupManager;
 enum class GlobalShortcutAction;
+struct AppPermissionSnapshot;
+struct ImageSplitSource;
 } // namespace snow_shot::presentation
 class ScreenshotOcrRecognitionService;
 class ScreenshotQrRecognitionPort;
@@ -28,6 +30,8 @@ class ScreenshotExportArtifact;
 class ScreenshotPrintService;
 class ScreenshotAirDropService;
 class ScreenRecordingController;
+class ScreenshotExportSource;
+struct ScreenshotPinnedImageSnapshot;
 struct ScreenshotClipboardContent;
 struct ScreenshotClipboardContentSnapshot;
 struct ScreenshotHistoryEntry;
@@ -52,6 +56,7 @@ class ScreenshotController : public QObject {
         ConvertMarkdown,
         ConvertHtml,
         RecognizeTextAndCopy,
+        PinWindow,
     };
     Q_ENUM(CaptureAction)
     [[nodiscard]] bool captureForAction(CaptureAction action);
@@ -60,7 +65,8 @@ class ScreenshotController : public QObject {
     handleActiveScreenshotShortcut(snow_shot::presentation::GlobalShortcutAction action);
     void pinDroppedContent(ScreenshotClipboardContentSnapshot snapshot, QStringList paths);
     // Finishes once the first file is presented, consumed as a duplicate, or fails.
-    void pinFilesToScreen(QStringList paths, std::function<void()> firstFileFinished = {});
+    void pinFilesToScreen(QStringList paths, std::function<void()> firstFileFinished = {},
+                          bool initialAnnotationMode = false);
     explicit ScreenshotController(
         QObject* parent = nullptr,
         snow_shot::presentation::PinnedWindowGroupManager* groupManager = nullptr,
@@ -69,6 +75,8 @@ class ScreenshotController : public QObject {
     ~ScreenshotController() override;
     void pinSelectedFilesToScreen(snow_shot::platform::SelectedFileTarget target);
     [[nodiscard]] bool captureAvailable() const;
+    // Runs on the GUI thread and returns an optional wait for this capture's worker.
+    void setPrepareCaptureAcquisition(std::function<std::function<void()>()> prepare);
     void setCaptureSuspended(bool suspended);
 #ifdef Q_OS_MACOS
     void setCaptureBackgroundWindow(QWidget* window);
@@ -86,6 +94,8 @@ class ScreenshotController : public QObject {
         const QPointF& position,
         snow_shot::presentation::GlobalMouseCoordinateSpace space =
             snow_shot::presentation::GlobalMouseCoordinateSpace::PhysicalPixels);
+    void setGlobalMouseActivationModifiersQuery(std::function<Qt::KeyboardModifiers()> query);
+    void requestGlobalMouseFrame(quint64 gestureId, const QPointF& position);
     void updateGlobalMouseCapture(quint64 gestureId, const QPointF& position);
     void finishGlobalMouseCapture(quint64 gestureId, const QPointF& position);
     void cancelGlobalMouseCapture(quint64 gestureId);
@@ -93,6 +103,10 @@ class ScreenshotController : public QObject {
     void setPrintService(ScreenshotPrintService* service);
     void setAirDropService(ScreenshotAirDropService* service);
     void setRecordingPermissionCheck(std::function<bool(bool, bool, bool)> check);
+#ifdef Q_OS_MACOS
+    void setRecordingPreviewPermissionSnapshot(
+        const snow_shot::presentation::AppPermissionSnapshot& snapshot);
+#endif
     void prepareForSessionEnd(int timeoutMs);
     void offerRecordingRecovery();
 
@@ -139,6 +153,7 @@ class ScreenshotController : public QObject {
     void startOrStopScreenRecordingAndCopy();
     void openScreenRecordingFolder();
     void editHistoryRecord(const QString& recordId);
+    void pinDirectCapture(const QImage& image, const QRect& logicalBounds);
     void pinHistoryRecord(const QString& recordId);
     void pinClipboardContentToScreen();
     void pinSelectedFilesToScreen();
@@ -154,14 +169,17 @@ class ScreenshotController : public QObject {
     void imageStitchingRequested(const QVector<ScreenshotPinnedImageSnapshot>& snapshots);
     void imageSplittingRequested(const snow_shot::presentation::ImageSplitSource& source);
     void scrollingImageEditingRequested(const ScreenshotExportSource& source);
+    void imageCompressionRequested(const ScreenshotPinnedImageSnapshot& snapshot);
     void pinnedImageEditingRequested(const QString& recordId);
     void recordingExportNotificationRequested(const QString& path);
+    void exportTaskFailed(const QString& message);
     void captureActivityChanged(const QString& source, bool active);
     void selectedFilePinFailed(const QString& message);
     void showMainWindowRequested();
     void accessibilityPermissionRequested();
     void translationPageRequested(const QString& text);
     void captureAvailabilityChanged(bool available);
+    void globalMouseSampleRequested(quint64 gestureId, bool includeTerminal);
     void globalMouseCaptureEnded(quint64 gestureId);
     void mcpCapturePresented();
     void mcpCaptureTerminated();
@@ -172,6 +190,10 @@ class ScreenshotController : public QObject {
     struct Impl;
 
     std::unique_ptr<Impl> m_impl;
+
+    [[nodiscard]] bool
+    handleActiveScreenshotShortcut(snow_shot::presentation::GlobalShortcutAction action,
+                                   bool requireActivation);
 };
 
 #endif // SNOW_SHOT_PRESENTATION_SCREENSHOTCONTROLLER_H

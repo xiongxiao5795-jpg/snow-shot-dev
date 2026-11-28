@@ -254,12 +254,22 @@ bool ScreenshotExportService::requestSelectionResultAtScale(const QRect& selecti
                                                             qreal scale, QObject* receiver,
                                                             ImageCallback callback,
                                                             ScreenshotLayoutCompaction compaction) {
+    if (!receiver || !callback)
+        return false;
+    auto load = freezeSelectionResult(selection, style, compaction, scale);
+    return load && load(receiver, std::move(callback));
+}
+
+ScreenshotExportService::SelectionImageLoader
+ScreenshotExportService::freezeSelectionResult(const QRect& selection,
+                                               const ScreenshotResultStyle& style,
+                                               ScreenshotLayoutCompaction compaction, qreal scale) {
     if (!qIsFinite(scale) || scale < 0.1 || scale > 4.0)
-        return false;
-    if (selection.isEmpty() || receiver == nullptr || !callback || m_worker == nullptr ||
-        m_thread == nullptr || !m_thread->isRunning()) {
+        return {};
+    if (selection.isEmpty() || m_worker == nullptr || m_thread == nullptr ||
+        !m_thread->isRunning()) {
         SNOW_SHOT_CLIPBOARD_PERF_COUNTER("export.failure.invalid_request", 1);
-        return false;
+        return {};
     }
     const snow_shot::presentation::clipboard_perf::Stopwatch requestTimer;
     auto smartErase = m_context.runtime.smartEraseSnapshot();
@@ -273,7 +283,7 @@ bool ScreenshotExportService::requestSelectionResultAtScale(const QRect& selecti
     spec.pixelSize = screenshotSelectionRenderedPixelSize(selection.size(), spec.scale);
     const auto plan = exportLayoutPlan(style, spec, compaction);
     if (!validExportSize(style, spec, plan))
-        return false;
+        return {};
     QList<CanvasExportSource> sources;
     {
         SNOW_SHOT_CLIPBOARD_PERF_SCOPE("export.collect_sources");
@@ -283,20 +293,26 @@ bool ScreenshotExportService::requestSelectionResultAtScale(const QRect& selecti
     SNOW_SHOT_CLIPBOARD_PERF_COUNTER("export.source_count", sources.size());
     if (documentSession.isEmpty() || sources.isEmpty()) {
         SNOW_SHOT_CLIPBOARD_PERF_COUNTER("export.failure.empty_input", 1);
-        return false;
+        return {};
     }
-    auto* worker = static_cast<ScreenshotExportWorker*>(m_worker);
-    const QPointer<QObject> guardedReceiver(receiver);
+    const QPointer<ScreenshotExportWorker> worker(static_cast<ScreenshotExportWorker*>(m_worker));
     const QPointer<QObject> guardedCompletionContext(m_completionContext);
-    const snow_shot::presentation::clipboard_perf::Stopwatch workerQueueTimer;
-    bool scheduled = false;
-    {
+    return [worker, guardedCompletionContext, documentSession = std::move(documentSession),
+            smartErase = std::move(smartErase), selection, style, sources = std::move(sources),
+            spec, plan, requestTimer](QObject* receiver, ImageCallback callback) mutable {
+        if (!guardedCompletionContext || !worker || !receiver || !callback ||
+            documentSession.isEmpty())
+            return false;
+        const QPointer<QObject> guardedReceiver(receiver);
+        const snow_shot::presentation::clipboard_perf::Stopwatch workerQueueTimer;
         SNOW_SHOT_CLIPBOARD_PERF_SCOPE("export.schedule_worker");
-        scheduled = QMetaObject::invokeMethod(
-            worker,
+        const bool scheduled = QMetaObject::invokeMethod(
+            worker.data(),
             snow_shot::runtime::trackRuntimeWork(
-                [worker, guardedReceiver, guardedCompletionContext, documentSession, smartErase,
-                 selection, style, sources, spec, plan, requestTimer, workerQueueTimer,
+                [worker, guardedReceiver, guardedCompletionContext,
+                 documentSession = std::exchange(documentSession, {}),
+                 smartErase = std::move(smartErase), selection, style, sources = std::move(sources),
+                 spec, plan, requestTimer, workerQueueTimer,
                  callback = std::move(callback)]() mutable {
                     if (guardedReceiver.isNull() || guardedCompletionContext.isNull())
                         return;
@@ -334,10 +350,10 @@ bool ScreenshotExportService::requestSelectionResultAtScale(const QRect& selecti
                     }
                 }),
             Qt::QueuedConnection);
-    }
-    SNOW_SHOT_CLIPBOARD_PERF_COUNTER(
-        scheduled ? "export.request_scheduled" : "export.failure.schedule_worker", 1);
-    return scheduled;
+        SNOW_SHOT_CLIPBOARD_PERF_COUNTER(
+            scheduled ? "export.request_scheduled" : "export.failure.schedule_worker", 1);
+        return scheduled;
+    };
 }
 
 bool ScreenshotExportService::requestSelectionClipboard(const QRect& selection,
@@ -468,17 +484,37 @@ ScreenshotExportService::prepareClipboardPlacement(const QRect& selection,
 bool ScreenshotExportService::schedulePinnedSelection(ScreenshotPinnedSelectionRequest request,
                                                       QObject* receiver,
                                                       PinRequestCallback callback) {
-    if (!request.isPrepared() || receiver == nullptr || !callback || m_worker == nullptr ||
-        m_thread == nullptr || !m_thread->isRunning() || m_completionContext == nullptr) {
+    if (!receiver || !callback)
+        return false;
+    const QPointer<QObject> guardedReceiver(receiver);
+    const auto render = freezePinnedSelection(request);
+    if (!render)
+        return false;
+    auto result = render();
+    if (!result.isValid())
+        return false;
+
+    SNOW_SHOT_PIN_PERF_MILESTONE("export.dispatch_started");
+    SNOW_SHOT_PIN_PERF_COUNTER("export.pin_dispatch_count", 1);
+    if (guardedReceiver.isNull()) {
+        result.cancel();
         return false;
     }
 
-    const QPointer<QObject> guardedReceiver(receiver);
+    SNOW_SHOT_PIN_PERF_SCOPE("export.pin_callback");
+    callback(std::move(request), std::move(result));
+    return true;
+}
+
+ScreenshotExportService::PinnedSelectionRender ScreenshotExportService::freezePinnedSelection(
+    const ScreenshotPinnedSelectionRequest& request) const {
+    if (!request.isPrepared() || !m_worker || !m_thread || !m_thread->isRunning() ||
+        !m_completionContext)
+        return {};
     QList<CanvasExportSource> sources =
         exportSourcesForSelection(m_context.displaySession, request.selection);
-    if (sources.isEmpty()) {
-        return false;
-    }
+    if (sources.isEmpty())
+        return {};
 
     const bool renderAnnotations = request.canvasSession.isEmpty();
     auto smartErase =
@@ -489,53 +525,46 @@ bool ScreenshotExportService::schedulePinnedSelection(ScreenshotPinnedSelectionR
         if (renderAnnotations) {
             documentSession = m_context.runtime.serializeDocumentSession();
             if (documentSession.isEmpty())
-                return false;
+                return {};
         }
     }
 
-    auto* worker = static_cast<ScreenshotExportWorker*>(m_worker);
     const auto renderSpec =
         screenshotSelectionRenderSpec(m_context.displaySession, request.selection);
     const auto plan = exportLayoutPlan(request.resultStyle, renderSpec, request.layoutCompaction);
     if (!validExportSize(request.resultStyle, renderSpec, plan))
-        return false;
-    const auto resultState = std::make_shared<ScreenshotPinnedSelectionResultHandle::State>();
-    const QPointer<ScreenshotExportWorker> guardedWorker(worker);
-    const bool scheduled = QMetaObject::invokeMethod(
-        worker,
-        snow_shot::runtime::trackRuntimeWork(
-            [guardedWorker, resultState, documentSession = std::move(documentSession), smartErase,
-             sources = std::move(sources), selection = request.selection,
-             style = request.resultStyle, plan, renderSpec, renderAnnotations]() mutable {
-                SNOW_SHOT_PIN_PERF_SCOPE("export.worker_callback");
-                if (guardedWorker.isNull() || resultState->isCancelled()) {
-                    return;
-                }
-                SNOW_SHOT_PIN_PERF_MILESTONE("export.render_started");
-                QImage image =
-                    guardedWorker->renderSelection(documentSession, smartErase, selection, style,
-                                                   sources, renderSpec, plan, renderAnnotations);
-                smartErase = {};
-                documentSession.clear();
-                sources.clear();
-                SNOW_SHOT_PIN_PERF_MILESTONE("export.render_finished");
-                SNOW_SHOT_PIN_PERF_MILESTONE("export.result_published");
-                const bool succeeded = !image.isNull();
-                resultState->publish(succeeded, std::move(image));
-            }),
-        Qt::QueuedConnection);
-    if (!scheduled) {
-        return false;
-    }
-
-    SNOW_SHOT_PIN_PERF_MILESTONE("export.dispatch_started");
-    SNOW_SHOT_PIN_PERF_COUNTER("export.pin_dispatch_count", 1);
-    if (guardedReceiver.isNull()) {
-        resultState->cancel();
-        return false;
-    }
-
-    SNOW_SHOT_PIN_PERF_SCOPE("export.pin_callback");
-    callback(std::move(request), ScreenshotPinnedSelectionResultHandle(resultState));
-    return true;
+        return {};
+    const QPointer<ScreenshotExportWorker> worker(static_cast<ScreenshotExportWorker*>(m_worker));
+    return [worker, documentSession = std::move(documentSession),
+            smartErase = std::move(smartErase), sources = std::move(sources),
+            selection = request.selection, style = request.resultStyle, plan, renderSpec,
+            renderAnnotations]() mutable {
+        if (!worker || sources.isEmpty())
+            return ScreenshotPinnedSelectionResultHandle{};
+        const auto resultState = std::make_shared<ScreenshotPinnedSelectionResultHandle::State>();
+        const bool scheduled = QMetaObject::invokeMethod(
+            worker,
+            snow_shot::runtime::trackRuntimeWork(
+                [worker, resultState, documentSession = std::move(documentSession),
+                 smartErase = std::move(smartErase), sources = std::move(sources), selection, style,
+                 plan, renderSpec, renderAnnotations]() mutable {
+                    SNOW_SHOT_PIN_PERF_SCOPE("export.worker_callback");
+                    if (!worker || resultState->isCancelled())
+                        return;
+                    SNOW_SHOT_PIN_PERF_MILESTONE("export.render_started");
+                    QImage image =
+                        worker->renderSelection(documentSession, smartErase, selection, style,
+                                                sources, renderSpec, plan, renderAnnotations);
+                    smartErase = {};
+                    documentSession.clear();
+                    sources.clear();
+                    SNOW_SHOT_PIN_PERF_MILESTONE("export.render_finished");
+                    SNOW_SHOT_PIN_PERF_MILESTONE("export.result_published");
+                    const bool succeeded = !image.isNull();
+                    resultState->publish(succeeded, std::move(image));
+                }),
+            Qt::QueuedConnection);
+        return scheduled ? ScreenshotPinnedSelectionResultHandle(resultState)
+                         : ScreenshotPinnedSelectionResultHandle{};
+    };
 }

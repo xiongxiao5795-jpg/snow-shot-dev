@@ -7,6 +7,7 @@
 #include "mcpreplayregistry_p.h"
 #include "snow_shot/storage/applicationstorage.h"
 #include "snow_shot/storage/capturehistoryrepository.h"
+#include "snow_shot/storage/cloudsyncconfiguration.h"
 #include "snow_shot/storage/configurationarchive.h"
 #if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
 #include "snow_shot/translation/translationservice.h"
@@ -572,6 +573,8 @@ void McpApplicationService::Impl::handle(const ScreenshotMcpRequest& request,
     } else if (method == u"snow_shot_settings_update") {
         const auto values = params.value(QStringLiteral("values")).toObject();
         QMap<QString, QVariant> drafts;
+        QMap<QString, QJsonValue> bindingValues;
+        QStringList bindingFields;
         QHash<QString, AuxiliaryIntegerSetting> auxiliaries;
         for (const auto& field : ports.settings->registry().fields())
             if (const auto auxiliary = auxiliaryIntegerSetting(field))
@@ -595,11 +598,22 @@ void McpApplicationService::Impl::handle(const ScreenshotMcpRequest& request,
                 return;
             }
             drafts.insert(it.key(), value);
+            if (field &&
+                (field->kind == settings::SettingsFieldKind::ShortcutAction ||
+                 field->kind == settings::SettingsFieldKind::LocalShortcut) &&
+                storage::cloudSettingSupported(field->configurationKey)) {
+                bindingValues.insert(field->configurationKey, settingsJson(value));
+                bindingFields.append(it.key());
+            }
         }
         if (drafts.isEmpty()) {
             error(QStringLiteral("invalid_parameters"), QStringLiteral("values"));
             return;
         }
+        const bool hasContextMenuShortcut =
+            std::any_of(bindingValues.keyBegin(), bindingValues.keyEnd(), [](const QString& key) {
+                return key.startsWith(u"context_menu_shortcuts/");
+            });
         if (!expected) {
             error(QStringLiteral("revision_required"));
             return;
@@ -620,12 +634,32 @@ void McpApplicationService::Impl::handle(const ScreenshotMcpRequest& request,
         const bool accepted = configuration().mutateIfRevision(
             *expected,
             [&] {
+                bool bindingsApplied = false;
                 for (auto it = drafts.cbegin(); it != drafts.cend(); ++it) {
+                    if (bindingValues.size() > 1 && bindingFields.contains(it.key())) {
+                        if (bindingsApplied)
+                            continue;
+                        auto& store = configuration();
+                        if (!storage::cloudSettingShortcutChangesValid(store.snapshot(),
+                                                                       bindingValues) ||
+                            !(hasContextMenuShortcut
+                                  ? ports.settings->applyContextMenuShortcutBatch(bindingValues)
+                                  : store.setValues(bindingValues))) {
+                            rejected = it.key();
+                            return false;
+                        }
+                        for (const auto& id : bindingFields)
+                            ports.settings->refreshField(id);
+                        applied.append(bindingFields);
+                        bindingsApplied = true;
+                        continue;
+                    }
                     const auto auxiliary = auxiliaries.constFind(it.key());
-                    const bool submitted = auxiliary == auxiliaries.cend()
-                                               ? ports.settings->submitDraft(it.key(), it.value())
-                                               : ports.settings->applyIntegerValue(
-                                                     auxiliary->binding, it.value().toInt());
+                    const bool submitted =
+                        auxiliary == auxiliaries.cend()
+                            ? ports.settings->submitExplicitDraft(it.key(), it.value())
+                            : ports.settings->applyIntegerValue(auxiliary->binding,
+                                                                it.value().toInt());
                     if (!submitted) {
                         rejected = it.key();
                         return false;
@@ -1085,7 +1119,8 @@ void McpApplicationService::Impl::handle(const ScreenshotMcpRequest& request,
                         read.preserveOmittedDirectories(current);
                         read.preserveOmittedCredentials(current);
                         return ports.settings->importConfigurationSnapshot(
-                            read.values, read.schemaVersion, &runtimeCompletion);
+                            read.values, read.schemaVersion, &runtimeCompletion,
+                            &read.explicitlyImported);
                     },
                     &conflict);
                 if (!guard)
@@ -1122,9 +1157,13 @@ void McpApplicationService::Impl::handle(const ScreenshotMcpRequest& request,
                     ports.jobs->fail(id, conflict ? QStringLiteral("stale_revision")
                                                   : QStringLiteral("storage_failed"));
             });
-        watcher->setFuture(runMcpWork(&workers, [path = file.absoluteFilePath()] {
-            return storage::ConfigurationArchive::read(path);
-        }));
+        watcher->setFuture(runMcpWork(
+            &workers, [path = file.absoluteFilePath(),
+                       scope = configuration()
+                                   .defaultValue(QStringLiteral("system/context_menu_mode"))
+                                   .toString()] {
+                return storage::ConfigurationArchive::read(path, scope);
+            }));
         finish({{QStringLiteral("job_id"), id}});
     } else if (method == u"snow_shot_settings_action" || method == u"snow_shot_storage_cleanup") {
         settings::SettingsActionBinding binding;

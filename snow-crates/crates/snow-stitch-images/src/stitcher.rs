@@ -424,13 +424,20 @@ impl StitchAccumulator {
                 let band = band_height(self.viewport_extent, transition.growth)?;
                 let overlap = band - transition.growth;
                 let canvas_perf = crate::perf::Scope::new(crate::perf::Stage::CanvasComposition);
-                let old_end = self.canvas.extent() - overlap;
-                self.canvas.truncate_end(old_end)?;
-                self.canvas.append_axis(
-                    &self.previous_raw,
-                    self.viewport_extent - band,
-                    self.viewport_extent,
-                )?;
+                let repaint_start = self.viewport_extent - band;
+                let added_start = self.viewport_extent - transition.growth;
+                let copy_from =
+                    if self
+                        .canvas
+                        .tail_matches_rows(&self.previous_raw, repaint_start, added_start)
+                    {
+                        added_start
+                    } else {
+                        self.canvas.truncate_end(self.canvas.extent() - overlap)?;
+                        repaint_start
+                    };
+                self.canvas
+                    .append_axis(&self.previous_raw, copy_from, self.viewport_extent)?;
                 canvas_perf.finish();
                 let _perf = crate::perf::Scope::new(crate::perf::Stage::ReferenceSynthesis);
                 synthesize_append_axis_in_place(
@@ -781,6 +788,38 @@ mod tests {
             batch.decisions.first().cloned()
         );
         assert_eq!(incremental.finish().unwrap(), batch);
+    }
+
+    #[test]
+    fn repainting_horizontal_stripes_does_not_extend_the_canvas() {
+        let make_frame = |phase| {
+            let mut pixels = Vec::new();
+            for y in 0..256 {
+                for x in 0..192 {
+                    let value = if (16..240).contains(&y) {
+                        let row = y - 16 + phase;
+                        ((73 * row + 17 * row * row) % 251) as u8
+                    } else if (x / 13 + y / 3) % 2 == 0 {
+                        30
+                    } else {
+                        220
+                    };
+                    pixels.extend([value, value, value, 255]);
+                }
+            }
+            Frame::new(192, 256, PixelFormat::Rgba8, pixels).unwrap()
+        };
+        let first = make_frame(0);
+        let result = stitch(
+            &[first.clone(), make_frame(29)],
+            StitchOptions {
+                record_decisions: true,
+                ..StitchOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(result.decisions[0].branch, StitchBranch::NoMovement);
+        assert_eq!(result.image, first);
     }
 
     #[test]

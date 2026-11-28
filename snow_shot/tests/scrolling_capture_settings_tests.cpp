@@ -169,21 +169,10 @@ class ToolbarCommands final : public ScreenshotToolbarCommandSink,
         require(capture->restart(), "changed settings must restart the active scrolling session");
     }
     void setMoveTool() override {}
-    void setSelectTool() override {}
-    void setShapeTool() override {}
-    void setArrowTool() override {}
-    void setLineTool() override {}
-    void setBrushTool() override {}
-    void setHighlightTool() override {}
-    void setBrushHighlightTool() override {}
-    void setEraserTool() override {}
-    void setFilterTool() override {}
-    void setWatermarkTool() override {}
+    void setCanvasTool(SnowCanvasTool) override {}
     void setWatermarkConfigFromToolbar(const SnowCanvasWatermarkConfig&) override {}
     void previewWatermarkFromToolbar(const SnowCanvasWatermarkConfig&) override {}
     void setFilterStyleFromToolbar(const SnowCanvasFilterStyle&, quint32) override {}
-    void setTextTool() override {}
-    void setSequenceNumberTool() override {}
     void setOcrTool() override {}
     void startScrollingScreenshot() override {}
     void pinSelectionToScreen() override {}
@@ -314,7 +303,8 @@ void changedSettingsRecapture(ScreenshotScrollingRecognitionMode mode, bool auto
         QCoreApplication::processEvents();
         auto* modal = toolbar->palette()->findChild<AdModal*>(
             QStringLiteral("screenshotScrollingSettingsModal"));
-        require(modal && modal->isOpen(), "open scrolling capture settings");
+        require(modal && modal->isOpen() && modal->windowModality() == Qt::ApplicationModal,
+                "scrolling settings protect every display in the active capture");
         auto* editor = modal->contentWidget()->findChild<AdSwitch*>();
         require(editor != nullptr, "capture interface switch must exist");
         commands.settingsSurface = modal->contentWidget()->window();

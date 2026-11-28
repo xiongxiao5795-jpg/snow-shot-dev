@@ -1,6 +1,7 @@
 #include "snow_shot/storage/configurationarchive.h"
 #include "snow_shot/storage/configurationschema.h"
 #include "snow_shot/storage/configurationstore.h"
+#include "snow_shot/storage/exporttasks.h"
 #include "snow_shot/platform/minizippath.h"
 #include "snow_shot/customaimodelconfiguration.h"
 
@@ -230,79 +231,70 @@ void importsPreserveOmittedDirectories(const QTemporaryDir& temporary) {
 }
 
 void autoSaveAfterExecutionArchivesMigrateAndRoundTrip(const QTemporaryDir& temporary) {
-    const QString key = QStringLiteral("screenshot/auto_save_after_execution_actions");
-    const QString legacyKey = QStringLiteral("screenshot/auto_save_after_copy");
-    const QJsonArray legacyActions{
-        QStringLiteral("copy_screenshot"), QStringLiteral("copy_scrolling_screenshot"),
-        QStringLiteral("copy_pinned_image"), QStringLiteral("capture_focused_window"),
-        QStringLiteral("capture_current_monitor")};
-    struct Case {
-        QJsonValue legacy;
-        QJsonValue current;
-        QJsonArray expected;
-    };
-    const QVector<Case> cases{
-        {true, QJsonValue(QJsonValue::Undefined), legacyActions},
-        {false, QJsonValue(QJsonValue::Undefined), {}},
-        {QStringLiteral("invalid"), QJsonValue(QJsonValue::Undefined), {}},
-        {QJsonValue(QJsonValue::Undefined), QJsonValue(QJsonValue::Undefined), {}},
-        {true, QJsonArray{}, {}},
-        {true, QJsonArray{QStringLiteral("pin_to_screen")},
-         QJsonArray{QStringLiteral("pin_to_screen")}},
-        {true, true, {}},
-    };
-    for (qsizetype index = 0; index < cases.size(); ++index) {
-        const Case& testCase = cases.at(index);
-        QJsonObject configuration{
-            {QStringLiteral("screenshot/copy_image_file_to_clipboard"), true}};
-        if (!testCase.legacy.isUndefined()) {
-            configuration.insert(legacyKey, testCase.legacy);
-        }
-        if (!testCase.current.isUndefined()) {
-            configuration.insert(key, testCase.current);
-        }
-        const QString archive =
-            temporary.filePath(QStringLiteral("legacy-auto-save-%1.zip").arg(index));
-        writeZip(archive, {{QStringLiteral("manifest.json"), manifestBytes(3)},
-                           {QStringLiteral("config.json"), configurationBytes(configuration)}});
-        const auto imported = storage::ConfigurationArchive::read(archive);
-        require(imported.isValid() && !imported.values.contains(legacyKey),
-                "legacy archives must migrate before unknown schema keys are discarded");
-        const QString path = temporary.filePath(QStringLiteral("auto-save-%1.json").arg(index));
-        storage::ConfigurationStore store(path, true, true, 60000);
-        require(
-            store.applySnapshot(imported.values, imported.schemaVersion) &&
-                store.value(key) == testCase.expected &&
-                store.value(QStringLiteral("screenshot/copy_image_file_to_clipboard")).toBool() &&
-                store.flushNow().success,
-            "archive import must preserve old scenarios and honor present new preferences");
-        storage::ConfigurationStore restored(path, true, true, 60000);
-        require(restored.value(key) == testCase.expected &&
-                    !restored.snapshot().contains(legacyKey),
-                "migrated archive preferences must persist with only the new key");
-    }
-
-    const QString snapshotPath = temporary.filePath(QStringLiteral("auto-save-snapshot.json"));
-    storage::ConfigurationStore snapshot(snapshotPath, true, true, 60000);
-    require(
-        snapshot.applySnapshot({{legacyKey, true}}, 3) && snapshot.value(key) == legacyActions &&
-            snapshot.applySnapshot({{legacyKey, true}, {key, QJsonArray{}}}, 3) &&
-            snapshot.value(key) == QJsonArray{} &&
-            snapshot.applySnapshot({{legacyKey, false}}, 3) && snapshot.value(key) == QJsonArray{},
-        "snapshot replacement must migrate legacy booleans and preserve explicit emptiness");
-    QJsonArray allActions = legacyActions;
-    allActions.push_back(QStringLiteral("pin_to_screen"));
-    require(snapshot.setValue(key, allActions),
-            "all six scenarios must be stored for archive export");
-    const QString exported = temporary.filePath(QStringLiteral("auto-save-round-trip.zip"));
-    require(storage::ConfigurationArchive::write(exported, snapshot.snapshot(),
+    const QString old = QStringLiteral("screenshot/auto_save_after_execution_actions");
+    const QString key = QStringLiteral("export_tasks/screenshot_copy");
+    const QJsonArray save{QStringLiteral("auto_save")};
+    const QJsonObject preferences{
+        {old,
+         QJsonArray{QStringLiteral("copy_scrolling_screenshot"), QStringLiteral("pin_to_screen")}},
+        {QStringLiteral("screenshot/copy_after_pinning_to_screen"), true},
+        {QStringLiteral("export_tasks/pinned_copy"), QJsonArray{QStringLiteral("upload_to_cloud")}},
+        {QStringLiteral("export_tasks/pinned_print"),
+         QJsonArray{QStringLiteral("unsupported-task")}},
+        {QStringLiteral("export_tasks/pinned_save"), QJsonArray{}}};
+    const QString archive = temporary.filePath(QStringLiteral("legacy-tasks.zip"));
+    writeZip(archive, {{QStringLiteral("manifest.json"), manifestBytes(7)},
+                       {QStringLiteral("config.json"), configurationBytes(preferences)}});
+    const auto imported = storage::ConfigurationArchive::read(archive);
+    require(imported.isValid() && !imported.values.contains(old) &&
+                imported.values.value(key) == save &&
+                imported.values.value(QStringLiteral("export_tasks/screenshot_pin")) ==
+                    QJsonArray{QStringLiteral("copy_to_clipboard"), QStringLiteral("auto_save")},
+            "archives migrate both legacy sources before filtering unknown keys");
+    require(imported.explicitlyImported ==
+                    QSet<QString>{QStringLiteral("export_tasks/pinned_copy"),
+                                  QStringLiteral("export_tasks/pinned_save")} &&
+                imported.values.value(QStringLiteral("export_tasks/pinned_print")) == QJsonArray{},
+            "explicit empty lists import, while repaired malformed and migrated values stay local");
+    storage::ConfigurationStore store(temporary.filePath(QStringLiteral("tasks.json")), true, true,
+                                      60000);
+    require(store.applySnapshot(imported.values, imported.schemaVersion) &&
+                store.value(QStringLiteral("export_tasks/pinned_copy")) ==
+                    QJsonArray{QStringLiteral("upload_to_cloud")},
+            "snapshot replacement preserves the independent pinned rows");
+    const auto scopedKey = storage::exportTaskScopedKey(storage::ExportTrigger::ScreenshotCopy);
+    const QJsonArray selected{QStringLiteral("auto_save.normal"),
+                              QStringLiteral("upload_to_cloud.current_monitor")};
+    require(store.setValues({{key, save}, {scopedKey, selected}}),
+            "select all-types and scoped options together");
+    const QString exported = temporary.filePath(QStringLiteral("tasks-round-trip.zip"));
+    require(storage::ConfigurationArchive::write(exported, store.snapshot(),
                                                  storage::ConfigurationSchema::currentVersion())
                 .isEmpty(),
-            "selected execution scenarios must export successfully");
-    const auto imported = storage::ConfigurationArchive::read(exported);
-    require(imported.isValid() && imported.values.value(key) == allActions &&
-                !imported.values.contains(legacyKey),
-            "all six independent scenarios must survive archive round trip");
+            "export both task records");
+    const auto roundTrip = storage::ConfigurationArchive::read(exported);
+    require(roundTrip.isValid() && roundTrip.values.value(key) == save &&
+                roundTrip.values.value(scopedKey) == selected,
+            "export task selections survive archive round trip");
+}
+
+void pinnedOcrShortcutArchiveMigrates(const QTemporaryDir& temporary) {
+    const auto legacy = QStringLiteral("pin_to_screen_shortcuts/show_text_recognition_results");
+    const auto shared = QStringLiteral("screenshot_shortcuts/text_recognition");
+    const QJsonArray custom{QStringLiteral("F8")};
+    const auto expected = storage::ConfigurationSchema::normalize(shared, custom).value;
+    const auto version = storage::ConfigurationSchema::currentVersion();
+    const auto archive = temporary.filePath(QStringLiteral("legacy-pinned-ocr.zip"));
+    writeZip(
+        archive,
+        {{QStringLiteral("manifest.json"), manifestBytes(version)},
+         {QStringLiteral("config.json"),
+          configurationBytes(
+              {{legacy, custom}, {shared, storage::ConfigurationSchema::defaultValue(shared)}})}});
+    const auto imported = storage::ConfigurationArchive::read(archive);
+    require(imported.isValid() && imported.values.value(shared) == expected &&
+                !imported.values.contains(legacy),
+            "older archives preserve a custom pin OCR shortcut in the shared setting");
 }
 
 void recognitionModelPreferencesSurviveRestart(const QTemporaryDir& temporary) {
@@ -489,6 +481,34 @@ void readRejectsInvalidArchives(const QTemporaryDir& temporary) {
                                               {QStringLiteral("also/unknown"), true}})}});
     require(!storage::ConfigurationArchive::read(unknownKeys).isValid(),
             "an archive without any compatible settings must be rejected");
+
+    const auto legacyMode = QStringLiteral("system/context_menu_mode");
+    const auto legacyAnnotation = QStringLiteral("system/annotation_mode_when_opening_for_editing");
+    const auto legacyShortcut = QStringLiteral("context_menu_shortcuts/edit_with_snow_shot");
+    const auto menuOptions = QStringLiteral("system/context_menu_options");
+    const auto readLegacy = [&](const QJsonObject& values) {
+        writeZip(unknownKeys, {{QStringLiteral("manifest.json"), manifestBytes(11)},
+                               {QStringLiteral("config.json"), configurationBytes(values)}});
+        return storage::ConfigurationArchive::read(unknownKeys);
+    };
+    for (const auto& invalid :
+         {QJsonObject{{QStringLiteral("not/a_key"), 1}}, QJsonObject{{legacyMode, 42}},
+          QJsonObject{{legacyAnnotation, QStringLiteral("false")}},
+          QJsonObject{{legacyShortcut, QJsonArray{QStringLiteral("Ctrl+E")}}}})
+        require(!readLegacy(invalid).isValid(),
+                "an inferred menu default cannot make invalid legacy settings importable");
+    const auto validShortcut = readLegacy({{legacyShortcut, QJsonArray{QStringLiteral("E")}}});
+    require(validShortcut.isValid() && !validShortcut.explicitlyImported.contains(menuOptions) &&
+                validShortcut.explicitlyImported.contains(
+                    QStringLiteral("context_menu_shortcuts/pin_to_screen_and_annotate")),
+            "a valid legacy shortcut remains importable on its own");
+    const auto mixed =
+        readLegacy({{legacyMode, 42},
+                    {legacyAnnotation, QStringLiteral("false")},
+                    {QStringLiteral("interface/theme_mode"), QStringLiteral("dark")}});
+    require(
+        mixed.isValid() && !mixed.explicitlyImported.contains(menuOptions),
+        "invalid legacy menu fields cannot publish inferred options during a compatible import");
 
     const QString oversized = temporary.filePath(QStringLiteral("oversized.zip"));
     writeZip(oversized, {{QStringLiteral("manifest.json"),
@@ -867,6 +887,7 @@ int main(int argc, char** argv) {
     exportsOmitLocalDirectories(temporary);
     importsPreserveOmittedDirectories(temporary);
     autoSaveAfterExecutionArchivesMigrateAndRoundTrip(temporary);
+    pinnedOcrShortcutArchiveMigrates(temporary);
     readRejectsInvalidArchives(temporary);
     writeRejectsUnwritableTargets(temporary);
     unicodePathsRoundTrip();

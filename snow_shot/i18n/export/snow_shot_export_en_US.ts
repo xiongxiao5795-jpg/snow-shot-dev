@@ -2,6 +2,93 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="en_US" sourcelanguage="en_US">
     <context>
+        <name>ImageCompressionWindow</name>
+        <message>
+            <source>Allow Snow Shot to access Finder in System Settings &gt; Privacy &amp; Security &gt; Automation, then try again</source>
+            <translation>Allow Snow Shot to access Finder in System Settings &gt; Privacy &amp; Security &gt; Automation, then try again</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>Cancel</translation>
+        </message>
+        <message>
+            <source>Copy</source>
+            <translation>Copy</translation>
+        </message>
+        <message>
+            <source>Could not read the selected image files. Please try again</source>
+            <translation>Could not read the selected image files. Please try again</translation>
+        </message>
+        <message>
+            <source>Drag an image file here, or choose select image</source>
+            <translation>Drag an image file here, or choose select image</translation>
+        </message>
+        <message>
+            <source>Drop one image file at a time</source>
+            <translation>Drop one image file at a time</translation>
+        </message>
+        <message>
+            <source>Drop one image to compress</source>
+            <translation>Drop one image to compress</translation>
+        </message>
+        <message>
+            <source>Drop one image to replace the current image</source>
+            <translation>Drop one image to replace the current image</translation>
+        </message>
+        <message>
+            <source>Export completed</source>
+            <translation>Export completed</translation>
+        </message>
+        <message>
+            <source>Image compression</source>
+            <translation>Image compression</translation>
+        </message>
+        <message>
+            <source>Images</source>
+            <translation>Images</translation>
+        </message>
+        <message>
+            <source>Loading image…</source>
+            <translation>Loading image…</translation>
+        </message>
+        <message>
+            <source>Replace</source>
+            <translation>Replace</translation>
+        </message>
+        <message>
+            <source>Replace file</source>
+            <translation>Replace file</translation>
+        </message>
+        <message>
+            <source>Replace the existing file "%1"?</source>
+            <translation>Replace the existing file "%1"?</translation>
+        </message>
+        <message>
+            <source>Save</source>
+            <translation>Save</translation>
+        </message>
+        <message>
+            <source>Select an image to compress</source>
+            <translation>Select an image to compress</translation>
+        </message>
+        <message>
+            <source>Select image</source>
+            <translation>Select image</translation>
+        </message>
+        <message>
+            <source>The image could not be copied</source>
+            <translation>The image could not be copied</translation>
+        </message>
+        <message>
+            <source>The image could not be loaded</source>
+            <translation>The image could not be loaded</translation>
+        </message>
+        <message>
+            <source>The screenshot export queue is full</source>
+            <translation>The screenshot export queue is full</translation>
+        </message>
+    </context>
+    <context>
         <name>ScreenshotAirDropService</name>
         <message>
             <source>AirDrop is unavailable on this Mac</source>
@@ -85,6 +172,10 @@
     <context>
         <name>ScreenshotExportArtifact</name>
         <message>
+            <source>Automatic screenshot saving failed: %1</source>
+            <translation>Automatic screenshot saving failed: %1</translation>
+        </message>
+        <message>
             <source>Image source unavailable</source>
             <translation>Image source unavailable</translation>
         </message>
@@ -120,6 +211,10 @@
             <translation>JPEG image (*.jpg *.jpeg)</translation>
         </message>
         <message>
+            <source>No automatic screenshot folder is available</source>
+            <translation>No automatic screenshot folder is available</translation>
+        </message>
+        <message>
             <source>No output file was selected</source>
             <translation>No output file was selected</translation>
         </message>
@@ -140,6 +235,10 @@
             <translation>The encoded image is empty</translation>
         </message>
         <message>
+            <source>The image could not be encoded</source>
+            <translation>The image could not be encoded</translation>
+        </message>
+        <message>
             <source>The output directory could not be created</source>
             <translation>The output directory could not be created</translation>
         </message>
@@ -150,6 +249,18 @@
         <message>
             <source>The screenshot filename format is invalid</source>
             <translation>The screenshot filename format is invalid</translation>
+        </message>
+        <message>
+            <source>The screenshot folder could not be created: %1</source>
+            <translation>The screenshot folder could not be created: %1</translation>
+        </message>
+        <message>
+            <source>The screenshot image is empty</source>
+            <translation>The screenshot image is empty</translation>
+        </message>
+        <message>
+            <source>The screenshot image source is empty</source>
+            <translation>The screenshot image source is empty</translation>
         </message>
         <message>
             <source>WebP image (*.webp)</source>
@@ -245,8 +356,8 @@
             <translation>No output file was selected</translation>
         </message>
         <message>
-            <source>No recognition result is available to save</source>
-            <translation>No recognition result is available to save</translation>
+            <source>No recognition result is available to save.</source>
+            <translation>No recognition result is available to save.</translation>
         </message>
         <message>
             <source>Replace</source>
@@ -626,6 +737,14 @@
         <message>
             <source>Export comparison preview</source>
             <translation>Export comparison preview</translation>
+        </message>
+        <message>
+            <source>Fit image to window</source>
+            <translation>Fit image to window</translation>
+        </message>
+        <message>
+            <source>View at actual size (100%)</source>
+            <translation>View at actual size (100%)</translation>
         </message>
     </context>
 </TS>

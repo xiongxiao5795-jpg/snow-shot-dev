@@ -2,9 +2,11 @@
 #include "snow_shot/presentation/screenshotrecognitionimage.h"
 #include "snow_shot/presentation/screenshotselectionbackground.h"
 #include "snow_shot/presentation/screenshotocrtextlayout.h"
+#include "snow_shot/presentation/screenshotocrvisuals.h"
 #include "snow_shot/presentation/screenshotselectionshadowrenderer.h"
 #include <QPainter>
 #include <QScopeGuard>
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -75,6 +77,14 @@ QImage renderScreenshotRecognitionImage(const ScreenshotRecognitionImageSnapshot
                            std::max(1, qRound(visible.height() * sy)));
         return image.isNull() ? QImage() : image.copy(pixels);
     }
+    if (snapshot.displayedBackgroundOnly && snapshot.lines.isEmpty() &&
+        (snapshot.filteredImage.isNull() || !snapshot.filteredCanvasRect.isValid()) &&
+        snapshot.textAnnotations.empty()) {
+        const auto style = ScreenshotResultCompositor::normalizedStyle(snapshot.resultStyle);
+        if (!style.region && style.cornerRadius == 0 && style.effectWidth() == 0 &&
+            style.backgroundOpacityPercent == 0 && snapshot.outputOpacity == 1.0)
+            return snapshot.image;
+    }
     QImage image = snowCanvasConvertImage(snapshot.image, QImage::Format_ARGB32_Premultiplied);
     if (!snowCanvasDetachImage(image))
         return {};
@@ -86,7 +96,28 @@ QImage renderScreenshotRecognitionImage(const ScreenshotRecognitionImageSnapshot
         image.width() / rect.width(), 0.0, 0.0, image.height() / rect.height(),
         -rect.x() * image.width() / rect.width(), -rect.y() * image.height() / rect.height());
     painter.setClipRect(image.rect());
-    if (!paintScreenshotRecognitionOverlay(painter, snapshot, canvasToPixels, cancelled))
+    std::optional<ScreenshotRecognitionImageSnapshot> prepared;
+    if (!snapshot.displayedBackgroundOnly &&
+        (snapshot.filteredImage.isNull() || !snapshot.filteredCanvasRect.isValid()) &&
+        std::ranges::any_of(snapshot.lines, &ScreenshotOcrLine::smartMergeTranslation)) {
+        // Translation image copies can prepare their background before the live filter arrives.
+        prepared = snapshot;
+        ScreenshotOcrPresentation presentation;
+        presentation.lines = snapshot.lines;
+        prepareScreenshotOcrTextColors(presentation, snapshot.image, rect);
+        if (stopped())
+            return {};
+        prepareScreenshotOcrFillColors(presentation, snapshot.image, rect, false);
+        QRect filteredPixels;
+        prepared->filteredImage = renderScreenshotOcrFilteredImage(
+            snapshot.image, rect, presentation, {}, std::max<qreal>(1.0, canvasToPixels.m11()),
+            &filteredPixels);
+        prepared->filteredCanvasRect =
+            screenshotOcrFilteredImageCanvasRect(rect, snapshot.image.size(), filteredPixels);
+        prepared->lines = std::move(presentation.lines);
+    }
+    if (!paintScreenshotRecognitionOverlay(painter, prepared ? *prepared : snapshot, canvasToPixels,
+                                           cancelled))
         return {};
     painter.end();
     auto style =

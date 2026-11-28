@@ -9,6 +9,7 @@
 #include <QVector>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <memory>
 
@@ -54,13 +55,14 @@ enum class ScreenshotCapturePurpose {
 
 struct ScreenshotCaptureRequest {
     quint64 requestId = 0;
-    bool refreshLayout = false;
+    quint64 layoutRevision = 0;
     bool restoreOriginalScreenColors = false;
     bool captureCursor = false;
     ScreenshotCapturePurpose purpose = ScreenshotCapturePurpose::Initial;
     // Owned before worker dispatch; native snapshot data is immutable.
     std::shared_ptr<SnowCaptureCursorSnapshotImpl> cursorSnapshot;
     QVector<std::uint32_t> excludedWindowIds;
+    std::function<void()> beforeAcquisition = {};
 };
 
 struct ScreenshotDisplayPresentationState {
@@ -100,6 +102,7 @@ struct ScreenshotCaptureLayout {
 
 struct ScreenshotCaptureResult {
     quint64 requestId = 0;
+    quint64 layoutRevision = 0;
     QVector<CapturedDisplayModel> displays;
     QString errorMessage;
     bool succeeded = false;

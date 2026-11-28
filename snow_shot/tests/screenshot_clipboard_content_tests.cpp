@@ -110,6 +110,24 @@ void clipboardImagesTakePriorityOverAccompanyingFiles() {
     }
     require(ScreenshotClipboardContentReader::filePathsForImport(nullptr).isEmpty(),
             "missing clipboard MIME data must not offer file imports");
+
+    class TextOnlyMimeData final : public QMimeData {
+      public:
+        bool hasFormat(const QString& type) const override {
+            if (type == QStringLiteral("text/uri-list"))
+                return false;
+            return QMimeData::hasFormat(type);
+        }
+        QStringList formats() const override {
+            ++formatRequests;
+            return QMimeData::formats();
+        }
+        mutable int formatRequests = 0;
+    } textOnly;
+    textOnly.setText(QStringLiteral("clipboard text"));
+    require(ScreenshotClipboardContentReader::filePathsForImport(&textOnly).isEmpty() &&
+                textOnly.formatRequests == 0,
+            "clipboard file routing must skip image format discovery when no URLs are offered");
 }
 
 void imageFilesDecodeByContent() {
@@ -223,6 +241,29 @@ void tiffFilesAndMimeDataPreservePixels() {
                 snow_shot::image_codec::encodeToDevice(pixels, &buffer, options.format, options,
                                                        &error),
             "encode a TIFF import fixture with straight alpha");
+
+#ifdef Q_OS_MACOS
+    ScreenshotClipboardContentSnapshot native;
+    native.nativeTiff = bytes;
+    const auto nativeReference = ScreenshotClipboardContentReader::decode(native);
+    const auto rasterOnlyBudget = bytes.size() + pixels.width() * pixels.height() * 8;
+    require(!ScreenshotClipboardContentReader::decode(
+                native, {},
+                [rasterOnlyBudget](qint64 requested) { return requested <= rasterOnlyBudget; }),
+            "native TIFF decode must reserve conversion storage beyond a single raster");
+    QList<qint64> reservations;
+    const auto nativeBudgeted =
+        ScreenshotClipboardContentReader::decode(native, {}, [&reservations](qint64 requested) {
+            reservations.append(requested);
+            return true;
+        });
+    require(reservations.size() >= 2 && reservations.first() == bytes.size() &&
+                reservations.last() > rasterOnlyBudget,
+            "native TIFF decode must account for both retained bytes and conversion storage");
+    require(nativeReference && nativeBudgeted && nativeBudgeted->image == nativeReference->image &&
+                nativeBudgeted->image.colorSpace() == nativeReference->image.colorSpace(),
+            "the budgeted native TIFF conversion must preserve pixels and the color profile");
+#endif
 
     QMimeData mime;
     mime.setData(QStringLiteral("image/tiff"), bytes);
@@ -441,6 +482,28 @@ void firstFrameFilesKeepCompositionProfilesAndRevisionChecks() {
     require(files.size() == 1 &&
                 ScreenshotClipboardContentReader::decodeImageFile(files.first()).isNull(),
             "first-frame-only decoding rejects malformed image files");
+
+    const auto largePath = directory.filePath(QStringLiteral("large-still.bmp"));
+    QImage pixels(1024, 1024, QImage::Format_RGB32);
+    const QColor color(28, 91, 187);
+    pixels.fill(color);
+    require(pixels.save(largePath, "BMP"), "write a multi-chunk image fixture");
+    const auto large = ScreenshotClipboardContentReader::snapshotLocalFiles({largePath});
+    require(large.size() == 1 && large.first().size > 2 * 1024 * 1024,
+            "the large fixture must span multiple reads");
+    int readPolls = 0;
+    int admissions = 0;
+    const auto interrupted = ScreenshotClipboardContentReader::decodeImageFile(
+        large.first(), [&] { return admissions > 0 && ++readPolls == 2; },
+        [&](qint64) {
+            ++admissions;
+            return true;
+        });
+    require(interrupted.isNull() && readPolls == 2 && admissions == 1,
+            "cancel a large import between reads before admitting the decoded raster");
+    const auto decoded = ScreenshotClipboardContentReader::decodeImageFile(large.first());
+    require(decoded.size() == pixels.size() && decoded.pixelColor(975, 975) == color,
+            "a multi-chunk import retains pixels after its encoded snapshot is released");
 }
 
 void animationReplacementPreparationIsAtomicAndWorkerSafe() {
@@ -1907,7 +1970,7 @@ void nativeDibSnapshotDecodesOffClipboard() {
     pixels[0] = 0xff0000ff; // bottom row: blue, red
     pixels[1] = 0xffff0000;
     pixels[2] = 0xff00ff00; // top row: green, white
-    pixels[3] = 0xffffffff;
+    pixels[3] = 0x8064c832;
 
     for (const int maskOrder : {0, 1, 2}) {
         QByteArray payload = bytes;
@@ -1925,10 +1988,10 @@ void nativeDibSnapshotDecodesOffClipboard() {
         require(decoded.has_value() && decoded->image.size() == QSize(2, 2),
                 "native DIB snapshot should decode into an image");
         require(decoded->image.pixelColor(0, 0) == QColor(Qt::green) &&
-                    decoded->image.pixelColor(1, 0) == QColor(Qt::white) &&
+                    decoded->image.pixel(1, 0) == qPremultiply(QRgb(0x8064c832)) &&
                     decoded->image.pixelColor(0, 1) == QColor(Qt::blue) &&
                     decoded->image.pixelColor(1, 1) == QColor(Qt::red),
-                "native DIB snapshot should preserve orientation and channels");
+                "native DIB snapshot should preserve orientation and premultiply alpha");
         if (maskOrder != 0) {
             // Declare the table so truncation is unambiguous: an undeclared
             // partial table is indistinguishable from pixels and trailing data.

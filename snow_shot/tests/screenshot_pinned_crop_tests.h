@@ -3,7 +3,8 @@
 #include "../src/presentation/pinned/screenshotpinnedcropgeometry.h"
 #include "../src/presentation/pinned/screenshotpinnedgeometrymapping.h"
 #include "snow_shot/presentation/screenshotcanvascolorsampler.h"
-#include <QThreadPool>
+#include <QSemaphore>
+#include <limits>
 
 namespace pinned_crop_tests {
 using Access = ScreenshotPinnedWindowTestAccess;
@@ -41,6 +42,13 @@ QImage exportImage(ScreenshotPinnedWindow& owner,
     translation_tests::waitUntil([&] { return done; }, "crop export finishes");
     require(output.succeeded(), "crop export succeeds");
     return output.image;
+}
+
+void cancelThroughMenu(ScreenshotPinnedWindow& window) {
+    auto* action = Access::contextMenu(window)->findChild<QAction*>(
+        QStringLiteral("screenshotPinnedCancelCropAction"));
+    require(action && action->isVisible() && action->isEnabled(), "Cancel crop is available");
+    action->trigger();
 }
 
 void geometry() {
@@ -424,6 +432,78 @@ void staticWindow() {
     window.hide();
 }
 
+void cancelCrop() {
+    std::optional<snow_shot::storage::PinnedWindowRecord> saved;
+    auto setup = config();
+    setup.persistenceWriter = [&](const auto& record) { saved = record; };
+    ScreenshotPinnedWindow window;
+    Access::prepareReplacement(window, setup);
+    window.show();
+    require(!Access::applyAnnotationTransaction(
+                 window,
+                 R"({"version":1,"operations":[{"type":"rectangle","bounds":[105,205,12,12]}]})")
+                 .isEmpty(),
+            "add an annotation extending outside the crop");
+    const auto history = Access::drawingHistory(window);
+    const auto original = Access::originalImage(window).cacheKey();
+    const QRectF crop(120, 220, 40, 30);
+    const auto fullViewport = Access::visibleCrop(window);
+    const auto fullExport = exportImage(window, Access::cropSave(window));
+    require(Access::crop(window, crop), "create a temporary crop");
+    LiveAccess::scale(window, 150);
+    require(Access::moveForOriginalPreview(window, QPoint(17, -8)), "move the cropped pin");
+    const auto croppedGeometry = LiveAccess::contentGeometry(window);
+    const auto landmark = Access::cropScreenPoint(window, crop.center());
+    auto* platform = Access::installFailingPlatform(window);
+    platform->failNextGeometry = true;
+    cancelThroughMenu(window);
+    require(Access::visibleCrop(window) == crop &&
+                LiveAccess::contentGeometry(window) == croppedGeometry,
+            "a rejected window expansion retains the crop and its geometry");
+    cancelThroughMenu(window);
+    require(!window.persistenceSnapshot().cropRect && Access::visibleCrop(window) == fullViewport &&
+                LiveAccess::contentGeometry(window).size() == QSize(150, 120) &&
+                Access::scale(window) == 150 &&
+                QLineF(landmark, Access::cropScreenPoint(window, crop.center())).length() < .01,
+            "cancel expands around the moved crop at its current zoom");
+    require(Access::originalImage(window).cacheKey() == original &&
+                Access::drawingHistory(window) == history,
+            "cancel preserves source pixels and annotations");
+    require(!Access::decoration(window)->property("showBorder").toBool() &&
+                Access::decoration(window)->property("showShadow").toBool(),
+            "cancel restores the configured pin decorations");
+    translation_tests::waitUntil(
+        [&] {
+            return saved && !saved->cropRect &&
+                   saved->nativeGeometry == LiveAccess::contentGeometry(window);
+        },
+        "cancel persists the expanded geometry without a crop");
+    ScreenshotPinnedWindow reopened;
+    auto restore = setup;
+    restore.restorePersistentState = true;
+    restore.persistedCropRect = saved->cropRect;
+    restore.persistedScalePercent = saved->scalePercent;
+    restore.nativeGeometry = saved->nativeGeometry;
+    Access::prepareReplacement(reopened, restore);
+    require(Access::visibleCrop(reopened) == fullViewport && Access::scale(reopened) == 150,
+            "reopening a canceled crop restores the full viewport");
+    LiveAccess::scale(window, 200);
+    require(exportImage(window, Access::cropSave(window)) == fullExport,
+            "export after cancel includes the full annotated image");
+
+    const QRect beforeThumbnail = LiveAccess::contentGeometry(window);
+    require(Access::crop(window, crop), "crop before entering thumbnail mode");
+    Access::thumbnailForHideTest(window, true);
+    const QRect thumbnail = LiveAccess::contentGeometry(window);
+    cancelThroughMenu(window);
+    require(LiveAccess::contentGeometry(window) == thumbnail,
+            "cancel keeps the thumbnail in place");
+    Access::thumbnailForHideTest(window, false);
+    require(LiveAccess::contentGeometry(window) == beforeThumbnail,
+            "expanding the thumbnail restores the full image geometry");
+    window.hide();
+}
+
 void gesturesAndAlignment() {
     ScreenshotPinnedWindow window;
     Access::prepareReplacement(window, config());
@@ -437,20 +517,31 @@ void gesturesAndAlignment() {
     Access::thumbnailForHideTest(window, true);
     require(!Access::cropAllowed(window), "thumbnail mode excludes crop selection");
     Access::thumbnailForHideTest(window, false);
-    require(Access::beginCrop(window, {240, 220}), "begin interrupted crop");
+    auto* canvas = window.findChild<SnowCanvasWidget*>();
+    require(canvas, "the crop gesture has a canvas");
+    const auto startCropDrag = [&] {
+        const QPoint start = canvas->rect().center();
+        canvas_quick_selection_test::mouse(*canvas, QEvent::MouseButtonPress, start,
+                                           Qt::RightButton, Qt::RightButton);
+        canvas_quick_selection_test::mouse(*canvas, QEvent::MouseMove,
+                                           start + QPoint(QApplication::startDragDistance() + 1, 0),
+                                           Qt::NoButton, Qt::RightButton);
+        require(Access::cropSelecting(window), "right dragging starts a crop selection");
+    };
+    startCropDrag();
     QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QApplication::sendEvent(&window, &escape);
     require(!Access::cropSelecting(window) && !window.persistenceSnapshot().cropRect,
             "Escape cancels an unfinished selection");
-    require(Access::beginCrop(window, {240, 220}), "begin hidden crop");
+    startCropDrag();
     window.hide();
     require(!Access::cropSelecting(window), "hiding cancels an unfinished selection");
     window.show();
     require(Access::beginCrop(window, {240, 220}), "begin small selection");
     Access::endCrop(window, {249, 230});
     auto* menu = Access::contextMenu(window);
-    require(!window.persistenceSnapshot().cropRect && menu->isPopupVisible(),
-            "subminimum selection opens the existing menu");
+    require(!window.persistenceSnapshot().cropRect && !menu->isPopupVisible(),
+            "a subminimum crop drag leaves the menu closed");
     int menus = 0;
     QObject::connect(menu, &QMenu::aboutToShow, &window, [&] { ++menus; });
     QContextMenuEvent duplicate(QContextMenuEvent::Mouse, {20, 20}, {240, 220});
@@ -631,7 +722,14 @@ void styledAndTransformedApply() {
         LiveAccess::command(window, QStringLiteral("rotate_clockwise"));
         const auto full = window.persistenceSnapshot().contentCanvasRect;
         const QRectF crop(full.x(), full.y(), 30, 40);
+        const auto fullExport = exportImage(window, Access::cropSave(window));
+        const auto fullGeometry = LiveAccess::contentGeometry(window);
         require(Access::crop(window, crop), "crop transformed styled image");
+        cancelThroughMenu(window);
+        require(LiveAccess::contentGeometry(window) == fullGeometry &&
+                    exportImage(window, Access::cropSave(window)) == fullExport,
+                "cancel restores the rotated surface including styled edges");
+        require(Access::crop(window, crop), "reselect transformed crop");
         const auto expected = exportImage(window, Access::cropSave(window));
         const auto editor = pinnedRenderedEditingSource(window);
         require(!editor.resultStyle && editor.image == expected &&
@@ -719,6 +817,11 @@ void liveWindow() {
                    source->presentations.last().sourceViewport == QRectF(.125, .125, .375, .5);
         },
         "native presentation receives normalized crop bounds");
+    cancelThroughMenu(window);
+    translation_tests::waitUntil(
+        [&] { return source->presentations.last().sourceViewport == QRectF(0, 0, 1, 1); },
+        "cancel restores the full live viewport");
+    require(Access::crop(window, QRectF(20, 10, 60, 40)), "reselect live crop");
     source->setState(live_pinned_tests::State::Minimized);
     require(!window.liveFrameAvailable() && !Access::cropAllowed(window),
             "unavailable live content prevents starting a new crop");
@@ -744,6 +847,12 @@ void liveWindow() {
     require(!window.persistenceSnapshot().cropRect &&
                 LiveAccess::original(window).size() == QSize(30, 20) && window.isLiveWindow(),
             "applying live crop restricts the refreshed base without converting the source");
+    require(Access::crop(window, Access::visibleCrop(window).adjusted(4, 4, -4, -4)),
+            "select a second crop inside the applied live crop");
+    cancelThroughMenu(window);
+    translation_tests::waitUntil(
+        [&] { return source->presentations.last().sourceViewport == QRectF(.125, .125, .375, .5); },
+        "cancel restores the previously committed live viewport");
     const auto requests = source->requests;
     source->deferFrames = true;
     LiveAccess::command(window, QStringLiteral("rotate_clockwise"));
@@ -856,6 +965,9 @@ void liveConversion() {
             auto setup = live_pinned_tests::config(source);
             setup.initialShadowVisible = true;
             setup.persistenceWriter = [&](const auto& record) { persisted = record; };
+            setup.replacementPersistenceWriter = [](const auto&) {
+                return ScreenshotPinnedWindow::ReplacementPersistenceResult::Failed;
+            };
             live_pinned_tests::present(window, setup);
             require(Access::crop(window, {20, 10, 60, 40}), "live conversion crop fixture");
             if (cropState != 0)
@@ -981,38 +1093,74 @@ void liveConversionEndsCropInteraction() {
     }
 }
 
-void liveConversionDiscardsPendingCrop() {
+void queuedCropReleasesOnCloseAndReplacement() {
+    ScreenshotPinnedWindow closing;
+    Access::prepareReplacement(closing, config());
+    closing.setAttribute(Qt::WA_DeleteOnClose, false);
+    require(Access::crop(closing, {110, 210, 30, 20}), "pending apply close fixture");
+
+    ScreenshotPinnedWindow replacing;
+    Access::prepareReplacement(replacing, config());
+    require(Access::crop(replacing, {110, 210, 30, 20}), "pending apply replacement fixture");
+    QTemporaryDir directory;
+    require(directory.isValid(), "crop replacement fixture directory");
+    QImage replacement(100, 80, QImage::Format_ARGB32_Premultiplied);
+    replacement.fill(Qt::green);
+    const QString replacementPath = directory.filePath(QStringLiteral("replacement.png"));
+    require(replacement.save(replacementPath), "save crop replacement fixture");
+
     auto source = patternedLiveSource();
-    ScreenshotPinnedWindow window;
-    live_pinned_tests::present(window, live_pinned_tests::config(source));
-    require(Access::crop(window, {20, 10, 60, 40}), "pending apply conversion fixture");
-    const QImage expected = exportImage(window, LiveAccess::artifact(window, false));
-    auto* pool = QThreadPool::globalInstance();
-    const int workers = pool->maxThreadCount();
-    pool->setMaxThreadCount(1);
+    ScreenshotPinnedWindow converting;
+    live_pinned_tests::present(converting, live_pinned_tests::config(source));
+    require(Access::crop(converting, {20, 10, 60, 40}), "pending apply conversion fixture");
+    const QImage expected = exportImage(converting, LiveAccess::artifact(converting, false));
+    auto& coordinator = ScreenshotExportCoordinator::shared();
+    translation_tests::waitUntil(
+        [&] { return coordinator.pendingJobCount() == 0 && coordinator.activeWorkingBytes() == 0; },
+        "finish prior export work before blocking crop preparation");
+    QObject blockerOwner;
     const auto started = std::make_shared<QSemaphore>();
     const auto release = std::make_shared<QSemaphore>();
-    const auto restoreWorkers = qScopeGuard([&] {
-        release->release();
-        pool->setMaxThreadCount(workers);
-    });
-    pool->start([started, release] {
-        started->release();
-        release->acquire();
-    });
-    require(started->tryAcquire(1, 5000), "hold crop preparation until after conversion");
-    Access::startApplyCrop(window);
-    require(Access::cropApplying(window), "crop preparation remains pending");
-    LiveAccess::convert(window);
-    translation_tests::waitUntil([&] { return !window.isLiveWindow(); },
-                                 "conversion installs its independently prepared snapshot");
+    const auto releaseWorker = qScopeGuard([release] { release->release(); });
+    const auto blocker = coordinator.submit(
+        &blockerOwner, ScreenshotExportCoordinator::Priority::Foreground,
+        [started, release](const ScreenshotExportCancellation&) {
+            started->release();
+            release->acquire();
+            return ScreenshotExportTaskResult{};
+        },
+        [](const ScreenshotExportTaskResult&) {}, std::numeric_limits<qint64>::max());
+    require(blocker.isValid() && started->tryAcquire(1, 5000),
+            "reserve the export budget before starting crop preparation");
+    for (auto* window : {&closing, &replacing, &converting}) {
+        Access::startApplyCrop(*window);
+        require(Access::cropApplying(*window), "crop preparation remains queued");
+    }
+    require(coordinator.pendingJobCount() == 4, "three crops share bounded export admission");
+    require(closing.close() && !Access::cropApplying(closing) && coordinator.pendingJobCount() == 3,
+            "close drops queued crop resources while the worker remains blocked");
+    Access::loadFiles(replacing, {replacementPath});
+    require(!Access::cropApplying(replacing) && Access::replacementPending(replacing) &&
+                coordinator.pendingJobCount() == 3,
+            "content loading replaces its queued crop job");
+    // Complete the independently prepared live snapshot while all crop workers remain queued.
+    Access::finishLiveConversion(converting, expected);
+    require(!converting.isLiveWindow() && !Access::cropApplying(converting) &&
+                coordinator.pendingJobCount() == 2,
+            "live conversion drops the superseded queued crop preparation");
     release->release();
-    translation_tests::waitUntil([&] { return !Access::cropApplying(window); },
-                                 "obsolete crop preparation retires");
-    require(!window.persistenceSnapshot().cropRect && Access::originalImage(window) == expected &&
-                exportImage(window, Access::cropSave(window)) == expected,
+    translation_tests::waitUntil([&] { return !Access::replacementPending(replacing); },
+                                 "new content loads after queued crop cancellation");
+    const auto replacedImage = Access::originalImage(replacing);
+    require(!replacing.persistenceSnapshot().cropRect &&
+                replacedImage.size() == replacement.size() &&
+                replacedImage.pixelColor(0, 0) == Qt::green,
+            "obsolete crop work cannot overwrite replaced content");
+    require(!converting.persistenceSnapshot().cropRect &&
+                Access::originalImage(converting) == expected &&
+                exportImage(converting, Access::cropSave(converting)) == expected,
             "pending crop work cannot overwrite the converted source");
-    window.hide();
+    converting.hide();
 }
 
 void restorationAndTransforms() {
@@ -1093,6 +1241,14 @@ void animations() {
         const int frame = Access::playback(window).frameIndex();
         const int speed = Access::playback(window).speedPercent();
         require(Access::crop(window, QRectF(0, 0, 20, 40)), "crop animated frame viewport");
+        cancelThroughMenu(window);
+        require(Access::visibleCrop(window) == setup.canvasSourceRect &&
+                    window.persistenceSnapshot().animationSource == animation &&
+                    Access::playback(window).frameIndex() == frame &&
+                    Access::playback(window).speedPercent() == speed &&
+                    !Access::playback(window).requestedPlaying(),
+                "cancel restores the full animation at the same frame and playback settings");
+        require(Access::crop(window, QRectF(0, 0, 20, 40)), "reselect animated crop");
         Access::applyCrop(window);
         static_cast<void>(renderWidget(*canvas));
         const auto record = window.persistenceSnapshot();
@@ -1147,21 +1303,23 @@ void nativeInput() {
     const QPoint origin = LiveAccess::contentGeometry(window).topLeft();
     const QPoint first = origin + QPoint(20, 20);
     const QPoint last = first + QPoint(40, 30);
-    require(Access::cropNativeInput(window, WM_NCRBUTTONDOWN, HTCAPTION,
-                                    MAKELPARAM(first.x(), first.y())),
-            "native crop press consumed");
-    require(Access::cropSelecting(window), "native caption begins the same crop controller");
-    require(
-        Access::cropNativeInput(window, WM_NCRBUTTONUP, HTCAPTION, MAKELPARAM(last.x(), last.y())),
-        "native crop release consumed");
+    const HWND hwnd = toNativeHwnd(window.winId());
+    require(SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(first.x(), first.y())) == HTCLIENT,
+            "native pin routes button input through its client");
+    sendClientMouse(window, QEvent::MouseButtonPress, Qt::RightButton, Qt::RightButton, first);
+    require(!Access::cropSelecting(window), "a native press keeps both click and crop possible");
+    sendClientMouse(window, QEvent::MouseMove, Qt::NoButton, Qt::RightButton, last);
+    require(Access::cropSelecting(window), "native motion past the threshold starts cropping");
+    sendClientMouse(window, QEvent::MouseButtonRelease, Qt::RightButton, Qt::NoButton, last);
     require(window.persistenceSnapshot().cropRect &&
                 LiveAccess::contentGeometry(window) == QRect(first, QSize(40, 30)),
             "native selection uses physical pixels");
     const auto crop = window.persistenceSnapshot().cropRect;
-    require(Access::cropNativeInput(window, WM_NCRBUTTONDOWN, HTCAPTION,
-                                    MAKELPARAM(last.x() - 5, last.y() - 5)),
-            "native interrupted press");
-    Access::cropNativeInput(window, WM_CANCELMODE, 0, 0);
+    sendClientMouse(window, QEvent::MouseButtonPress, Qt::RightButton, Qt::RightButton,
+                    first + QPoint(3, 3));
+    sendClientMouse(window, QEvent::MouseMove, Qt::NoButton, Qt::RightButton, last - QPoint(4, 4));
+    require(Access::cropSelecting(window), "begin a second native crop");
+    SendMessageW(hwnd, WM_CANCELMODE, 0, 0);
     require(!Access::cropSelecting(window) && window.persistenceSnapshot().cropRect == crop,
             "native cancellation preserves the preceding viewport");
     window.hide();
@@ -1208,6 +1366,7 @@ void pinnedCropTests() {
     pinned_crop_tests::cropSelectionProjectsNativeBounds();
     pinned_crop_tests::cropSelectionMatchesCanvas();
     pinned_crop_tests::staticWindow();
+    pinned_crop_tests::cancelCrop();
     pinned_crop_tests::restorationAndTransforms();
     pinned_crop_tests::gesturesAndAlignment();
     pinned_crop_tests::inlineAnnotations();
@@ -1219,5 +1378,5 @@ void pinnedCropTests() {
     pinned_crop_tests::liveConversion();
     pinned_crop_tests::liveConversionRejectsChangedCrop();
     pinned_crop_tests::liveConversionEndsCropInteraction();
-    pinned_crop_tests::liveConversionDiscardsPendingCrop();
+    pinned_crop_tests::queuedCropReleasesOnCloseAndReplacement();
 }

@@ -1,5 +1,6 @@
 #include "snow_shot/presentation/canvashistoryshortcuts.h"
 #include "snow_shot/presentation/cursormovementshortcuts.h"
+#include "snow_shot/shortcuts/annotationoptionshortcut.h"
 #include "snow_shot/shortcuts/shortcutbinding.h"
 #include "snow_shot/presentation/screenshotoverlayshortcutcontroller.h"
 
@@ -11,6 +12,7 @@
 #include "snow_shot/storage/configurationstore.h"
 #include "snow_shot/storage/settingsadapters.h"
 
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMap>
@@ -38,8 +40,12 @@ QString screenshotShortcutForGlobalAction(snow_shot::presentation::GlobalShortcu
     switch (action) {
     case Action::ScreenshotPinToScreen:
         return QStringLiteral("pin_to_screen");
+    case Action::ScreenshotPinWindowToScreen:
+        return QStringLiteral("pin_window_to_screen");
     case Action::ScreenshotOcr:
         return QStringLiteral("text_recognition");
+    case Action::ScreenshotOcrCopy:
+        return QStringLiteral("text_recognition_copy");
     case Action::ScreenshotTranslation:
         return QStringLiteral("text_translation");
     case Action::ScreenshotScrolling:
@@ -119,7 +125,8 @@ struct ScreenshotOverlayShortcutController::Impl {
             QObject::connect(&storage.configuration(),
                              &snow_shot::storage::ConfigurationStore::valueChanged, &q,
                              [this](const QString& key, const QJsonValue&) {
-                                 if (key.startsWith(QStringLiteral("screenshot_shortcuts/")) ||
+                                 if (key == QStringLiteral("capture_history/retention_mode") ||
+                                     key.startsWith(QStringLiteral("screenshot_shortcuts/")) ||
                                      key.startsWith(QStringLiteral("drawing_shortcuts/"))) {
                                      reloadConfiguredShortcuts();
                                  }
@@ -162,6 +169,8 @@ struct ScreenshotOverlayShortcutController::Impl {
     }
 
     bool navigateHistory(bool previous) {
+        if (previous && !actions.canNavigateHistoryPrevious())
+            return false;
         if (interaction.manualSelecting()) {
             if (interaction.dragging()) {
                 interaction.cancelDrag();
@@ -277,6 +286,7 @@ struct ScreenshotOverlayShortcutController::Impl {
             QStringLiteral("qr_code_recognition"),
             QStringLiteral("video_recording"),
             QStringLiteral("text_recognition"),
+            QStringLiteral("text_recognition_copy"),
             QStringLiteral("text_translation"),
             QStringLiteral("scrolling_screenshot"),
             QStringLiteral("quick_save"),
@@ -506,7 +516,15 @@ struct ScreenshotOverlayShortcutController::Impl {
             ShortcutManager::Binding binding;
             binding.id = QStringLiteral("drawing.configured.") + tool.key();
             binding.priority = ShortcutManager::StandardPriority::DrawingShortcut;
-            binding.canActivate = [this](const auto&) { return canActivateToolbarShortcut(); };
+            binding.canActivate = [this, toolId = tool.key()](const auto& context) {
+                if (!canActivateToolbarShortcut())
+                    return false;
+                if (toolId != snow_shot::shortcuts::kCycleAnnotationToolOptions)
+                    return true;
+                return interaction.editing() && !inputHandler.canvasColorSamplingActive() &&
+                       !ShortcutManager::inputTargetsPopup(context) &&
+                       actions.canActivateDrawingShortcut(toolId);
+            };
             binding.activate = [this, toolId = tool.key()](const auto&) {
                 return activateToolbarShortcut(toolId, true);
             };
@@ -515,20 +533,20 @@ struct ScreenshotOverlayShortcutController::Impl {
     }
 
     void reloadConfiguredShortcuts() {
-        const snow_shot::storage::ScreenshotShortcutSettings screenshotSettings;
+        const auto screenshotSettings =
+            snow_shot::storage::ScreenshotShortcutSettings().activeShortcuts();
         static_cast<void>(shortcutManager.setShortcuts(
-            regionMoveBinding,
-            screenshotSettings.shortcuts(QStringLiteral("move_entire_selection"))));
+            regionMoveBinding, screenshotSettings.value(QStringLiteral("move_entire_selection"))));
         for (auto binding = screenshotBindings.cbegin(); binding != screenshotBindings.cend();
              ++binding) {
             static_cast<void>(shortcutManager.setShortcuts(
-                binding.value(), screenshotSettings.shortcuts(binding.key())));
+                binding.value(), screenshotSettings.value(binding.key())));
         }
 
         for (auto binding = externalBindings.cbegin(); binding != externalBindings.cend();
              ++binding) {
             static_cast<void>(shortcutManager.setShortcuts(
-                binding.value(), screenshotSettings.shortcuts(binding.key())));
+                binding.value(), screenshotSettings.value(binding.key())));
         }
 
         const snow_shot::storage::DrawingShortcutSettings drawingSettings;
@@ -562,16 +580,26 @@ ScreenshotOverlayShortcutController::ScreenshotOverlayShortcutController(
 
 ScreenshotOverlayShortcutController::~ScreenshotOverlayShortcutController() = default;
 
+void ScreenshotOverlayShortcutController::reconcileExternalDragHolds(
+    QWidget* canvas, Qt::KeyboardModifiers activationModifiers) {
+    if (!m_impl->inputHandler.externalDragActive())
+        return;
+    const auto modifiers = QGuiApplication::queryKeyboardModifiers();
+    for (auto handle : std::as_const(m_impl->externalBindings))
+        m_impl->shortcutManager.reconcileHeldBinding(handle, canvas, modifiers,
+                                                     activationModifiers);
+}
+
 void ScreenshotOverlayShortcutController::reloadConfiguredShortcuts() {
     m_impl->reloadConfiguredShortcuts();
 }
 
 bool ScreenshotOverlayShortcutController::handleGlobalScreenshotShortcut(
-    snow_shot::presentation::GlobalShortcutAction action, bool captureReady) {
+    snow_shot::presentation::GlobalShortcutAction action, bool captureReady,
+    bool requireActivation) {
     const QString id = screenshotShortcutForGlobalAction(action);
     if (id.isEmpty())
         return false;
-    if (captureReady)
-        static_cast<void>(m_impl->activateToolbarShortcut(id, false));
-    return true;
+    const bool activated = captureReady && m_impl->activateToolbarShortcut(id, false);
+    return activated || !requireActivation;
 }

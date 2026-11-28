@@ -2,24 +2,24 @@
   "schema": 2,
   "default_model": "small",
   "runtime": {
-    "version": "1.2.2",
+    "version": "1.5.3",
     "platform": "windows-x64",
     "archive": {
-      "name": "snow-ocr-runtime-1.2.2-windows-x64.zip",
-      "size": 11250903,
-      "sha256": "60677c7779665ee4e910c039388c21e847a3e4bf2c40eb2427ece9f84e5b6390",
-      "url": "https://www.modelscope.cn/models/mgchao/SnowShotOCR/resolve/master/runtime/1.2.2/windows-x64/snow-ocr-runtime-1.2.2-windows-x64.zip"
+      "name": "snow-ocr-runtime-1.5.3-windows-x64.zip",
+      "size": 11476143,
+      "sha256": "380eb7681641c5b458d049389c15bae4e23ca313df06c4390e9a6172d3b1a8c9",
+      "url": "https://www.modelscope.cn/models/mgchao/SnowShotOCR/resolve/master/runtime/1.5.3/windows-x64/snow-ocr-runtime-1.5.3-windows-x64.zip"
     },
     "files": [
       {
-        "name": "snow-ocr-process-1.2.2-windows-x64.exe",
-        "size": 19818496,
-        "sha256": "4f77ec1ac1f50dbe4aa2e0ac25c665835134940459a99aa29449659eabb999d6"
+        "name": "snow-ocr-process-1.5.3-windows-x64.exe",
+        "size": 20357632,
+        "sha256": "24745e9b6316b303dd2acdd14e0f0b151ff4b9100ad200d27a076c54649c45ce"
       },
       {
         "name": "runtime-manifest.json",
         "size": 292,
-        "sha256": "58d982674e15623e9b2fca4e2f80a26c1ae70d3a87e503b3eb003282ff8f6059"
+        "sha256": "9502d80f426d214c6fcf8fe77df72fe7be280648b4db27eb76bfef3e874b70ac"
       }
     ]
   },
@@ -105,5 +105,16 @@
         }
       ]
     }
-  ]
+  ],
+  "paragraph_model": {
+    "id": "line2para-1-2-956253e",
+    "files": [
+      {
+        "name": "line2para_1_2-epoch12-signed-1.625.onnx",
+        "size": 3061303,
+        "sha256": "956253efb9eefe81692b5ba88b2923f1a012427933768acd5657c509b7363ac5",
+        "url": "https://www.modelscope.cn/models/mgchao/SnowShotOCR/resolve/master/line2para/line2para_1_2-epoch12-signed-1.625.onnx?download=true"
+      }
+    ]
+  }
 }

@@ -4,17 +4,25 @@
 #include "../screenshotwindownamereader_p.h"
 
 namespace snow_shot::platform {
-storage::ScreenshotWindowNames
+storage::ScreenshotExportContext
 screenshotWindowNamesAtPoint(const QPointF& point, std::span<const std::uintptr_t> excludedWindows,
                              storage::ScreenshotWindowNameFields fields) {
     if (!fields.any() || QGuiApplication::platformName() != QStringLiteral("cocoa"))
         return {};
-    const CGWindowID hit = detail::selectorWindowAtDesktopPoint(point, excludedWindows);
-    if (!hit)
+    return screenshotWindowNamesForWindow(
+        detail::selectorWindowAtDesktopPoint(point, excludedWindows), fields);
+}
+
+storage::ScreenshotExportContext
+screenshotWindowNamesForWindow(std::uintptr_t windowId,
+                               storage::ScreenshotWindowNameFields fields) {
+    if (windowId == 0 || !fields.any() ||
+        QGuiApplication::platformName() != QStringLiteral("cocoa"))
         return {};
+    const auto hit = static_cast<CGWindowID>(windowId);
     CFArrayRef windows = CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, hit);
     const auto target = detail::recaptureWindowTarget(windows, hit);
-    storage::ScreenshotWindowNames result;
+    storage::ScreenshotExportContext result;
     if (target.id) {
         result = detail::readScreenshotWindowNames(
             fields,

@@ -1,6 +1,7 @@
 #include <QVBoxLayout>
 #include "snow_shot/presentation/screenshotcanvastools.h"
 #include "palette_style_edit_test_support.h"
+#include "snow_shot/shortcuts/annotationoptionshortcut.h"
 #include "physical_key_test_support.h"
 #include "cloud_upload_test_support.h"
 #include "snow_shot/presentation/screenshotregiontypecontrol.h"
@@ -1129,8 +1130,8 @@ void recordingEffectSettingsModal() {
                     !surface->windowHandle()->format().hasAlpha() &&
                     settings.modal->contentWidget()->isVisible(),
                 "each Settings open must expose an opaque window with visible form content");
-        require(surface->windowHandle()->transientParent() ==
-                    settings.modal->ownerWindow()->windowHandle(),
+        require(settings.modal->ownerWindow()->windowHandle()->isAncestorOf(
+                    surface->windowHandle(), QWindow::IncludeTransients),
                 "each Settings open must retain native recording-window ownership");
         require(settings.modal == palette.findChild<adqt::widgets::AdModal*>(
                                       QStringLiteral("screenRecordingEffectSettingsModal")),
@@ -1172,7 +1173,7 @@ void recordingEffectSettingsModal() {
     }
 
     require(modal->mode() == adqt::widgets::AdModal::Mode::Window &&
-                modal->windowModality() == Qt::ApplicationModal && modal->centered() &&
+                modal->windowModality() == Qt::WindowModal && modal->centered() &&
                 !modal->maskVisible() && !modal->closeOnMaskClick() &&
                 modal->ownerWindow() == &recordingOwner &&
                 modal->windowTitle() == QStringLiteral("Effect settings") &&
@@ -6994,7 +6995,7 @@ void scrollingSettingsUseCenteredFormAndPersistOnAccept() {
                 captureInterface->controlSize() == AdSwitch::ControlSize::Medium,
             "form refreshes must preserve the generic switch's size and enabled state");
     require(modal->mode() == AdModal::Mode::Window && modal->centered() &&
-                modal->windowModality() == Qt::ApplicationModal && modal->ownerWindow() == &owner &&
+                modal->windowModality() == Qt::WindowModal && modal->ownerWindow() == &owner &&
                 modal->preferredWidth() == 440 && !modal->maskVisible() &&
                 !modal->closeOnMaskClick() &&
                 modal->standardButtons() == (AdModal::StandardButtons(AdModal::StandardButton::Ok) |
@@ -9360,6 +9361,115 @@ void lineToolIsDiscoverableSelectableAndUsesLinearStyleControls() {
             "the canvas should retain Line while using shared linear geometry");
 }
 
+void annotationShortcutCyclesPrimaryOptions() {
+    using Tool = ScreenshotToolPalette::Tool;
+    using Group = adqt::widgets::AdRadioButtonGroup;
+    const auto& shortcut = snow_shot::shortcuts::kCycleAnnotationToolOptions;
+    ScreenshotToolPalette palette(ScreenshotToolPalette::Options{});
+    const auto buttonWithLabel = [&](const char* label) -> QAbstractButton* {
+        const auto groups =
+            palette.findChildren<Group*>(QStringLiteral("screenshotAnnotationOptionGroup"));
+        for (const auto* group : groups) {
+            for (auto* button : group->buttons()) {
+                if (tooltipMatches(button->toolTip(), QString::fromUtf8(label)))
+                    return button;
+            }
+        }
+        return nullptr;
+    };
+    std::optional<SnowCanvasTool> requested;
+    snow_shot::presentation::bindScreenshotCanvasToolRequests(
+        palette, palette, [&](SnowCanvasTool tool) { requested = tool; });
+    struct OptionCycle {
+        Tool tool;
+        QList<const char*> labels;
+        QList<SnowCanvasTool> canvasTools;
+    };
+    const OptionCycle cycles[] = {
+        {Tool::Shape, {"Rectangle", "Ellipse", "Diamond"}, {}},
+        {Tool::Arrow, {"Straight arrow", "Curved arrow", "Elbow arrow"}, {}},
+        {Tool::Line, {"Straight line", "Curved line"}, {}},
+        {Tool::Angle, {"360° angle", "180° angle"}, {}},
+        {Tool::Brush, {"Regular brush", "Pressure-sensitive brush"}, {}},
+        {Tool::BrushHighlight,
+         {"Brush highlight", "Rectangle highlight"},
+         {SnowCanvasTool::PenHighlight, SnowCanvasTool::RectangleHighlight}},
+        {Tool::Spotlight, {"Rectangle", "Ellipse", "Diamond"}, {}},
+        {Tool::Magnifier, {"Rectangle", "Ellipse", "Diamond"}, {}},
+        {Tool::SequenceNumber,
+         {"Outlined circle", "Solid circle", "Outlined square", "Solid square", "Circle"},
+         {}},
+        {Tool::SpeechBubble, {"Rectangle", "Ellipse", "Diamond", "Thought bubble"}, {}},
+        {Tool::BrushFilter,
+         {"Brush filter", "Rectangle filter", "Auto filter"},
+         {SnowCanvasTool::PenFilter, SnowCanvasTool::RectangleFilter, SnowCanvasTool::AutoFilter}},
+        {Tool::Eraser,
+         {"Element eraser", "Rectangle eraser", "Brush eraser"},
+         {SnowCanvasTool::Eraser, SnowCanvasTool::RectangleEraser, SnowCanvasTool::BrushEraser}},
+    };
+    for (const auto& cycle : cycles) {
+        palette.setActiveTool(cycle.tool);
+        auto* first = buttonWithLabel(cycle.labels.first());
+        require(first != nullptr, cycle.labels.first());
+        first->click();
+        for (qsizetype step = 1; step <= cycle.labels.size(); ++step) {
+            requested.reset();
+            require(palette.canActivateDrawingShortcut(shortcut) &&
+                        palette.activateDrawingShortcut(shortcut),
+                    cycle.labels.first());
+            const qsizetype index = step % cycle.labels.size();
+            auto* selected = buttonWithLabel(cycle.labels.at(index));
+            require(selected && selected->isChecked(), cycle.labels.at(index));
+            require(cycle.canvasTools.isEmpty() ? !requested
+                                                : requested == cycle.canvasTools.at(index),
+                    "option cycling must dispatch the same canvas command as clicking");
+        }
+    }
+
+    palette.setActiveTool(Tool::Shape);
+    auto* ellipse = buttonWithLabel("Ellipse");
+    require(ellipse != nullptr, "Shape must expose the Ellipse option");
+    ellipse->setEnabled(false);
+    require(palette.activateDrawingShortcut(shortcut) &&
+                palette.creationStyleDefaults().rectangle.shape ==
+                    SnowCanvasRectangleShape::Diamond,
+            "cycling Shape must skip a disabled option and update its creation style");
+
+    palette.setActiveTool(Tool::Distance);
+    using Unit = SnowCanvasDistanceUnit;
+    auto* unitsRow =
+        palette.findChild<QWidget*>(QStringLiteral("screenshotDistanceUnitButtonGroup"));
+    auto* units = unitsRow ? unitsRow->findChild<Group*>() : nullptr;
+    require(units && units->button(static_cast<int>(Unit::Mm)), "distance units are available");
+    units->button(static_cast<int>(Unit::Mm))->click();
+    for (const auto unit : {Unit::Cm, Unit::M, Unit::Km, Unit::Px, Unit::Pt, Unit::In, Unit::Ft,
+                            Unit::Um, Unit::Mm}) {
+        require(palette.activateDrawingShortcut(shortcut) &&
+                    palette.creationStyleDefaults().distance.unit == unit,
+                "distance cycling must include every real unit and wrap");
+    }
+    require(!units->button(static_cast<int>(Unit::Mm))->isHidden() &&
+                units->checkedId() == static_cast<int>(Unit::Mm),
+            "distance cycling synchronizes the visible unit selector");
+
+    palette.setActiveTool(Tool::Brush);
+    SnowCanvasStyleToolbarState mixed;
+    mixed.source = SnowCanvasStyleToolbarSource::SelectedFreeDraw;
+    mixed.shapeStyleMixed = SnowCanvasShapeStyleMixedBrushMode;
+    palette.setStyleToolbarState(mixed);
+    require(palette.activateDrawingShortcut(shortcut) &&
+                buttonWithLabel("Regular brush")->isChecked(),
+            "cycling a mixed selection must begin at the first option");
+    palette.setStyleToolbarVisible(false);
+    require(!palette.canActivateDrawingShortcut(shortcut) &&
+                !palette.activateDrawingShortcut(shortcut),
+            "cycling is inapplicable when the style toolbar is hidden");
+    palette.setActiveTool(Tool::Text);
+    require(!palette.canActivateDrawingShortcut(shortcut) &&
+                !palette.activateDrawingShortcut(shortcut),
+            "unsupported tools must leave the shortcut unhandled");
+}
+
 void pressureBrushToolbarPreservesStylesAndMixedSelection() {
     using Tool = ScreenshotToolPalette::Tool;
     ScreenshotToolPalette::Options options;
@@ -11194,10 +11304,10 @@ void watermarkEditsCommitCompleteConfigsAndClampWheel() {
 void watermarkTemplateLibraryAndEditorApplySnapshotsDeterministically() {
     const snow_shot::storage::WatermarkTemplateSettings templateSettings;
     require(templateSettings.setTemplates({
-                {QStringLiteral("Duplicate"), QStringLiteral("{text}-{YYYY}")},
+                {QStringLiteral("Duplicate"), QStringLiteral("{text}-{MM}")},
                 {QStringLiteral("Duplicate"), QStringLiteral("{text}-{YYYY}")},
             }),
-            "watermark-template fixture should persist duplicate rows");
+            "watermark-template fixture should persist duplicate names");
 
     int clockCalls = 0;
     ScreenshotToolPalette::Options options;
@@ -11372,7 +11482,7 @@ void watermarkTemplateLibraryAndEditorApplySnapshotsDeterministically() {
     require(nameItem != nullptr && valueItem != nullptr,
             "Add template should expose its named form items");
     require(createModal->mode() == adqt::widgets::AdModal::Mode::Window &&
-                createModal->windowModality() == Qt::ApplicationModal && createModal->centered() &&
+                createModal->windowModality() == Qt::WindowModal && createModal->centered() &&
                 createModal->ownerWindow() == &selectionDisplayOverlay &&
                 createModal->windowTitle() == QStringLiteral("Add template") &&
                 createModal->acceptButton()->text() == QStringLiteral("Add") &&
@@ -11444,16 +11554,16 @@ void watermarkTemplateLibraryAndEditorApplySnapshotsDeterministically() {
     select->showPopup();
     QCoreApplication::processEvents();
     QListView* view = select->view();
-    QModelIndex firstDuplicate;
+    QModelIndex secondDuplicate;
     for (int row = 0; view != nullptr && row < view->model()->rowCount(); ++row) {
         const QModelIndex candidate = view->model()->index(row, 0);
-        if (candidate.data(Qt::UserRole).toString() == QStringLiteral("watermark-template:0")) {
-            firstDuplicate = candidate;
+        if (candidate.data(Qt::UserRole).toString() == QStringLiteral("watermark-template:1")) {
+            secondDuplicate = candidate;
             break;
         }
     }
-    require(firstDuplicate.isValid(), "the first duplicate template should have a popup row");
-    const QRect rowRect = view->visualRect(firstDuplicate);
+    require(secondDuplicate.isValid(), "the second duplicate template should have a popup row");
+    const QRect rowRect = view->visualRect(secondDuplicate);
     const QPoint deletePoint(rowRect.right() - 15, rowRect.center().y());
     const auto sendMouse = [view](QEvent::Type type, const QPoint& point, Qt::MouseButton button,
                                   Qt::MouseButtons buttons) {
@@ -11466,14 +11576,14 @@ void watermarkTemplateLibraryAndEditorApplySnapshotsDeterministically() {
     sendMouse(QEvent::MouseButtonRelease, deletePoint, Qt::LeftButton, Qt::NoButton);
     QCoreApplication::processEvents();
 
-    auto* deleteModal = palette.findChild<adqt::widgets::AdModal*>(
+    QPointer<adqt::widgets::AdModal> deleteModal = palette.findChild<adqt::widgets::AdModal*>(
         QStringLiteral("screenshotWatermarkTemplateDeleteModal"));
     const SnowCanvasWatermarkConfig beforeDelete = applied;
     require(deleteModal && deleteModal->ownerWindow() == &selectionDisplayOverlay,
             "watermark deletion must use the same display owner as creation");
     require(deleteModal != nullptr && deleteModal->isOpen() &&
                 deleteModal->mode() == adqt::widgets::AdModal::Mode::Window &&
-                deleteModal->windowModality() == Qt::ApplicationModal &&
+                deleteModal->windowModality() == Qt::WindowModal &&
                 deleteModal->windowTitle() == QStringLiteral("Delete template") &&
                 deleteModal->text() ==
                     QStringLiteral("Delete template \"Duplicate\"? This action cannot be undone") &&
@@ -11493,13 +11603,21 @@ void watermarkTemplateLibraryAndEditorApplySnapshotsDeterministically() {
     require(languageManager.setLanguage(QStringLiteral("en_US")),
             "English Delete template language restoration should succeed");
     QCoreApplication::processEvents();
+    const snow_shot::storage::WatermarkTemplate concurrent{QStringLiteral("Added elsewhere"),
+                                                           QStringLiteral("{text}-{hh}")};
+    auto updatedLibrary = templateSettings.templates();
+    updatedLibrary.removeFirst();
+    updatedLibrary.append(concurrent);
+    require(templateSettings.setTemplates(updatedLibrary),
+            "another window can remove a preceding row and add a new template");
     deleteModal->acceptButton()->click();
     QCoreApplication::processEvents();
     const QVector<snow_shot::storage::WatermarkTemplate> afterDelete = templateSettings.templates();
-    require(afterDelete.size() == 2 && afterDelete.at(0).name == QStringLiteral("Duplicate") &&
-                afterDelete.at(1).name == QStringLiteral("Added") && commits == 4 &&
-                applied == beforeDelete,
-            "deleting a duplicate row should remove only that index and leave the snapshot intact");
+    require((!deleteModal || !deleteModal->isOpen()) && afterDelete.size() == 2 &&
+                afterDelete.at(0).name == QStringLiteral("Added") &&
+                afterDelete.at(1) == concurrent && commits == 4 && applied == beforeDelete,
+            "deletion follows the confirmed template after its index shifts and preserves other "
+            "windows' changes");
 
     require(templateSettings.setTemplates({}), "empty watermark-template library should persist");
     select->hidePopup();
@@ -11750,9 +11868,34 @@ void drawTemplateSelectSavesFiltersInsertsAndDeletes() {
     require(deletion != nullptr && deletion->isOpen() && deletion->ownerWindow() == &display &&
                 deletion->acceptAccentRole() == adqt::widgets::AdButton::AccentRole::Danger,
             "the option delete action should open a danger confirmation on the current display");
+    const auto savedTemplates = settings.templates();
+    auto replacements = savedTemplates;
+    replacements.front().payload.append('\n');
+    require(settings.setTemplates(replacements), "replace the saved payload under the same name");
+    deletion->acceptButton()->click();
+    require(deletion->isOpen() && settings.templates() == replacements,
+            "delete confirmation must preserve a replacement with the original template name");
+    require(settings.setTemplates(savedTemplates), "restore the originally selected template");
     deletion->acceptButton()->click();
     QCoreApplication::processEvents();
     require(settings.templates().isEmpty(), "deleting a Draw Template should remove its row");
+
+    require(settings.setTemplates({{QStringLiteral("Saved template"), payload}}),
+            "seed a template for the pooled toolbar lifecycle");
+    select->showPopup();
+    require(palette.loadedDrawTemplateCountForTests() == 1,
+            "the annotation template selector should load the saved template");
+    palette.setActiveTool(ScreenshotToolPalette::Tool::Move);
+    require(palette.loadedDrawTemplateCountForTests() == 0,
+            "retiring the annotation template selector must release its settings snapshot");
+    palette.setActiveTool(ScreenshotToolPalette::Tool::Select);
+    select =
+        palette.findChild<adqt::widgets::AdSelect*>(QStringLiteral("screenshotDrawTemplateSelect"));
+    require(select != nullptr && palette.loadedDrawTemplateCountForTests() == 1 &&
+                select->options().size() == 1 &&
+                select->options().front().label == QStringLiteral("Saved template"),
+            "the pooled toolbar should reload the saved annotation template on re-entry");
+    require(settings.setTemplates({}), "restore an empty annotation template library");
     palette.hide();
 }
 
@@ -21085,6 +21228,10 @@ int main(int argc, char** argv) {
 #endif
     if (application.arguments().contains(QStringLiteral("--quick-text-annotation-only"))) {
         runScreenshotQuickTextAnnotationToolbarTests();
+        return 0;
+    }
+    if (application.arguments().contains(QStringLiteral("--annotation-option-cycle-only"))) {
+        annotationShortcutCyclesPrimaryOptions();
         return 0;
     }
     if (application.arguments().contains(QStringLiteral("--custom-color-presets-only"))) {

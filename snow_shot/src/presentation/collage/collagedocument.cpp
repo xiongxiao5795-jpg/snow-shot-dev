@@ -2,6 +2,7 @@
 #include "snow_shot/presentation/collagedocument.h"
 
 #include "collageresourcebudget_p.h"
+#include "collagefreelayout_p.h"
 #include "collagetransformedrows_p.h"
 #include "snow_draw_engine_qt/snow_canvas_image.h"
 #include "snowimageqtcodec.h"
@@ -10,6 +11,7 @@
 #include <QCoreApplication>
 #include <QHash>
 #include <QPainter>
+#include <QScopedValueRollback>
 
 #include <algorithm>
 #include <atomic>
@@ -86,6 +88,7 @@ bool settingsValid(const ImageStitchingSettings& settings) {
            settings.rows >= 1 && settings.columns >= 1 &&
            (settings.direction == ImageStitchingDirection::Vertical ||
             settings.direction == ImageStitchingDirection::Horizontal ||
+            settings.direction == ImageStitchingDirection::Free ||
             settings.direction == ImageStitchingDirection::Custom) &&
            (settings.sizing == ImageStitchingSizing::Original ||
             settings.sizing == ImageStitchingSizing::Uniform);
@@ -120,22 +123,6 @@ QStringList normalizeCustomGrid(ImageStitchingSettings& settings, qsizetype imag
     return fields;
 }
 
-QImage boundedPreview(const QImage& original, const QImage& supplied = {}) {
-    QImage preview = supplied.isNull() ? original : supplied;
-    if (preview.isNull())
-        return {};
-    if (preview.width() > previewExtent || preview.height() > previewExtent)
-        preview = snowCanvasScaleImage(preview, QSize(previewExtent, previewExtent),
-                                       Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    if (!preview.isNull() && preview.colorSpace().isValid() &&
-        preview.colorSpace() != QColorSpace(QColorSpace::SRgb))
-        preview = snowCanvasColorConvertedImage(preview, QColorSpace(QColorSpace::SRgb),
-                                                QImage::Format_ARGB32_Premultiplied);
-    if (!preview.isNull() && preview.devicePixelRatio() != 1)
-        preview.setDevicePixelRatio(1);
-    return preview;
-}
-
 QTransform canonicalTransform(const QTransform& transform) {
     return {static_cast<qreal>(qRound(transform.m11())),
             static_cast<qreal>(qRound(transform.m12())),
@@ -145,15 +132,7 @@ QTransform canonicalTransform(const QTransform& transform) {
             0};
 }
 
-bool outputBytes(QSize size, qint64* bytes) {
-    if (size.isEmpty() || size.width() > std::numeric_limits<int>::max() / 4)
-        return false;
-    const qint64 pixels = qint64(size.width()) * size.height();
-    if (pixels > image_stitching_detail::maximumRasterBytes / 4)
-        return false;
-    *bytes = pixels * 4;
-    return true;
-}
+using image_stitching_detail::outputBytes;
 
 ImageStitchingLayout calculateCustomGridLayout(const QVector<ImageStitchingItem>& items,
                                                const ImageStitchingSettings& settings,
@@ -288,6 +267,7 @@ struct PreparedRows final {
     QVector<PreparedItem> items;
     ImageStitchingLayout layout;
     QColor background;
+    bool layered = false;
     std::function<bool()> cancelled;
     QVector<QImage> inputImages;
     QVector<StorageRange> storageRanges;
@@ -371,9 +351,12 @@ struct PreparedRows final {
             if (rect.top() + rect.height() > first)
                 active.append(index);
         }
-        std::sort(active.begin(), active.end(), [this](qsizetype a, qsizetype b) {
-            return items[a].rect.left() < items[b].rect.left();
-        });
+        if (layered)
+            std::sort(active.begin(), active.end());
+        else
+            std::sort(active.begin(), active.end(), [this](qsizetype a, qsizetype b) {
+                return items[a].rect.left() < items[b].rect.left();
+            });
         const auto next = std::upper_bound(edges.begin(), edges.end(), first);
         activeFirst = first;
         activeEnd = next != edges.end() && end <= *next ? *next : end;
@@ -423,6 +406,10 @@ struct PreparedRows final {
             if (cancellationRequested())
                 return false;
             uchar* pixels = destination + qsizetype(row) * stride;
+            if (layered) {
+                fill(pixels, region.width());
+                continue;
+            }
             int filled = region.left();
             for (const auto index : active) {
                 const auto& item = items[index];
@@ -448,7 +435,8 @@ struct PreparedRows final {
             const int begin = intersection.top();
             const int end = intersection.top() + intersection.height();
             const qsizetype itemStride = qsizetype(item.rows.size.width()) * 4;
-            if ((alpha == 0 || item.opaque) &&
+            const bool directCopy = item.opaque || (!layered && alpha == 0);
+            if (directCopy &&
                 (intersection.width() == item.rows.size.width() || item.rows.readRegion)) {
                 const qsizetype offset = qsizetype(begin - first) * stride +
                                          qsizetype(intersection.left() - region.left()) * 4;
@@ -469,7 +457,7 @@ struct PreparedRows final {
                 croppedRead ? qsizetype(intersection.width()) * 4 : itemStride;
             const int batch = static_cast<int>(
                 std::max<qsizetype>(1, std::min<qsizetype>(64, rowScratchBytes / scratchStride)));
-            for (int start = begin; start < end; start += batch) {
+            for (int start = begin; start < end;) {
                 if (cancellationRequested())
                     return false;
                 const int rows = std::min(batch, end - start);
@@ -499,7 +487,7 @@ struct PreparedRows final {
                                            4);
                     uchar* target = destination + qsizetype(start - first + row) * stride +
                                     qsizetype(intersection.left() - region.left()) * 4;
-                    if (alpha == 0 || item.opaque) {
+                    if (directCopy) {
                         std::memcpy(target, source, size_t(intersection.width()) * 4);
                         continue;
                     }
@@ -510,13 +498,13 @@ struct PreparedRows final {
                         } else if (sourceAlpha != 0) {
                             // Keep all products until the final division, including background
                             // alpha, so translucent colors remain straight-alpha RGBA.
-                            const unsigned backgroundWeight = unsigned(alpha) * (255 - sourceAlpha);
+                            const unsigned backgroundWeight =
+                                unsigned(target[3]) * (255 - sourceAlpha);
                             const unsigned coverage = sourceAlpha * 255 + backgroundWeight;
-                            const unsigned values[3] = {red, green, blue};
                             for (int channel = 0; channel < 3; ++channel) {
                                 const unsigned numerator =
                                     unsigned(source[channel]) * sourceAlpha * 255 +
-                                    values[channel] * backgroundWeight;
+                                    unsigned(target[channel]) * backgroundWeight;
                                 target[channel] =
                                     static_cast<uchar>((numerator + coverage / 2) / coverage);
                             }
@@ -526,6 +514,7 @@ struct PreparedRows final {
                         target += 4;
                     }
                 }
+                start += rows;
             }
         }
         return !cancellationRequested();
@@ -925,6 +914,30 @@ calculateImageStitchingPdfComposedPage(const QVector<ImageStitchingItem>& items,
     return page;
 }
 
+QString imageStitchingDirectionKey(ImageStitchingDirection direction) {
+    switch (direction) {
+    case ImageStitchingDirection::Horizontal:
+        return QStringLiteral("horizontal");
+    case ImageStitchingDirection::Free:
+        return QStringLiteral("free");
+    case ImageStitchingDirection::Custom:
+        return QStringLiteral("custom");
+    case ImageStitchingDirection::Vertical:
+        return QStringLiteral("vertical");
+    }
+    return {};
+}
+
+ImageStitchingDirection imageStitchingDirectionFromKey(QStringView key) {
+    if (key == u"horizontal")
+        return ImageStitchingDirection::Horizontal;
+    if (key == u"free")
+        return ImageStitchingDirection::Free;
+    if (key == u"custom")
+        return ImageStitchingDirection::Custom;
+    return ImageStitchingDirection::Vertical;
+}
+
 QSize transformedSize(const ImageStitchingItem& item) {
     if (item.image.isNull())
         return {};
@@ -936,9 +949,25 @@ QSize transformedSize(const ImageStitchingItem& item) {
     return {qRound(bounds.width()), qRound(bounds.height())};
 }
 
+QImage prepareImageStitchingPreview(const QImage& original, const QImage& supplied) {
+    QImage preview = supplied.isNull() ? original : supplied;
+    if (preview.isNull())
+        return {};
+    if (preview.width() > previewExtent || preview.height() > previewExtent)
+        preview = snowCanvasScaleImage(preview, QSize(previewExtent, previewExtent),
+                                       Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    if (!preview.isNull() && preview.colorSpace().isValid() &&
+        preview.colorSpace() != QColorSpace(QColorSpace::SRgb))
+        preview = snowCanvasColorConvertedImage(preview, QColorSpace(QColorSpace::SRgb),
+                                                QImage::Format_ARGB32_Premultiplied);
+    if (!preview.isNull() && preview.devicePixelRatio() != 1)
+        preview.setDevicePixelRatio(1);
+    return preview;
+}
+
 QImage transformedPreview(const ImageStitchingItem& item) {
-    return snowCanvasTransformImage(boundedPreview(item.image, item.preview), item.transform,
-                                    Qt::FastTransformation);
+    return snowCanvasTransformImage(prepareImageStitchingPreview(item.image, item.preview),
+                                    item.transform, Qt::FastTransformation);
 }
 
 static ImageStitchingLayout
@@ -1049,6 +1078,12 @@ QRect resolveImageStitchingStaticImageRect(const ImageStitchingItem& item,
 
 ImageStitchingLayout calculateImageStitchingLayout(const QVector<ImageStitchingItem>& items,
                                                    const ImageStitchingSettings& settings) {
+    if (settings.direction == ImageStitchingDirection::Free && settingsValid(settings)) {
+        auto layout = image_stitching_detail::calculateFreeLayout(items, settings);
+        if (!items.isEmpty() && !layout.isValid())
+            layout.error = resourceError();
+        return layout;
+    }
     auto result = calculateAutomaticImageStitchingLayout(items, settings);
     if (!result.isValid())
         return result;
@@ -1080,6 +1115,47 @@ struct ImageStitchingDocument::Impl final {
     qint64 previewBytes = 0;
     mutable bool layoutDirty = true;
     mutable ImageStitchingLayout cachedLayout;
+
+    bool freeInitialized = false;
+    std::optional<image_stitching_detail::FreeLayoutCursor> freeCursor;
+
+    bool freeMode() const {
+        return outputType == ImageStitchingOutputType::StaticImage &&
+               settings.direction == ImageStitchingDirection::Free;
+    }
+    void enterFreeLayout() {
+        if (!freeInitialized && freeMode()) {
+            freeInitialized = true;
+            initializeFreePlacements();
+            layoutDirty = true;
+        }
+    }
+
+    void initializeFreePlacements() {
+        freeCursor.emplace();
+        if (items.isEmpty())
+            return;
+        const int reference = transformedSize(items.constFirst()).height();
+        for (auto& item : items)
+            item.freePlacement = freeCursor->resolve(item, settings, reference).placement;
+    }
+
+    image_stitching_detail::FreeLayoutCursor freeCursorForAppend() const {
+        if (freeCursor)
+            return *freeCursor;
+        image_stitching_detail::FreeLayoutCursor cursor;
+        if (!items.isEmpty()) {
+            const int reference = transformedSize(items.front()).height();
+            for (const auto& item : items)
+                cursor.resolve(item, settings, reference);
+        }
+        return cursor;
+    }
+
+    void invalidateGeometry() {
+        layoutDirty = true;
+        freeCursor.reset();
+    }
 
     void rebuildIndices() {
         indices.clear();
@@ -1136,6 +1212,10 @@ int ImageStitchingDocument::indexOf(quint64 id) const {
     return m_impl->indices.value(id, -1);
 }
 
+qint64 ImageStitchingDocument::previewBytes() const {
+    return m_impl->previewBytes;
+}
+
 quint64 ImageStitchingDocument::contentRevision() const {
     return m_impl->contentRevision;
 }
@@ -1156,8 +1236,12 @@ void ImageStitchingDocument::setSettings(const ImageStitchingSettings& settings)
     if (geometry != m_impl->settings)
         for (auto& item : m_impl->items)
             item.staticPlacement = {};
+    if (m_impl->freeInitialized)
+        image_stitching_detail::adjustFreeSpacing(m_impl->items,
+                                                  normalized.spacing - m_impl->settings.spacing);
     m_impl->settings = normalized;
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
+    m_impl->enterFreeLayout();
     emit changed();
     if (!adjustedFields.isEmpty())
         emit customGridAdjusted(adjustedFields);
@@ -1173,6 +1257,7 @@ void ImageStitchingDocument::setOutputType(ImageStitchingOutputType type) {
         type == m_impl->outputType)
         return;
     m_impl->outputType = type;
+    m_impl->enterFreeLayout();
     emit changed();
 }
 
@@ -1214,10 +1299,28 @@ quint64 ImageStitchingDocument::append(QImage image, QString label, QImage previ
         m_impl->error = preparationError();
         return 0;
     }
-    preview = boundedPreview(image, preview);
+    preview = prepareImageStitchingPreview(image, preview);
     if (preview.isNull()) {
         m_impl->error = preparationError();
         return 0;
+    }
+    ImageStitchingItem item{
+        m_impl->nextId, 1, std::move(image), std::move(preview), {}, std::move(label), {}, {}};
+    std::optional<image_stitching_detail::FreeLayoutCursor> nextFreeCursor;
+    if (m_impl->freeInitialized) {
+        nextFreeCursor = m_impl->freeCursorForAppend();
+        const int reference =
+            transformedSize(m_impl->items.isEmpty() ? item : m_impl->items.constFirst()).height();
+        item.freePlacement = nextFreeCursor->tryAppend(item, m_impl->settings, reference);
+        if (!item.freePlacement) {
+            if (m_impl->freeMode()) {
+                m_impl->error = resourceError();
+                return 0;
+            }
+            // Another output can still accept the image even if the saved Free layout is full.
+            item.freePlacement =
+                nextFreeCursor->resolve(item, m_impl->settings, reference).placement;
+        }
     }
     try {
         if (m_impl->items.size() == m_impl->items.capacity()) {
@@ -1231,23 +1334,17 @@ quint64 ImageStitchingDocument::append(QImage image, QString label, QImage previ
         m_impl->error = preparationError();
         return 0;
     }
-    auto owner = sourceLifetime(image, preview, &m_impl->error);
+    auto owner = sourceLifetime(item.image, item.preview, &m_impl->error);
     if (!owner)
         return 0;
-    if (!m_impl->admit(m_impl->sourceBytes + image.sizeInBytes(),
-                       m_impl->previewBytes + preview.sizeInBytes()))
+    if (!m_impl->admit(m_impl->sourceBytes + item.image.sizeInBytes(),
+                       m_impl->previewBytes + item.preview.sizeInBytes()))
         return 0;
     const quint64 id = m_impl->nextId++;
-    auto metadata = owner->metadata;
-    m_impl->items.append({id,
-                          1,
-                          std::move(image),
-                          std::move(preview),
-                          {},
-                          std::move(label),
-                          std::move(owner),
-                          std::move(metadata),
-                          {}});
+    item.metadata = owner->metadata;
+    item.resourceOwner = std::move(owner);
+    m_impl->items.append(std::move(item));
+    m_impl->freeCursor = nextFreeCursor;
     m_impl->indices.insert(id, static_cast<int>(m_impl->items.size() - 1));
     ++m_impl->contentRevision;
     const QStringList adjustedFields = normalizeCustomGrid(m_impl->settings, m_impl->items.size());
@@ -1269,7 +1366,7 @@ bool ImageStitchingDocument::replace(quint64 id, QImage image, QString label, QI
         m_impl->error = preparationError();
         return false;
     }
-    preview = boundedPreview(image, preview);
+    preview = prepareImageStitchingPreview(image, preview);
     if (preview.isNull()) {
         m_impl->error = preparationError();
         return false;
@@ -1285,6 +1382,8 @@ bool ImageStitchingDocument::replace(quint64 id, QImage image, QString label, QI
     item.image = std::move(image);
     item.preview = std::move(preview);
     item.label = std::move(label);
+    if (item.freePlacement)
+        item.freePlacement->pixelsPerPixel.reset();
     item.metadata = owner->metadata;
     item.resourceOwner = std::move(owner);
     item.transform = {};
@@ -1292,7 +1391,7 @@ bool ImageStitchingDocument::replace(quint64 id, QImage image, QString label, QI
     item.staticPlacement = {};
     ++item.revision;
     ++m_impl->contentRevision;
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
     emit changed();
     return true;
 }
@@ -1313,7 +1412,7 @@ bool ImageStitchingDocument::remove(quint64 id) {
         m_impl->selected = m_impl->items.isEmpty()
                                ? 0
                                : m_impl->items[std::min(index, int(m_impl->items.size()) - 1)].id;
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
     emit changed();
     if (selectionRemoved)
         emit selectionChanged();
@@ -1328,13 +1427,13 @@ void ImageStitchingDocument::clear() {
     ++m_impl->contentRevision;
     m_impl->selected = 0;
     static_cast<void>(m_impl->admit(0, 0));
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
     emit changed();
     emit selectionChanged();
 }
 
 bool ImageStitchingDocument::reverseItems() {
-    if (m_impl->items.size() < 2)
+    if (m_impl->items.size() < 2 || m_impl->freeMode())
         return false;
     std::reverse(m_impl->items.begin(), m_impl->items.end());
     const qsizetype middle = m_impl->items.size() / 2;
@@ -1342,7 +1441,7 @@ bool ImageStitchingDocument::reverseItems() {
     m_impl->resetPlacements(middle + m_impl->items.size() % 2, m_impl->items.size());
     m_impl->rebuildIndices();
     ++m_impl->contentRevision;
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
     emit changed();
     return true;
 }
@@ -1360,7 +1459,7 @@ bool ImageStitchingDocument::swapItems(quint64 first, quint64 second) {
     m_impl->indices.insert(first, b);
     m_impl->indices.insert(second, a);
     ++m_impl->contentRevision;
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
     emit changed();
     return true;
 }
@@ -1375,7 +1474,7 @@ bool ImageStitchingDocument::moveItem(quint64 id, int finalIndex) {
                             std::max(sourceIndex, finalIndex) + 1);
     m_impl->rebuildIndices();
     ++m_impl->contentRevision;
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
     emit changed();
     return true;
 }
@@ -1391,7 +1490,7 @@ bool ImageStitchingDocument::rotate(quint64 id, bool clockwise) {
     item.transform = canonicalTransform(item.transform * operation);
     ++item.revision;
     ++m_impl->contentRevision;
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
     emit changed();
     return true;
 }
@@ -1406,7 +1505,7 @@ bool ImageStitchingDocument::flip(quint64 id, bool horizontal) {
         item.transform * QTransform(horizontal ? -1 : 1, 0, 0, horizontal ? 1 : -1, 0, 0));
     ++item.revision;
     ++m_impl->contentRevision;
-    m_impl->layoutDirty = true;
+    m_impl->invalidateGeometry();
     emit changed();
     return true;
 }
@@ -1417,18 +1516,26 @@ bool ImageStitchingDocument::resetTransform(quint64 id) {
         return false;
     auto& item = m_impl->items[index];
     const bool orientationChanged = !item.transform.isIdentity();
-    const bool placementChanged = item.pdfPlacement != ImageStitchingPdfPlacement{};
-    const bool staticChanged = item.staticPlacement != ImageStitchingStaticPlacement{};
-    if (!orientationChanged && !placementChanged && !staticChanged)
+    const bool freeMode = m_impl->freeMode();
+    const bool placementChanged = !freeMode && item.pdfPlacement != ImageStitchingPdfPlacement{};
+    const bool staticChanged = !freeMode && item.staticPlacement != ImageStitchingStaticPlacement{};
+    const bool freeScaleChanged =
+        freeMode && item.freePlacement && item.freePlacement->pixelsPerPixel;
+    if (!orientationChanged && !placementChanged && !staticChanged && !freeScaleChanged)
         return true;
     item.transform = {};
-    item.pdfPlacement = {};
-    item.staticPlacement = {};
-    m_impl->layoutDirty = true;
+    if (freeScaleChanged)
+        item.freePlacement->pixelsPerPixel.reset();
+    if (placementChanged)
+        item.pdfPlacement = {};
+    if (staticChanged)
+        item.staticPlacement = {};
+    m_impl->invalidateGeometry();
     if (orientationChanged) {
         ++item.revision;
         ++m_impl->contentRevision;
-        m_impl->layoutDirty = true;
+        emit changed();
+    } else if (freeScaleChanged) {
         emit changed();
     } else {
         if (placementChanged)
@@ -1436,6 +1543,26 @@ bool ImageStitchingDocument::resetTransform(quint64 id) {
         if (staticChanged)
             emit staticPlacementChanged(id);
     }
+    return true;
+}
+
+bool ImageStitchingDocument::setFreePlacement(quint64 id,
+                                              const ImageStitchingFreePlacement& placement) {
+    const int index = indexOf(id);
+    if (index < 0 || !m_impl->freeMode() || m_impl->items[index].freePlacement == placement)
+        return false;
+    {
+        QScopedValueRollback<std::optional<ImageStitchingFreePlacement>> change(
+            m_impl->items[index].freePlacement, placement);
+        auto candidate = calculateImageStitchingLayout(m_impl->items, m_impl->settings);
+        if (!candidate.isValid())
+            return false;
+        m_impl->cachedLayout = std::move(candidate);
+        change.commit();
+    }
+    m_impl->freeCursor.reset();
+    m_impl->layoutDirty = false;
+    emit changed();
     return true;
 }
 
@@ -1577,6 +1704,7 @@ ScreenshotImageRowSource prepareImageStitchingRows(const QVector<ImageStitchingI
             return {};
         prepared->layout = layout;
         prepared->background = settings.background;
+        prepared->layered = settings.direction == ImageStitchingDirection::Free;
         prepared->cancelled = std::move(cancelled);
         prepared->items.reserve(items.size());
         prepared->sourceOwners.reserve(items.size());
@@ -1612,7 +1740,7 @@ ScreenshotImageRowSource prepareImageStitchingRows(const QVector<ImageStitchingI
                     return {};
                 }
             }
-            const bool opaque = settings.background.alpha() != 0 &&
+            const bool opaque = (prepared->layered || settings.background.alpha() != 0) &&
                                 cachedImageIsOpaque(item, pixels, prepared->cancelled);
             if (prepared->cancellationRequested()) {
                 report(error, cancellationError());

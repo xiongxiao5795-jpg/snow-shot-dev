@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "canvas_automatic_selection_test_support.h"
+#include "screenshot_clipboard_test_output.h"
 #include "physical_key_test_support.h"
+#include "snow_shot/presentation/canvasstatusreadout.h"
 #include "snow_shot/presentation/imageeditingdocument.h"
 #include "snow_shot/presentation/imageeditingwindow.h"
 #include "snow_shot/presentation/imageeditingcanvas.h"
+#include "snow_shot/presentation/screenshotcanvastoolstyles.h"
 #include "snow_shot/presentation/screenshottoolpalette.h"
 #include "snow_shot/presentation/screenshottoolpalettehost.h"
 #include "snow_shot/presentation/screenshotfloatingtoolpalettewindow.h"
@@ -18,6 +21,7 @@
 #include "snow_shot/storage/configurationstore.h"
 #include "snow_shot/presentation/styles/thememanager.h"
 #include <QClipboard>
+#include <QMimeData>
 #include <QElapsedTimer>
 #include <QThread>
 #include <QTimer>
@@ -26,6 +30,8 @@
 #include <QFileInfo>
 #include <QFileDialog>
 #include "snow_shot/presentation/screenshotprintservice.h"
+#include "snow_shot/presentation/screenshotairdropservice.h"
+#include "cloud_upload_test_support.h"
 #include <QDir>
 #include <QUuid>
 #include "snow_shot/presentation/screenshotclipboardcontent.h"
@@ -55,6 +61,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
@@ -77,29 +84,9 @@ void awaitCondition(const std::function<bool()>& condition, const char* message)
     }
     require(condition(), message);
 }
-QImage readCopiedImage() {
-#if defined(Q_OS_WIN)
-    // Image exports use the native clipboard even with the offscreen QPA plugin.
-    // Its QClipboard is separate, so inspect the published PNG directly on Windows.
-    const UINT pngFormat = RegisterClipboardFormatW(L"PNG");
-    require(pngFormat != 0, "register copied image PNG format");
-    bool opened = false;
-    awaitCondition([&] { return opened || (opened = OpenClipboard(nullptr) != FALSE); },
-                   "open native clipboard to inspect the copied image");
-    const auto close = qScopeGuard([] { CloseClipboard(); });
-    const auto handle = static_cast<HGLOBAL>(GetClipboardData(pngFormat));
-    require(handle != nullptr, "copied image publishes native PNG data");
-    const auto* bytes = static_cast<const char*>(GlobalLock(handle));
-    require(bytes != nullptr, "copied image PNG data can be read");
-    const auto unlock = qScopeGuard([handle] { GlobalUnlock(handle); });
-    const auto image =
-        QImage::fromData(QByteArrayView(bytes, static_cast<qsizetype>(GlobalSize(handle))), "PNG");
-    require(!image.isNull(), "copied image PNG data decodes successfully");
-    return image;
-#else
-    return QApplication::clipboard()->image();
-#endif
-}
+} // namespace
+
+namespace {
 void sendWindowInteraction(snow_shot::presentation::ImageEditingWindow& window, bool active) {
 #if defined(Q_OS_WIN)
     MSG message{};
@@ -415,7 +402,7 @@ void verifyScrollingSourceImport() {
         });
         copy->click();
         awaitCondition([&] { return copied; }, "clicking copy exports the edited scrolling image");
-        require(readCopiedImage().convertToFormat(QImage::Format_RGBA8888) ==
+        require(readScreenshotClipboardOutput().image.convertToFormat(QImage::Format_RGBA8888) ==
                         edited.convertToFormat(QImage::Format_RGBA8888) &&
                     !editor.dirty() && editor.modal()->isOpen(),
                 "copy publishes the full edited image and keeps the editor open");
@@ -557,8 +544,34 @@ void verifyRecognitionOverlayViewport() {
     require(configuration.setValue(fillKey, QStringLiteral("blur")), "select filtered OCR");
     const snow_shot::storage::TextRecognitionSettings settings;
     const bool highlight = settings.showTextHighlighting();
-    const auto restoreHighlight = qScopeGuard([&] { settings.setShowTextHighlighting(highlight); });
-    require(settings.setShowTextHighlighting(false), "disable OCR highlighting in pixel fixture");
+    const bool recognitionImages = settings.saveRecognitionResultAsImage();
+    const auto restoreRecognition = qScopeGuard([&] {
+        settings.setShowTextHighlighting(highlight);
+        settings.setSaveRecognitionResultAsImage(recognitionImages);
+    });
+    require(settings.setShowTextHighlighting(false) &&
+                settings.setSaveRecognitionResultAsImage(true),
+            "configure recognition image export for the pixel fixture");
+
+    const snow_shot::storage::ScreenshotSettings output;
+    const snow_shot::storage::CloudUploadConfigurationSettings cloud;
+    const auto previousCloud = cloud.settings();
+    const auto previousDirectory = output.imageSaveDirectory();
+    const auto previousFormat = output.imageFormat();
+    const auto previousName = output.autoSaveFilenameFormat();
+    const auto restoreOutput = qScopeGuard([&] {
+        output.setImageSaveDirectory(previousDirectory);
+        output.setImageFormat(previousFormat);
+        output.setAutoSaveFilenameFormat(previousName);
+        cloud.setSettings(previousCloud);
+    });
+    QTemporaryDir directory;
+    cloud_upload_tests::S3Server server;
+    const auto profile = cloud_upload_tests::configuration(server.url());
+    require(directory.isValid() && output.setImageSaveDirectory(directory.path()) &&
+                output.setImageFormat(QStringLiteral("png")) &&
+                cloud.setSettings({{profile}, profile.id}),
+            "configure isolated recognition image destinations");
 
     DeferredOcr provider;
     QImage printed;
@@ -569,6 +582,16 @@ void verifyRecognitionOverlayViewport() {
     ImageEditingServices services;
     services.providers = [&] { return ScreenshotPinnedRecognitionProviders{&provider}; };
     services.printing = &printing;
+#ifdef Q_OS_MACOS
+    QImage shared;
+    QWidget* shareOwner = nullptr;
+    ScreenshotAirDropService sharing([&](QWidget* owner, QString path, auto completion) {
+        shareOwner = owner;
+        shared = QImage(path);
+        completion({ScreenshotAirDropService::Status::Shared, {}});
+    });
+    services.airDrop = &sharing;
+#endif
     ImageEditingWindow window(services);
     ImageEditingSource input;
     input.image = QImage(160, 100, QImage::Format_ARGB32_Premultiplied);
@@ -577,12 +600,38 @@ void verifyRecognitionOverlayViewport() {
     window.present(input);
     require(window.document()->crop(ImageEditingDocument::CropAxis::Rows, 68, 80),
             "overlay fixture crops the recognition target");
+    require(!window.document()
+                 ->runtime()
+                 .applyAnnotationTransaction(QByteArrayLiteral(
+                     R"({"version":1,"operations":[{"type":"rectangle","bounds":[23,40,10,10]}]})"))
+                 .isEmpty(),
+            "overlay fixture keeps a drawing on the standard composite");
+    int completed = 0;
+    QObject::connect(&window, &ImageEditingWindow::exportFinished, &window, [&](bool success) {
+        require(success, "recognition image export succeeds");
+        ++completed;
+    });
+    const auto invoke = [&](auto action) {
+        const int expected = completed + 1;
+        action();
+        awaitCondition([&] { return completed == expected; }, "image output completes once");
+    };
+    const auto save = [&](const QString& name) {
+        require(output.setAutoSaveFilenameFormat(name), "choose a unique test output filename");
+        invoke([&] { window.palette()->quickSaveRequested(); });
+        return QImage(directory.filePath(name + QStringLiteral(".png")));
+    };
     window.palette()->ocrRequested();
     const auto bounds = window.document()->bounds();
     require(provider.pending.size() == 1 && provider.pending[0].request.canvasRect == bounds &&
                 provider.pending[0].request.image == window.document()->image() &&
                 provider.pending[0].request.renderFilteredImage,
             "fresh OCR and its filtered background use the cropped image");
+    const auto pending = save(QStringLiteral("pending"));
+    require(ScreenshotPrintService::opaqueImage(pending) ==
+                    ScreenshotPrintService::opaqueImage(window.document()->image()) &&
+                window.dirty(),
+            "pending OCR exports the base image and leaves annotations unsaved");
     const QRectF lineBounds(bounds.topLeft() + QPointF(18, 10), QSizeF(40, 8));
     auto presentation = std::make_shared<ScreenshotOcrPresentation>();
     presentation->selection = bounds.toAlignedRect();
@@ -645,20 +694,38 @@ void verifyRecognitionOverlayViewport() {
     require(aligned(), "resize keeps the overlay aligned");
     canvas->fit();
     require(aligned(), "Fit keeps the overlay aligned");
-    bool printCompleted = false;
-    QObject::connect(&window, &ImageEditingWindow::exportFinished, &window,
-                     [&](bool success) { printCompleted = success; });
-    window.palette()->printRequested();
-    awaitCondition([&] { return printCompleted && !printed.isNull(); },
-                   "printing receives an immutable OCR viewport");
+    const QImage saved = save(QStringLiteral("recognized"));
+    invoke([&] { window.palette()->printRequested(); });
+    invoke([&] { window.palette()->cloudUploadRequested(); });
+    require(printed.size() == window.document()->image().size() &&
+                printed == ScreenshotPrintService::opaqueImage(saved) &&
+                printed == ScreenshotPrintService::opaqueImage(QImage::fromData(server.body)),
+            "save, print and upload receive the same recognition pixels at document resolution");
+#ifdef Q_OS_MACOS
+    require(window.palette()->findChild<QWidget*>(QStringLiteral("screenshotAirDropButton")),
+            "Image Editing exposes AirDrop on macOS");
+    invoke([&] { window.palette()->airDropRequested(); });
+    require(shareOwner == window.canvas()->window() &&
+                ScreenshotPrintService::opaqueImage(shared) == printed,
+            "editor AirDrop shares the same raster from the editor window");
+#endif
     const auto printedColor = [&](const QPointF& point) {
-        const auto position = canvas->canvasToViewTransform().map(point);
-        return printed.pixelColor(qRound(position.x() * printed.width() / view->width()),
-                                  qRound(position.y() * printed.height() / view->height()));
+        const auto position = point - bounds.topLeft();
+        return printed.pixelColor(qRound(position.x() * printed.width() / bounds.width()),
+                                  qRound(position.y() * printed.height() / bounds.height()));
     };
     require(printedColor(bounds.topLeft() + QPointF(3, 3)) == QColor(Qt::blue) &&
                 printedColor(filteredBounds.topLeft() + QPointF(3, 3)) == QColor(Qt::green),
             "printing composites both the original and filtered pixels beneath OCR");
+    require(settings.setSaveRecognitionResultAsImage(false), "disable recognition image output");
+    const auto standard = save(QStringLiteral("standard"));
+    require(!standard.isNull() && ScreenshotPrintService::opaqueImage(standard) != printed,
+            "disabling recognition output restores the annotated image");
+    require(settings.setSaveRecognitionResultAsImage(true), "restore recognition output");
+    window.palette()->showOriginalImageRequested(true);
+    require(save(QStringLiteral("original")) == standard,
+            "Show Original Image exports the standard composite");
+    window.palette()->showOriginalImageRequested(false);
     const auto transform = canvas->canvasToViewTransform();
     const QPointF selectionStart = transform.map(lineBounds.center());
     const QPointF selectionEnd =
@@ -673,6 +740,8 @@ void verifyRecognitionOverlayViewport() {
     window.palette()->textEditRequested();
     require(window.recognition()->editing() && !view->showsOcrLayer(),
             "Edit opens the OCR text draft");
+    require(save(QStringLiteral("editor")) == standard,
+            "saving with the OCR editor open uses the standard composite");
     window.palette()->textEditRequested();
     require(!window.recognition()->editing() && view->boxSelectionEnabled() && aligned(),
             "Edit toggles back to the aligned OCR layer");
@@ -810,6 +879,9 @@ void verifyCanvasToolbar(snow_shot::presentation::ImageEditingSource original) {
     auto* toolbar = canvas->findChild<QWidget*>(QStringLiteral("imageEditingCanvasToolbar"));
     auto* fit = canvas->findChild<AdButton*>(QStringLiteral("imageEditingFit"));
     auto* actual = canvas->findChild<AdButton*>(QStringLiteral("imageEditingActualSize"));
+    auto* hint = canvas->findChild<CanvasStatusReadout*>(QStringLiteral("imageEditingZoom"));
+    require(hint && hint->isHidden() && !hint->dismissalTimer()->isActive(),
+            "opening an image must fit it without flashing a scale readout");
     require(toolbar && toolbar->parentWidget() == canvas && !toolbar->isWindow() &&
                 toolbar->isVisible() && fit && actual && fit->parentWidget() == toolbar &&
                 actual->parentWidget() == toolbar,
@@ -855,16 +927,29 @@ void verifyCanvasToolbar(snow_shot::presentation::ImageEditingSource original) {
         QWheelEvent zoom(anchor, canvas->mapToGlobal(anchor.toPoint()), {}, QPoint(0, 120),
                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
         QApplication::sendEvent(canvas, &zoom);
+        require(hint->isVisible() && hint->text() == QStringLiteral("Scale: 115%") &&
+                    hint->x() == 8 && canvas->height() - hint->geometry().bottom() - 1 == 8 &&
+                    hint->dismissalTimer()->isActive() &&
+                    hint->dismissalTimer()->interval() == 1000,
+                "wheel zoom displays a transient scale relative to actual size at every DPI");
+        const int timerId = hint->dismissalTimer()->timerId();
         mouse(canvas, QEvent::MouseButtonPress, anchor, Qt::MiddleButton, Qt::MiddleButton);
         mouse(canvas, QEvent::MouseMove, anchor + QPointF(20, 10), Qt::NoButton, Qt::MiddleButton);
         mouse(canvas, QEvent::MouseButtonRelease, anchor + QPointF(20, 10), Qt::MiddleButton,
               Qt::NoButton);
         require(toolbar->geometry() == geometry,
                 "image zooming and panning preserve the floating toolbar geometry");
+        require(hint->dismissalTimer()->timerId() == timerId,
+                "panning must not restart the zoom readout timer");
         fit->click();
         require(qFuzzyCompare(canvas->zoom(), fittedZoom) && canvas->center() == fittedCenter &&
                     window.document()->checkpoint() == checkpoint && !window.dirty(),
                 "floating fit action restores the camera without changing image content");
+        hint->dismissalTimer()->stop();
+        require(
+            QMetaObject::invokeMethod(hint->dismissalTimer(), "timeout", Qt::DirectConnection) &&
+                hint->isHidden(),
+            "the editing scale readout must disappear after the shared timeout");
         mouse(toolbar, QEvent::MouseButtonPress, {1, 1}, Qt::MiddleButton, Qt::MiddleButton);
         mouse(toolbar, QEvent::MouseMove, {6, 1}, Qt::NoButton, Qt::MiddleButton);
         mouse(toolbar, QEvent::MouseButtonRelease, {6, 1}, Qt::MiddleButton, Qt::NoButton);
@@ -1270,7 +1355,252 @@ void verifyRecognitionHistoryShortcuts() {
         window.shutdown();
     }
 }
+void annotationOptionShortcutReachesEditorCanvas() {
+    using namespace snow_shot::presentation;
+    ImageEditingWindow window;
+    window.present(source());
+    auto* canvas = window.canvas();
+    require(window.palette()->activateToolShortcut(ScreenshotToolPalette::Tool::Shape) &&
+                canvas->canvasTool() == SnowCanvasTool::Shape,
+            "activate Shape on the image editor canvas");
+    const auto currentShape = [canvas] {
+        return canvas->canvasStyleToolbarState().shapeStyle.shape;
+    };
+    const auto pressTab = [](QWidget& widget) {
+        for (const auto type : {QEvent::ShortcutOverride, QEvent::KeyPress, QEvent::KeyRelease}) {
+            PhysicalKeyEvent event(type, Qt::Key_Tab, Qt::NoModifier);
+            QApplication::sendEvent(&widget, &event);
+        }
+    };
+    const auto originalShape = currentShape();
+    pressTab(*canvas);
+    const auto cycledShape = currentShape();
+    require(originalShape != cycledShape &&
+                cycledShape == window.palette()->creationStyleDefaults().rectangle.shape,
+            "Tab advances the image editor canvas and its toolbar together");
+
+    QLineEdit field(canvas);
+    field.show();
+    canvas->window()->activateWindow();
+    field.setFocus();
+    QApplication::processEvents();
+    require(field.hasFocus(), "the annotation shortcut fixture must focus the text field");
+    pressTab(field);
+    require(currentShape() == cycledShape, "the text field owns its Tab input");
+    field.hide();
+
+    QWidget popup(canvas);
+    popup.setProperty("adqt.interaction.surface", true);
+    popup.setFocusPolicy(Qt::StrongFocus);
+    popup.show();
+    popup.setFocus();
+    require(popup.hasFocus(), "the annotation shortcut fixture must focus the popup");
+    pressTab(popup);
+    require(currentShape() == cycledShape, "popup input must not cycle annotation options");
+}
+
+void verifySharedAnnotationStyles() {
+    using namespace snow_shot::presentation;
+    const auto original = screenshotCanvasToolStyleDefaults();
+    const auto restore =
+        qScopeGuard([&] { static_cast<void>(persistScreenshotCanvasToolStyles(original)); });
+
+    ImageEditingWindow editor;
+    auto shape = original.rectangle;
+    shape.strokeWidth = 13.0;
+    require(persistScreenshotCanvasStyleEdit(
+                SnowCanvasShapeEdit{shape, SnowCanvasShapeStylePropertyStrokeWidth}),
+            "save a shape style through the screenshot preference path");
+    const auto openShapeTool = [](ImageEditingWindow& window, double expectedWidth) {
+        require(window.palette()->activateToolShortcut(ScreenshotToolPalette::Tool::Shape) &&
+                    window.canvas()->canvasTool() == SnowCanvasTool::Shape &&
+                    window.canvas()->canvasStyleToolbarState().shapeStyle.strokeWidth ==
+                        expectedWidth &&
+                    window.palette()->creationStyleDefaults().rectangle.strokeWidth ==
+                        expectedWidth,
+                "the editor canvas and palette use the shared creation width");
+    };
+    editor.present(source());
+    openShapeTool(editor, shape.strokeWidth);
+    require(editor.palette()->stepStrokeWidth(1),
+            "commit a creation width from the editor toolbar");
+    const double editedWidth = editor.canvas()->canvasStyleToolbarState().shapeStyle.strokeWidth;
+    require(editedWidth > shape.strokeWidth &&
+                screenshotCanvasToolStyleDefaults().rectangle.strokeWidth == editedWidth,
+            "the screenshot preference reader sees the editor's committed width");
+    require(!editor.document()->dirty(), "changing a creation style leaves the image clean");
+
+    ImageEditingWindow restored;
+    auto drawing = source();
+    SnowCanvasRuntime older{SnowCanvasRuntimeConfig{original}};
+    require(!older
+                 .applyAnnotationTransaction(
+                     R"({"version":1,"operations":[{"type":"rectangle","bounds":[-19,16,2,2]}]})")
+                 .isEmpty(),
+            "create an annotated image with older creation styles");
+    const auto checkpoint = older.documentCheckpoint();
+    for (const bool fullSession : {true, false}) {
+        drawing.canvasSession = fullSession ? older.serializeDocumentSession() : QByteArray{};
+        drawing.canvasHistory = fullSession ? QByteArray{} : older.serializeDocumentHistory();
+        restored.present(drawing);
+        openShapeTool(restored, editedWidth);
+        require(restored.document()->runtime().documentCheckpoint() == checkpoint &&
+                    restored.document()->runtime().canUndo() && !restored.document()->dirty(),
+                "loading shared styles preserves the imported annotations and undo history");
+    }
+}
 } // namespace
+
+void runImageEditingOcrCopyShortcutTests() {
+    using namespace snow_shot::presentation;
+    const snow_shot::storage::ScreenshotShortcutSettings shortcuts;
+    const snow_shot::storage::TextRecognitionSettings settings;
+    const QString id = QStringLiteral("text_recognition_copy");
+    const auto original = shortcuts.shortcuts(id);
+    const auto formatting = settings.defaultFormatting();
+    const auto punctuation = settings.defaultPunctuation();
+    const auto restore = qScopeGuard([&] {
+        shortcuts.setShortcuts(id, original);
+        settings.setDefaultFormatting(formatting);
+        settings.setDefaultPunctuation(punctuation);
+    });
+    const auto copyBinding = snow_shot::shortcuts::bindingFromKeyEvent(
+        PhysicalKeyEvent(QEvent::KeyPress, Qt::Key_D, Qt::ShiftModifier, QStringLiteral("D")));
+    require(shortcuts.setShortcuts(id, {copyBinding}) &&
+                settings.setDefaultFormatting(QStringLiteral("remove")) &&
+                settings.setDefaultPunctuation(QStringLiteral("half")),
+            "configure the shared copy shortcut and OCR transforms");
+    DeferredOcr provider;
+    ImageEditingServices services;
+    services.providers = [&] { return ScreenshotPinnedRecognitionProviders{&provider}; };
+    ImageEditingWindow window(services);
+    window.present(source());
+    auto* canvas = window.canvas();
+    require(window.palette()->activateDrawingShortcut(QStringLiteral("shape")),
+            "activate the shape tool");
+    canvas->window()->activateWindow();
+    canvas->setFocus();
+    QApplication::processEvents();
+    const auto press = [](QWidget* receiver) {
+        for (auto type : {QEvent::KeyPress, QEvent::KeyRelease}) {
+            PhysicalKeyEvent event(type, Qt::Key_D, Qt::ShiftModifier, QStringLiteral("D"));
+            QApplication::sendEvent(receiver, &event);
+        }
+    };
+    press(canvas);
+    press(canvas);
+    require(provider.pending.size() == 1 && window.recognition()->active() &&
+                window.recognition()->mode() ==
+                    ScreenshotRecognitionSessionController::Mode::Text &&
+                window.palette()->activeToolForTests() == ScreenshotToolPalette::Tool::Ocr,
+            "copy immediately selects the OCR tool and repeated copy joins the visible request");
+    auto presentation = std::make_shared<ScreenshotOcrPresentation>();
+    presentation->selection = window.document()->bounds().toAlignedRect();
+    for (const QString& text : {QStringLiteral("Alpha！"), QStringLiteral("Beta")}) {
+        ScreenshotOcrLine line;
+        line.text = text;
+        line.quad =
+            QPolygonF(QRectF(-20, 15 + static_cast<qreal>(presentation->lines.size()), 5, 1));
+        presentation->lines.append(line);
+    }
+    presentation->prepareForRendering();
+    provider.complete(0, presentation);
+    const auto expected = QStringLiteral("Alpha!Beta");
+    auto* view = canvas->parentWidget()->findChild<ScreenshotRecognitionWindow*>();
+    require(QApplication::clipboard()->text() == expected && view && view->isVisible() &&
+                window.recognition()->active() &&
+                window.palette()->activeToolForTests() == ScreenshotToolPalette::Tool::Ocr,
+            "copy formats the full original and keeps the recognition view open");
+
+    window.palette()->textEditRequested();
+    const QPointer<QTextEdit> editor =
+        canvas->parentWidget()->findChild<QTextEdit*>(QStringLiteral("screenshotOcrEditor"));
+    require(editor && editor->isVisible(), "open the OCR draft");
+    const QString draft = QStringLiteral("Draft only");
+    window.recognition()->setTextDraft(draft);
+    editor->selectAll();
+    editor->setFocus();
+    QApplication::processEvents();
+    const auto sentinel = QStringLiteral("Previous clipboard");
+    QApplication::clipboard()->setText(sentinel);
+    press(editor);
+    require(QApplication::clipboard()->text() == sentinel &&
+                editor->toPlainText() == QStringLiteral("D"),
+            "Shift+D types into the focused draft without triggering OCR copy");
+    editor->selectAll();
+    canvas->setFocus();
+    press(canvas);
+    require(QApplication::clipboard()->text() == expected && provider.pending.size() == 1 &&
+                !window.recognition()->editing() && view->isVisible() &&
+                (!editor || !editor->isVisible()) &&
+                window.recognition()->textDraft() == QStringLiteral("D"),
+            "copy leaves the draft for the original result and retains the draft text");
+    window.recognition()->setShowOriginalImage(true);
+    press(canvas);
+    require(!window.recognition()->showOriginalImage() && view->isVisible(),
+            "copy returns from the original image preview to the recognition result");
+
+    require(window.document()->crop(ImageEditingDocument::CropAxis::Rows, 1, 3),
+            "replace the OCR target");
+    canvas->setFocus();
+    press(canvas);
+    require(provider.pending.size() == 2 &&
+                provider.pending.last().request.image == window.document()->image(),
+            "fresh editor OCR uses the cropped document state");
+    QApplication::clipboard()->setText(sentinel);
+    provider.complete(1, presentation);
+    require(QApplication::clipboard()->text() == sentinel, "a newer clipboard write wins");
+    require(window.document()->crop(ImageEditingDocument::CropAxis::Columns, 1, 3),
+            "create an uncached target");
+    press(canvas);
+    require(provider.pending.size() == 3, "start OCR before replacing this target");
+    require(window.document()->undo(), "leave the target with pending OCR");
+    provider.complete(2, presentation);
+    require(QApplication::clipboard()->text() == sentinel,
+            "stale target completion cannot publish");
+    press(canvas);
+    require(provider.pending.size() == 3 && QApplication::clipboard()->text() == expected,
+            "the restored target reuses its completed OCR");
+    require(window.document()->redo(), "restore the target whose OCR was cancelled");
+    QApplication::clipboard()->setText(sentinel);
+    press(canvas);
+    require(provider.pending.size() == 4,
+            "restart the cancelled recognition on the restored target");
+    provider.complete(3, {}, QStringLiteral("OCR failed"));
+    require(QApplication::clipboard()->text() == sentinel,
+            "recognition failures preserve the clipboard");
+    press(canvas);
+    require(provider.pending.size() == 5, "retry after failed recognition");
+    provider.complete(4, std::make_shared<ScreenshotOcrPresentation>());
+    require(QApplication::clipboard()->mimeData()->hasText() &&
+                QApplication::clipboard()->text().isEmpty(),
+            "successful empty editor OCR replaces the clipboard with empty text");
+    window.shutdown();
+#if SNOW_SHOT_ENABLE_TEXT_TRANSLATION
+    auto translatedSource = source();
+    translatedSource.recognition.text = ScreenshotOcrRecognitionResult{presentation};
+    auto translation = std::make_shared<ScreenshotOcrPresentation>(*presentation);
+    translation->setLineText(0, QStringLiteral("Translated line"));
+    translatedSource.recognition.translatedText = translation;
+    ImageEditingWindow translatedWindow;
+    translatedWindow.present(std::move(translatedSource));
+    translatedWindow.palette()->textTranslationRequested();
+    auto* translatedSession = translatedWindow.recognition();
+    require(translatedSession && translatedSession->translating(), "open the cached translation");
+    auto* translatedCanvas = translatedWindow.canvas();
+    translatedCanvas->window()->activateWindow();
+    translatedCanvas->setFocus();
+    QApplication::processEvents();
+    press(translatedCanvas);
+    require(translatedSession->active() && !translatedSession->translating() &&
+                translatedWindow.palette()->activeToolForTests() ==
+                    ScreenshotToolPalette::Tool::Ocr &&
+                QApplication::clipboard()->text() == expected,
+            "copy selects original OCR from a translated editor without a provider");
+    translatedWindow.shutdown();
+#endif
+}
+
 void runImageEditingEntryPointTests() {
     const int font = QFontDatabase::addApplicationFont(
         QStringLiteral(":/recording-test-fonts/SnowRecordingTestSans-Regular.ttf"));
@@ -1278,6 +1608,7 @@ void runImageEditingEntryPointTests() {
     QApplication::setFont(QFont(QFontDatabase::applicationFontFamilies(font).first(), 12));
     verifySourceLoading(source());
     verifyScrollingSourceImport();
+    annotationOptionShortcutReachesEditorCanvas();
 }
 void runImageEditingImportTests();
 void runImageEditingLifetimeTests();
@@ -1300,6 +1631,10 @@ void runImageEditingTests() {
         QStringLiteral(":/recording-test-fonts/SnowRecordingTestSans-Regular.ttf"));
     require(font >= 0, "editor fixtures load the bundled font");
     QApplication::setFont(QFont(QFontDatabase::applicationFontFamilies(font).first(), 12));
+    if (QApplication::arguments().contains(QStringLiteral("--image-editing-style-only"))) {
+        verifySharedAnnotationStyles();
+        return;
+    }
     if (QApplication::arguments().contains(QStringLiteral("--image-editing-import-only"))) {
         runImageEditingImportTests();
         return;

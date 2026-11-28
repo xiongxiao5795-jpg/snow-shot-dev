@@ -82,7 +82,8 @@ void prepare(ImageStitchingWindow& window) {
 QString status(ImageStitchingWindow& window) {
     auto* service = adqt::widgets::AdMessageService::instance(window.editor()->window());
     for (auto* message : service->findChildren<adqt::widgets::AdMessageHandle*>())
-        if (message->isOpen() && message->key() == QStringLiteral("collageStatus"))
+        if (message->isOpen() && (message->key() == QStringLiteral("collageStatus") ||
+                                  message->key() == QStringLiteral("collagePdfExportResult")))
             return message->content();
     return {};
 }
@@ -140,6 +141,54 @@ void choosingLocksAndCancelPreservesContent() {
                 window.document()->items().front().id == items.front().id,
             "late chooser callbacks cannot start or duplicate canceled export");
     window.shutdown();
+}
+
+void latePdfChoicesDoNotRetainImages() {
+    QVector<ImageStitchingWindowServices::PdfChoice> choices;
+    std::atomic_int writes{0};
+    int completions = 0;
+    ImageStitchingWindowServices services;
+    services.choosePdfDestination = [&](QWidget*, ImageStitchingPdfExportMode, auto complete) {
+        choices.append(std::move(complete));
+    };
+    services.exportPdf = [&](const auto&, const auto&, const auto&, auto, auto) {
+        ++writes;
+        return ImageStitchingPdfExportResult{};
+    };
+    std::weak_ptr<void> finalImage;
+    {
+        ImageStitchingWindow window(nullptr, services);
+        prepare(window);
+        const auto firstId = window.document()->items().front().id;
+        const std::weak_ptr<void> removedImage = window.document()->items().front().resourceOwner;
+        QObject::connect(&window, &ImageStitchingWindow::pdfExportFinished, &window,
+                         [&](const auto& result) {
+                             require(result.cancelled && result.totalCount == 2,
+                                     "cancellation reports the original PDF snapshot page count");
+                             ++completions;
+                         });
+        window.save();
+        require(choices.size() == 1 && window.busy() && window.document()->remove(firstId) &&
+                    !removedImage.expired(),
+                "the pending chooser owns the immutable export snapshot");
+        window.requestClose();
+        require(!window.busy() && window.modal()->isOpen() && completions == 1,
+                "canceling the chooser keeps the editing session open");
+        waitUntil([&] { return removedImage.expired(); },
+                  "the canceled chooser releases removed pixels before its callback finishes");
+
+        finalImage = window.document()->items().front().resourceOwner;
+        window.save();
+        require(choices.size() == 2 && window.busy(), "a fresh destination request can start");
+        window.shutdown();
+    }
+    waitUntil([&] { return finalImage.expired(); },
+              "window destruction releases pending PDF imagery with detached callbacks retained");
+    for (auto& choice : choices)
+        choice(ImageStitchingPdfDestination{QStringLiteral("late.pdf"), false});
+    flush();
+    require(writes.load() == 0 && completions == 1,
+            "late destination callbacks cannot open a writer or finish the export again");
 }
 
 void pendingClearConfirmationBlocksExport() {
@@ -257,7 +306,10 @@ void partialFailureReportsAndRetryCloses() {
     QObject::connect(&window, &ImageStitchingWindow::pdfExportFinished, &window,
                      [&](const auto&) { ++completed; });
     window.save();
-    waitUntil([&] { return !window.busy(); }, "partial export completes");
+    QTemporaryDir directory;
+    window.addFiles({directory.filePath(QStringLiteral("missing.png"))}, true);
+    waitUntil([&] { return !window.busy() && !window.loading(); },
+              "partial export and deferred import complete");
     require(window.modal()->isOpen() && completed == 1 && window.document()->items().size() == 2 &&
                 status(window).contains(QStringLiteral("Saved pages: 1")) &&
                 status(window).contains(QStringLiteral("001_second.pdf")) &&
@@ -733,6 +785,7 @@ int main(int argc, char* argv[]) {
                 "temporary storage initializes without accessing user settings");
         styles::ThemeManager::instance().initialize(application);
         choosingLocksAndCancelPreservesContent();
+        latePdfChoicesDoNotRetainImages();
         pendingClearConfirmationBlocksExport();
         cancellationWaitsForCleanup();
         partialFailureReportsAndRetryCloses();
