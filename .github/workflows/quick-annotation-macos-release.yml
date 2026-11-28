@@ -98,9 +98,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.tools/qt-static
-          key: quick-annotation-static-qt-xcode27.2-${{ runner.arch }}-${{ hashFiles('scripts/build-static-qt.sh', 'scripts/validate-static-qt.py', 'scripts/static-qt-features.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**') }}
-          restore-keys: |
-            quick-annotation-static-qt-xcode27.2-${{ runner.arch }}-
+          # A static Qt kit embeds its zlib and libpng ABI fingerprints.
+          key: quick-annotation-static-qt-xcode27.2-${{ runner.arch }}-${{ hashFiles('.tools/macos/installed/static/arm64-osx-snow-shot-static/share/zlib/vcpkg_abi_info.txt', '.tools/macos/installed/static/arm64-osx-snow-shot-static/share/libpng/vcpkg_abi_info.txt', 'scripts/build-static-qt.sh', 'scripts/validate-static-qt.py', 'scripts/static-qt-features.json', 'vcpkg.json', 'vcpkg-configuration.json', 'cmake/vcpkg-overlay-ports/**', 'cmake/vcpkg-overlay-triplets/**') }}
       - name: Build upstream static Qt
         id: static-qt
         run: scripts/build-static-qt.sh --arch arm64 --install-prefix "$GITHUB_WORKSPACE/.tools/qt-static" --parallel 3
