@@ -125,6 +125,93 @@ QJsonArray documentSlots(const SnowCanvasRuntime& runtime) {
         .value(QStringLiteral("slots"))
         .toArray();
 }
+void boundDraftEditsReachOtherEditorsAndPreserveUneditedFields() {
+    namespace storage = snow_shot::storage;
+    auto& config = storage::ApplicationStorage::instance().configuration();
+    const auto saved = config.snapshot();
+    const auto restore =
+        qScopeGuard([&] { require(config.applySnapshot(saved), "restore styles"); });
+    require(storage::DrawingSettings().setSyncToolColors(false), "set independent tool colors");
+    const auto serial = QStringLiteral("drawing/serial_number_text_style");
+    const auto shape = QStringLiteral("drawing/shape_text_style");
+    const auto plainArrow = QStringLiteral("drawing/arrow_style");
+    const auto seqArrow = QStringLiteral("drawing/serial_number_arrow_style");
+    const auto size = QStringLiteral("font_size");
+    const auto width = QStringLiteral("stroke_width");
+    const auto marker = QStringLiteral("future_field");
+    const QJsonObject serialStyle{{size, 47}, {QStringLiteral("bold"), true}, {marker, 5}};
+    const QJsonObject shapeStyle{{size, 32}, {QStringLiteral("italic"), true}, {marker, 8}};
+    require(config.setValues({{serial, serialStyle},
+                              {shape, shapeStyle},
+                              {plainArrow, QJsonObject{{width, 2}, {marker, 1}}},
+                              {seqArrow, QJsonObject{{width, 9}, {marker, 2}}}}),
+            "seed independent styles with unknown future properties");
+    const auto initial = screenshotCanvasToolStyleDefaults();
+    SnowCanvasWidget canvas;
+    SnowCanvasWidget peer;
+    ScreenshotToolPalette palette(options());
+    ScreenshotToolPalette peerPalette(options());
+    ScreenshotStyleBinding binding(palette, canvas, &palette);
+    ScreenshotStyleBinding peerBinding(peerPalette, peer, &peerPalette);
+    const auto start = [](SnowCanvasWidget& editor) {
+        editor.resize(500, 310);
+        editor.show();
+        require(editor.setCanvasTool(SnowCanvasTool::SerialNumber), "start sequence label");
+        mouse(editor, QEvent::MouseButtonPress, {80, 80});
+        mouse(editor, QEvent::MouseMove, {220, 120});
+        mouse(editor, QEvent::MouseButtonRelease, {220, 120});
+        require(editor.hasActiveTextEditing(), "drag starts a new sequence label draft");
+    };
+    start(peer);
+    start(canvas);
+    auto patch = initial.text;
+    patch.fontSize = 38;
+    require(canvas.canvasStyleToolbarState().textStyle ==
+                    initial.resolvedBoundStyles().serialNumberText &&
+                canvas.commitStyleEdit(SnowCanvasTextEdit{patch, SnowCanvasTextStyleMixedFontSize}),
+            "a sequence draft accepts a font-size-only edit");
+    auto expected = serialStyle;
+    expected.insert(size, 38);
+    require(
+        config.value(serial) == expected && config.value(shape) == shapeStyle &&
+            screenshotCanvasToolStyleDefaults().text == initial.text &&
+            peer.canvasStyleToolbarState().textStyle.fontSize == 47 &&
+            peerPalette.creationStyleDefaults().resolvedBoundStyles().serialNumberText.fontSize ==
+                38,
+        "only the scenario and field change while a peer draft keeps its own appearance");
+    QKeyEvent cancel(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(&canvas, &cancel);
+    require(!canvas.hasActiveTextEditing() && canvas.undo() && config.value(serial) == expected,
+            "cancelling a draft and undoing its canvas gesture preserve its style preference");
+    require(canvas.setCanvasTool(SnowCanvasTool::SerialNumber), "activate sequence numbers");
+    mouse(canvas, QEvent::MouseButtonPress, {350, 200});
+    mouse(canvas, QEvent::MouseButtonRelease, {350, 200});
+    require(canvas.setCanvasTool(SnowCanvasTool::Select), "select the new badge");
+    mouse(canvas, QEvent::MouseButtonPress, {350, 200});
+    mouse(canvas, QEvent::MouseButtonRelease, {350, 200});
+    require(canvas.createSerialNumberText() && canvas.canvasStyleToolbarState().textStyle.bold &&
+                canvas.canvasStyleToolbarState().textStyle.fontSize == 38,
+            "Create Text uses the preference edited while dragging a sequence label");
+    patch.fontSize = 51;
+    require(persistScreenshotCanvasStyleEdit(
+                SnowCanvasTextEdit{patch, SnowCanvasTextStyleMixedFontSize,
+                                   SnowCanvasSerialNumberText | SnowCanvasShapeText}),
+            "apply one text edit across two scenarios");
+    auto expectedShape = shapeStyle;
+    expected.insert(size, 51);
+    expectedShape.insert(size, 51);
+    require(config.value(serial) == expected && config.value(shape) == expectedShape,
+            "bulk edits preserve the remaining properties of each label style");
+    auto arrow = initial.arrow;
+    arrow.strokeWidth = 6;
+    require(persistScreenshotCanvasStyleEdit(SnowCanvasShapeEdit{
+                arrow, SnowCanvasShapeStylePropertyStrokeWidth, SnowCanvasShapeKind::Arrow,
+                SnowCanvasStandaloneArrow | SnowCanvasSerialNumberArrow}) &&
+                config.value(plainArrow).toObject() == QJsonObject{{width, 6}, {marker, 1}} &&
+                config.value(seqArrow).toObject() == QJsonObject{{width, 6}, {marker, 2}},
+            "bulk arrow edits preserve each profile's other settings");
+}
+
 void arrowCreationDefaultsRestoreShaftAndRatio() {
     SnowCanvasWidget canvas;
     auto defaults = screenshotCanvasToolStyleDefaults();
@@ -1343,6 +1430,7 @@ void runScreenshotStyleBindingTests() {
     textEmphasisButtonsPersistDefaultsWithoutEndingDrafts();
     propertyPatchesPreserveOtherEditorsAndProgrammaticState();
     allStyleFamiliesPersistOnlyTheirPatch();
+    boundDraftEditsReachOtherEditorsAndPreserveUneditedFields();
     toolbarAndCanvasShareFontCommit();
     sharedScreenshotRuntimeKeepsDraftEditsTransient();
     runScreenshotSelectedFilterStyleTests();

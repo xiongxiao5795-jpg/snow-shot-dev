@@ -154,7 +154,6 @@ SnowCanvasTextEditorSession::finish(const QFont& baseFont) {
     };
     result.style = snow_canvas_text::textStyleFromSceneItem(m_previewItem);
     result.autoResize = m_previewAutoResize;
-    result.styleChanged = m_styleChanged;
     resetState();
     return result;
 }
@@ -342,7 +341,6 @@ QRegion SnowCanvasTextEditorSession::applyTextStyle(const SnowTextStyle& style,
     const auto previousStrokeAlpha = m_previewItem.stroke.a;
     const double previousStrokeWidth = m_previewItem.stroke_width;
     snow_canvas_text::applyTextStyleToSceneItem(m_previewItem, style);
-    m_styleChanged = true;
     m_canvasAnchor = (snow_canvas_element_id::hasElementId(m_arrowId) ||
                       snow_canvas_element_id::hasElementId(m_bubbleId))
                          ? QPointF(m_previewItem.center_x, m_previewItem.center_y)
@@ -505,7 +503,6 @@ void SnowCanvasTextEditorSession::resetState() {
     m_previewItem = SnowCanvasSceneItem{};
     m_hasPreview = false;
     m_previewAutoResize = false;
-    m_styleChanged = false;
     m_draft.reset();
     m_distanceSuffix.clear();
     m_initialDistanceValue.clear();

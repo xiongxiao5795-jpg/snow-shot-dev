@@ -129,6 +129,20 @@ impl Editor {
                 id.generation,
             ),
             pointer_id,
+            arrow_styles: matches!(
+                self.state.active_tool,
+                ActiveTool::Arrow | ActiveTool::SerialNumber
+            )
+            .then(|| {
+                let mut serial_number = self.state.bound_styles.serial_number_arrow;
+                if self.state.active_tool == ActiveTool::SerialNumber {
+                    serial_number.stroke = self.creation_stroke(serial_number.stroke);
+                }
+                crate::creation_styles::GestureArrowStyles {
+                    standalone: self.state.default_arrow_style,
+                    serial_number,
+                }
+            }),
             committed_points: vec![start_canvas_position],
             press_view_position: start_view_position,
             phase: ArrowCreationPhase::InitialPress,
@@ -381,14 +395,12 @@ impl Editor {
     ) -> (Point<f64>, Vec<SnapGuide>) {
         let (mut snapped_current, guides) =
             self.snap_arrow_creation_point(document, current, modifiers);
-        if modifiers.shift
-            && let Some(origin) = committed_points.last().copied()
-            && (self.state.active_tool == ActiveTool::Line
-                || self.state.default_arrow_style.arrow_type != ArrowType::Elbow)
-        {
-            snapped_current = lock_linear_point_to_discrete_angle(origin, snapped_current);
-        }
         if self.state.active_tool == ActiveTool::Line {
+            if modifiers.shift
+                && let Some(origin) = committed_points.last().copied()
+            {
+                snapped_current = lock_linear_point_to_discrete_angle(origin, snapped_current);
+            }
             if committed_points.len() >= 2
                 && point_distance(committed_points[0], snapped_current)
                     <= self.line_confirm_threshold()
@@ -412,21 +424,75 @@ impl Editor {
     ) -> (Point<f64>, Option<BoundArrowPreview>, Vec<SnapGuide>) {
         let (snapped_current, guides) =
             self.arrow_creation_position(document, committed_points, current, modifiers);
-        let mut points = committed_points.to_vec();
-        let should_append = points.last().is_none_or(|last| {
-            point_distance(*last, snapped_current) >= self.line_confirm_threshold()
-        });
-        if should_append {
-            points.push(snapped_current);
-        }
-
-        let preview_points = if points.len() >= 2 {
-            points
-        } else {
-            committed_points.to_vec()
+        let preview_at = |point| {
+            if committed_points
+                .last()
+                .is_some_and(|last| point_distance(*last, point) < self.line_confirm_threshold())
+            {
+                return self.arrow_preview_from_points(
+                    document,
+                    committed_points,
+                    modifiers,
+                    false,
+                );
+            }
+            let mut points = committed_points.to_vec();
+            points.push(point);
+            self.arrow_preview_from_points(document, &points, modifiers, false)
         };
-        let preview = self.arrow_preview_from_points(document, &preview_points, modifiers, false);
-        (snapped_current, preview, guides)
+        let mut endpoint = snapped_current;
+        if self.state.active_tool != ActiveTool::Line
+            && modifiers.shift
+            && let Some(origin) = committed_points.last().copied()
+        {
+            let locked = lock_linear_point_to_discrete_angle(origin, snapped_current);
+            let free_elbow = self
+                .gesture_arrow_style(ArrowCreationScenario::Standalone)
+                .arrow_type
+                .is_elbow();
+            let serial_elbow = self
+                .gesture_arrow_style(ArrowCreationScenario::SerialNumber)
+                .arrow_type
+                .is_elbow();
+            let serial_endpoint = if serial_elbow {
+                snapped_current
+            } else {
+                locked
+            };
+            if matches!(&self.state.interaction, InteractionState::CreatingArrow(state) if state.serial_number_source.is_some())
+            {
+                endpoint = serial_endpoint;
+            } else {
+                endpoint = if free_elbow { snapped_current } else { locked };
+                // A coalesced release must resolve the same angle constraint as a move at
+                // this position, even when the two profiles use different routing modes.
+                if self.state.active_tool == ActiveTool::Arrow
+                    && free_elbow != serial_elbow
+                    && locked != snapped_current
+                {
+                    let serial_preview = preview_at(serial_endpoint);
+                    if serial_preview.as_ref().is_some_and(|p| {
+                        crate::creation_styles::arrow_scenario(document, &p.arrow)
+                            == ArrowCreationScenario::SerialNumber
+                    }) {
+                        return (serial_endpoint, serial_preview, guides);
+                    }
+                    let standalone_preview = preview_at(endpoint);
+                    // A badge at the raw endpoint can switch an elbow to a straight
+                    // or curved arrow. Keep the locked endpoint if that binding did
+                    // not also resolve there.
+                    if free_elbow
+                        && standalone_preview
+                            .as_ref()
+                            .is_some_and(|p| !p.arrow.is_elbow())
+                    {
+                        return (serial_endpoint, serial_preview, guides);
+                    }
+                    return (endpoint, standalone_preview, guides);
+                }
+            }
+        }
+        (endpoint, preview_at(endpoint), guides)
     }
 
     fn arrow_preview_from_points(
@@ -436,6 +502,10 @@ impl Editor {
         modifiers: Modifiers,
         finalize: bool,
     ) -> Option<BoundArrowPreview> {
+        let serial_number_source = match &self.state.interaction {
+            InteractionState::CreatingArrow(state) => state.serial_number_source,
+            _ => None,
+        };
         let arrow = if self.state.active_tool == ActiveTool::Line {
             let mut style = self.state.default_line_style;
             style.stroke = self.creation_stroke(style.stroke);
@@ -459,9 +529,12 @@ impl Editor {
             )?
             .into_line(style.fill, style.fill_style)
         } else {
-            let mut style = self.state.default_arrow_style;
-            style.stroke = self.creation_stroke(style.stroke);
-            preview_arrow_from_points(points, style)?
+            let scenario = if serial_number_source.is_some() {
+                ArrowCreationScenario::SerialNumber
+            } else {
+                ArrowCreationScenario::Standalone
+            };
+            preview_arrow_from_points(points, self.gesture_arrow_style(scenario))?
         };
         let arrow_id = document.peek_next_element_id();
         let bindables = self.bindable_elements(document, &[]);
@@ -474,10 +547,6 @@ impl Editor {
                 arrow_id.index,
                 arrow_id.generation,
             ),
-        };
-        let serial_number_source = match &self.state.interaction {
-            InteractionState::CreatingArrow(state) => state.serial_number_source,
-            _ => None,
         };
         let source_bindables = serial_number_source.map(|id| {
             bindables
@@ -583,6 +652,34 @@ impl Editor {
                 // The binding solver falls back to its focus for very short arrows.
                 // Wait until the drag has enough room for an exterior tail instead.
                 return None;
+            }
+        }
+
+        // The endpoint solver owns binding identity. Reproject the chosen style against
+        // those same targets, including when switching between curved and elbow routing.
+        let style = self.gesture_arrow_style(ArrowCreationScenario::SerialNumber);
+        if serial_number_source.is_none()
+            && preview_arrow.is_regular_arrow()
+            && style != self.gesture_arrow_style(ArrowCreationScenario::Standalone)
+            && crate::creation_styles::arrow_scenario(document, &preview_arrow)
+                == ArrowCreationScenario::SerialNumber
+        {
+            if style.arrow_type == preview_arrow.arrow_type {
+                preview_arrow =
+                    arrow_with_style(arrow_id, &preview_arrow, style, &bindables, arrow_context);
+            } else {
+                let mut styled = preview_arrow_from_points(points, style)?;
+                styled.stroke_rendering_seed = preview_arrow.stroke_rendering_seed;
+                styled.start_binding = preview_arrow.start_binding;
+                styled.end_binding = preview_arrow.end_binding;
+                preview_arrow = recompute_arrow_after_bindable_change(
+                    arrow_id,
+                    &styled,
+                    &bindables,
+                    &[],
+                    arrow_context,
+                )
+                .arrow;
             }
         }
 
@@ -947,7 +1044,9 @@ impl Editor {
                 // not enter the multi-point creation flow used by lines and
                 // non-elbow arrows.
                 if self.state.active_tool == ActiveTool::Arrow
-                    && self.state.default_arrow_style.arrow_type == ArrowType::Elbow
+                    && preview
+                        .as_ref()
+                        .is_some_and(|preview| preview.arrow.is_elbow())
                     && let Some(start) = state.committed_points.first().copied()
                     && self.finalize_arrow_creation_from_points(
                         document,
@@ -1216,7 +1315,9 @@ impl Editor {
             // The drag label starts from the same definition the floating
             // toolbar's Create Text button uses, so both paths style and size
             // the bound label identically before the host measurement lands.
-            let mut text = crate::text::new_serial_bound_label(&self.state.default_text)?;
+            let mut text = crate::text::new_bound_label(
+                &self.text_creation_template(TextCreationScenario::SerialNumber),
+            )?;
             if let Some(colors) = self.state.creation_colors {
                 text.color = colors.foreground;
                 text.stroke = colors.stroke;

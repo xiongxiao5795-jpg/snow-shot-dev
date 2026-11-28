@@ -140,6 +140,187 @@ fn assert_exterior_tail(engine: &Engine, arrow: &ArrowData, serial: ElementId) {
 }
 
 #[test]
+fn independent_arrow_styles_follow_live_bindings_and_the_final_release() {
+    use crate::{ArrowCreationScenario, BoundCreationStyles, TextCreationScenario};
+    use PointerEventType::{Down, Move, Up};
+    use snow_draw_engine_editor::{SHAPE_STYLE_PROPERTY_STROKE_WIDTH, ShapeKind};
+
+    let (mut engine, view) = setup(1.0, ArrowType::Straight);
+    let free = engine.editor.arrow_style(&engine.model);
+    let text = engine.text_creation_style(TextCreationScenario::Standalone);
+    let mut profiles = BoundCreationStyles::from_standalone(&text, free);
+    profiles.serial_number_arrow.stroke_width = 9.0;
+    profiles.serial_number_arrow.arrow_type = ArrowType::Elbow;
+    profiles.arrow_text.font_size = 37.0;
+    engine
+        .set_text_and_arrow_creation_styles(text, free, profiles)
+        .unwrap();
+    let none = Modifiers::default();
+    pointer(&mut engine, view, Down, 0.0, 0.0, SHIFT);
+    pointer(&mut engine, view, Up, -140.0, 0.0, SHIFT);
+    let serial = engine.model.paint_order()[0];
+    let edge = engine.model.serial_number(serial).unwrap().diameter / 2.0 + 2.0;
+    let explicit = &arrows(&engine)[0].1;
+    assert_bound(explicit, serial);
+    assert_eq!(
+        (explicit.arrow_type, explicit.stroke_width),
+        (ArrowType::Elbow, 9.0)
+    );
+
+    engine
+        .set_viewport_active_tool(view, ActiveTool::Arrow)
+        .unwrap();
+    pointer(&mut engine, view, Down, 180.0, 95.0, none);
+    pointer(&mut engine, view, Move, edge, 0.0, none);
+    let provisional = preview(&engine, view);
+    assert_eq!(provisional.end_binding.unwrap().element_id, serial);
+    assert_eq!(
+        (provisional.arrow_type, provisional.stroke_width),
+        (ArrowType::Elbow, 9.0)
+    );
+    let patch_width = |engine: &mut Engine, width| {
+        let mut style = engine.editor.shape_style(&engine.model);
+        style.stroke_width = width;
+        engine
+            .set_viewport_shape_style_patch(
+                view,
+                ShapeStylePatch {
+                    kind: ShapeKind::Arrow,
+                    style,
+                    properties: SHAPE_STYLE_PROPERTY_STROKE_WIDTH,
+                },
+            )
+            .unwrap();
+    };
+    patch_width(&mut engine, 13.0);
+    pointer(&mut engine, view, Up, 265.0, 135.0, none);
+    let free_arrow = arrows(&engine).pop().unwrap().1;
+    assert!(free_arrow.start_binding.is_none() && free_arrow.end_binding.is_none());
+    assert_eq!(
+        (free_arrow.arrow_type, free_arrow.stroke_width),
+        (ArrowType::Straight, 5.0)
+    );
+
+    for start_bound in [false, true] {
+        let (x1, y1, x2, y2) = if start_bound {
+            (0.0, -edge, 245.0, -100.0)
+        } else {
+            (-180.0, -110.0, edge, 0.0)
+        };
+        pointer(&mut engine, view, Down, x1, y1, none);
+        pointer(&mut engine, view, Up, x2, y2, none);
+        let (id, mut arrow) = arrows(&engine).pop().unwrap();
+        let binding = if start_bound {
+            &arrow.start_binding
+        } else {
+            &arrow.end_binding
+        };
+        assert_eq!(
+            binding.as_ref().map(|b| b.element_id),
+            Some(serial),
+            "start_bound={start_bound}: {arrow:?}"
+        );
+        assert_eq!(
+            (arrow.arrow_type, arrow.stroke_width),
+            (ArrowType::Elbow, 13.0)
+        );
+        engine
+            .select_element_with_viewport_changes(view, id)
+            .unwrap();
+        let (_, label_style) = engine.arrow_text_target(view, None).unwrap().unwrap();
+        assert_eq!(label_style.font_size, 37.0);
+        assert_eq!(
+            engine
+                .creation_style_targets(view, CreationStyleQuery::Arrow)
+                .unwrap(),
+            ArrowCreationScenario::SerialNumber as u32
+        );
+        if start_bound {
+            arrow.start_binding = None;
+            let mut tx = Transaction::new("Detach the sequence arrow");
+            tx.update_arrow(id, arrow);
+            engine
+                .commit_transaction(
+                    view,
+                    ApplyTransactionCommand {
+                        transaction: tx,
+                        history_undo_snapshot: None,
+                        created_selection_target: None,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                engine
+                    .creation_style_targets(view, CreationStyleQuery::Arrow)
+                    .unwrap(),
+                ArrowCreationScenario::Standalone as u32
+            );
+            patch_width(&mut engine, 7.0);
+            assert_eq!(engine.model.arrow(id).unwrap().stroke_width, 7.0);
+            assert!(engine.undo().unwrap());
+            engine.clear_selection_with_viewport_changes(view).unwrap();
+            assert_eq!(engine.editor.arrow_style(&engine.model).stroke_width, 7.0);
+        }
+        engine.clear_selection_with_viewport_changes(view).unwrap();
+    }
+}
+
+#[test]
+fn shift_constrained_arrow_uses_the_same_profile_with_a_coalesced_release() {
+    use crate::{BoundCreationStyles, TextCreationScenario};
+    use PointerEventType::{Down, Move, Up};
+    let draw = |standalone_type, bound_type, with_move| {
+        let (mut engine, view) = setup(1.0, standalone_type);
+        let free = engine.editor.arrow_style(&engine.model);
+        let text = engine.text_creation_style(TextCreationScenario::Standalone);
+        let mut bound = BoundCreationStyles::from_standalone(&text, free);
+        bound.serial_number_arrow.arrow_type = bound_type;
+        engine
+            .set_text_and_arrow_creation_styles(text, free, bound)
+            .unwrap();
+        pointer(&mut engine, view, Down, 0.0, 0.0, Modifiers::default());
+        pointer(&mut engine, view, Up, 0.0, 0.0, Modifiers::default());
+        let badge = engine.model.paint_order()[0];
+        let edge = engine.model.serial_number(badge).unwrap().diameter / 2.0 + 2.0;
+        engine
+            .set_viewport_active_tool(view, ActiveTool::Arrow)
+            .unwrap();
+        pointer(&mut engine, view, Down, 245.0, 95.0, Modifiers::default());
+        let provisional = if with_move {
+            pointer(&mut engine, view, Move, edge, 0.0, SHIFT);
+            Some(preview(&engine, view))
+        } else {
+            None
+        };
+        pointer(&mut engine, view, Up, edge, 0.0, SHIFT);
+        let arrow = arrows(&engine).pop().unwrap().1;
+        if let Some(provisional) = provisional {
+            assert_eq!(provisional, arrow);
+        }
+        assert_eq!(arrow.arrow_type, ArrowType::Elbow);
+        assert_eq!(
+            arrow.end_binding.as_ref().map(|binding| binding.element_id),
+            (bound_type == ArrowType::Elbow).then_some(badge)
+        );
+        if bound_type == ArrowType::Straight {
+            let end = arrow.end();
+            let slope = (end.y - 95.0) / (end.x - 245.0);
+            assert!((slope - 30_f64.to_radians().tan()).abs() < 1e-6);
+        }
+        arrow
+    };
+    for (standalone, bound) in [
+        (ArrowType::Straight, ArrowType::Elbow),
+        (ArrowType::Elbow, ArrowType::Straight),
+    ] {
+        assert_eq!(
+            draw(standalone, bound, false),
+            draw(standalone, bound, true)
+        );
+    }
+}
+
+#[test]
 fn new_sequence_arrow_previews_and_commits_release_position_and_style() {
     for zoom in [0.5, 1.0, 3.0] {
         for arrow_type in [ArrowType::Straight, ArrowType::Curve, ArrowType::Elbow] {

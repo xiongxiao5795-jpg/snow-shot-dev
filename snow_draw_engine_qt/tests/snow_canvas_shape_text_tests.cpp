@@ -1,3 +1,4 @@
+#include "snow_canvas_creation_style_test_support.h"
 #include "snow_draw_engine_qt/snow_canvas_runtime.h"
 #include "snow_draw_engine_qt/snow_canvas_widget.h"
 #include "snow_canvas_render_geometry.h"
@@ -74,15 +75,12 @@ QPointF handle(const SnowCanvasWidget& canvas, const SnowCanvasRuntime& runtime)
     return transform.map(center(shape)) + QPointF(-std::sin(angle), std::cos(angle)) * offset;
 }
 
-void selectShape(SnowCanvasRuntime& runtime) {
-    const auto id = records(runtime, QStringLiteral("Rectangle"))[0]
-                        .toObject()
-                        .value(QStringLiteral("id"))
-                        .toObject();
+void selectElement(SnowCanvasRuntime& runtime, const QString& kind) {
+    const auto id = records(runtime, kind)[0].toObject().value(QStringLiteral("id")).toObject();
     SnowCanvasRuntimeEditor editor(runtime);
     require(editor.select(static_cast<quint32>(id.value(QStringLiteral("index")).toInt()),
                           static_cast<quint32>(id.value(QStringLiteral("generation")).toInt())),
-            "select shape");
+            "select element");
 }
 
 void prepare(SnowCanvasWidget& canvas, SnowCanvasRectangleShape kind) {
@@ -145,18 +143,21 @@ void enabledDeleteEditsShapeLabels() {
         SnowCanvasWidget canvas(runtime);
         canvas.setDeleteTextAfterCursor(true);
         prepare(canvas, SnowCanvasRectangleShape::Rectangle);
-        selectShape(runtime);
+        selectElement(runtime, QStringLiteral("Rectangle"));
         const auto point = handle(canvas, runtime);
         mouse(canvas, QEvent::MouseButtonPress, point, Qt::LeftButton, Qt::LeftButton);
         mouse(canvas, QEvent::MouseButtonRelease, point, Qt::LeftButton, Qt::NoButton);
         key(canvas, Qt::Key_A, Qt::NoModifier, QStringLiteral("abc"));
         if (existing) {
             key(canvas, Qt::Key_Return, Qt::ControlModifier);
+            selectElement(runtime, QStringLiteral("Text"));
             const auto textPoint = canvas.canvasToViewTransform().map(
                 center(payload(runtime, QStringLiteral("Text"))));
             mouse(canvas, QEvent::MouseButtonPress, textPoint, Qt::LeftButton, Qt::LeftButton);
             mouse(canvas, QEvent::MouseButtonRelease, textPoint, Qt::LeftButton, Qt::NoButton);
         }
+        require(canvas.hasActiveTextEditing(),
+                existing ? "reopen the existing shape label" : "open the new shape label");
         const auto owner = payload(runtime, QStringLiteral("Rectangle"));
         key(canvas, Qt::Key_Home);
         key(canvas, Qt::Key_Right);
@@ -213,13 +214,14 @@ void clickDragEditAndReuse() {
         for (bool drag : {false, true}) {
             SnowCanvasRuntime runtime;
             SnowCanvasWidget canvas(runtime);
-            SnowCanvasTextStyle textStyle;
+            auto defaults = textAndArrowTestDefaults();
+            auto& textStyle = defaults.materializeBoundStyles().shapeText;
             textStyle.fontSize = 19;
             textStyle.bold = true;
             textStyle.fill = QColor(Qt::white);
-            require(canvas.setCanvasTextStyle(textStyle), "set label defaults");
+            require(canvas.setTextAndArrowCreationStyles(defaults), "set shape label defaults");
             prepare(canvas, kind);
-            selectShape(runtime);
+            selectElement(runtime, QStringLiteral("Rectangle"));
             require(canvas.setCanvasTool(SnowCanvasTool::Shape), "keep shape tool active");
             const auto original = payload(runtime, QStringLiteral("Rectangle"));
             const auto start = handle(canvas, runtime);
@@ -262,6 +264,7 @@ void clickDragEditAndReuse() {
                     QStringLiteral("Bound label 中文"),
                 "typing edits bound text");
             assertConnectorExport(runtime);
+            selectElement(runtime, QStringLiteral("Text"));
             const auto textPoint = canvas.canvasToViewTransform().map(
                 center(payload(runtime, QStringLiteral("Text"))));
             mouse(canvas, QEvent::MouseButtonPress, textPoint, Qt::LeftButton, Qt::LeftButton);
@@ -269,7 +272,7 @@ void clickDragEditAndReuse() {
             require(canvas.hasActiveTextEditing(), "selected label reopens under the shape tool");
             key(canvas, Qt::Key_Return, Qt::ControlModifier);
 
-            selectShape(runtime);
+            selectElement(runtime, QStringLiteral("Rectangle"));
             const auto again = handle(canvas, runtime);
             const QPointF relocated(600, 480);
             mouse(canvas, QEvent::MouseButtonPress, again, Qt::LeftButton, Qt::LeftButton);
@@ -295,14 +298,14 @@ void cancellationAndEmptyCommit() {
             SnowCanvasRuntime runtime;
             SnowCanvasWidget canvas(runtime);
             prepare(canvas, SnowCanvasRectangleShape::Rectangle);
-            selectShape(runtime);
+            selectElement(runtime, QStringLiteral("Rectangle"));
             if (existing) {
                 const auto start = handle(canvas, runtime);
                 mouse(canvas, QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
                 mouse(canvas, QEvent::MouseButtonRelease, start, Qt::LeftButton, Qt::NoButton);
                 key(canvas, Qt::Key_A, Qt::NoModifier, QStringLiteral("Keep me"));
                 key(canvas, Qt::Key_Return, Qt::ControlModifier);
-                selectShape(runtime);
+                selectElement(runtime, QStringLiteral("Rectangle"));
             }
             const auto originalShape = payload(runtime, QStringLiteral("Rectangle"));
             const auto originalText = records(runtime, QStringLiteral("Text"));
@@ -327,7 +330,7 @@ void cancellationAndEmptyCommit() {
     SnowCanvasRuntime runtime;
     SnowCanvasWidget canvas(runtime);
     prepare(canvas, SnowCanvasRectangleShape::Ellipse);
-    selectShape(runtime);
+    selectElement(runtime, QStringLiteral("Rectangle"));
     const auto start = handle(canvas, runtime);
     mouse(canvas, QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
     mouse(canvas, QEvent::MouseButtonRelease, start, Qt::LeftButton, Qt::NoButton);
@@ -422,7 +425,7 @@ void croppedExportPreservesConnectorToOffscreenLabel() {
     SnowCanvasRuntime source;
     SnowCanvasWidget canvas(source);
     prepare(canvas, SnowCanvasRectangleShape::Rectangle);
-    selectShape(source);
+    selectElement(source, QStringLiteral("Rectangle"));
     const auto start = handle(canvas, source);
     mouse(canvas, QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
     mouse(canvas, QEvent::MouseButtonRelease, {520, 410}, Qt::LeftButton, Qt::NoButton);

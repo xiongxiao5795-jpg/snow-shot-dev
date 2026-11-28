@@ -114,6 +114,7 @@ pub(crate) enum ArrowCreationPhase {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct CreateArrowState {
+    pub(crate) arrow_styles: Option<crate::creation_styles::GestureArrowStyles>,
     /// A sequence-number gesture always finishes on release and keeps this tail binding.
     pub(crate) serial_number_source: Option<ElementId>,
     pub(crate) stroke_rendering_seed: u32,
@@ -546,6 +547,7 @@ pub(crate) struct EditorState {
     pub(crate) default_rectangle_shape_style: RectangleShapeStyle,
     pub(crate) default_spotlight_shape: snow_draw_engine_document::HighlightShape,
     pub(crate) default_spotlight_corner_radii: CornerRadii,
+    pub(crate) bound_styles: std::sync::Arc<crate::BoundCreationStyles>,
     pub(crate) default_arrow_style: ArrowStyle,
     pub(crate) default_distance_style: crate::DistanceStyle,
     pub(crate) default_angle_style: crate::AngleStyle,
@@ -680,6 +682,10 @@ impl EditorState {
             default_bracket_style: default_styles.bracket,
             default_magnifier_style: default_styles.magnifier,
             distance_creation_generation: 0,
+            bound_styles: std::sync::Arc::new(crate::BoundCreationStyles::from_standalone(
+                &default_styles.text,
+                default_styles.arrow,
+            )),
             default_arrow_style: ArrowStyle {
                 arrow_ratio: snow_draw_engine_core::arrow::normalize_arrow_ratio(
                     default_styles.arrow.arrow_ratio,

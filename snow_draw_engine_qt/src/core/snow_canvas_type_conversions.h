@@ -77,6 +77,8 @@ SnowSpotlightConfig toEngineSpotlightConfig(const SnowCanvasSpotlightConfig& con
 SnowCanvasWatermarkConfig toCanvasWatermarkConfig(const SnowWatermarkConfig& config);
 SnowWatermarkConfig toEngineWatermarkConfig(const SnowCanvasWatermarkConfig& config);
 
+bool toEngineTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults,
+                                        SnowTextAndArrowCreationStyles& styles);
 bool toEngineStyleDefaults(const SnowCanvasStyleDefaults& defaults,
                            SnowStyleDefaults& engineDefaults);
 

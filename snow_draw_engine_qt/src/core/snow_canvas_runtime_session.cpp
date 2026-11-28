@@ -70,6 +70,16 @@ std::uint64_t drawingToolMask(const QSet<SnowCanvasTool>& tools) {
     return mask;
 }
 
+bool applyInitialBoundStyles(SnowRuntime runtime, const SnowCanvasRuntimeConfig& config) {
+    if (!config.styleDefaults || !config.styleDefaults->bound)
+        return true;
+    SnowTextAndArrowCreationStyles styles{};
+    ScopedChangedViewportList changes;
+    return snow_canvas_types::toEngineTextAndArrowCreationStyles(*config.styleDefaults, styles) &&
+           snow_runtime_set_text_and_arrow_creation_styles_ex(runtime, &styles,
+                                                              changes.outParam()) == SNOW_OK;
+}
+
 void applyDrawingPolicy(SnowRuntime runtime, const SnowCanvasRuntimeConfig& config) {
     // Runtime policy is shared by every viewport attached to this document session.
     ScopedChangedViewportList changedViewports;
@@ -96,7 +106,8 @@ ScopedRuntimeHandle createRuntime(const SnowCanvasRuntimeConfig& config) {
     SnowStyleDefaults styleDefaults{};
     SnowRuntimeConfig engineConfig{};
     if (!toEngineRuntimeConfig(config, styleDefaults, engineConfig) ||
-        snow_runtime_create_with_config(&engineConfig, runtime.outParam()) != SNOW_OK) {
+        snow_runtime_create_with_config(&engineConfig, runtime.outParam()) != SNOW_OK ||
+        !applyInitialBoundStyles(runtime.get(), config)) {
         runtime.reset();
     }
     if (runtime.get() != nullptr) {
@@ -156,7 +167,8 @@ ScopedRuntimeHandle runtimeFromSerializedHistory(const QByteArray& payload,
         snow_runtime_create_from_document_history_with_config(
             reinterpret_cast<const std::uint8_t*>(payload.constData()),
             static_cast<std::size_t>(payload.size()), &engineConfig,
-            runtime.outParam()) != SNOW_OK) {
+            runtime.outParam()) != SNOW_OK ||
+        !applyInitialBoundStyles(runtime.get(), config)) {
         runtime.reset();
     }
     if (runtime.get() != nullptr) {
@@ -425,6 +437,18 @@ void RuntimeSession::clearRenderState() {
     clearDrawingCachesForCurrentThread();
 }
 
+bool RuntimeSession::setTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults) {
+    SnowTextAndArrowCreationStyles styles{};
+    ScopedChangedViewportList changes;
+    if (!m_runtime || !snow_canvas_types::toEngineTextAndArrowCreationStyles(defaults, styles) ||
+        snow_runtime_set_text_and_arrow_creation_styles_ex(m_runtime.get(), &styles,
+                                                           changes.outParam()) != SNOW_OK)
+        return false;
+    m_creationPreferences = styles;
+    syncChangedViewports(changes.get());
+    return true;
+}
+
 bool RuntimeSession::setSharedCreationColor(const std::optional<QColor>& color) {
     if (m_runtime.get() == nullptr || (color && !color->isValid()))
         return false;
@@ -554,6 +578,12 @@ bool RuntimeSession::replaceRuntime(ScopedRuntimeHandle replacement) {
     }
 
     const std::weak_ptr<const int> lifetime = m_lifetime;
+    if (m_creationPreferences) {
+        ScopedChangedViewportList changes;
+        if (snow_runtime_set_text_and_arrow_creation_styles_ex(
+                replacement.get(), &*m_creationPreferences, changes.outParam()) != SNOW_OK)
+            return false;
+    }
     const auto replacementGeneration = ++m_replacementGeneration;
     const auto isCurrent = [this, lifetime, replacementGeneration] {
         return !lifetime.expired() && m_replacementGeneration == replacementGeneration;

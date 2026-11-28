@@ -1487,25 +1487,30 @@ bool applyDrawingColorPolicy(const ConfigurationStore& configuration,
                 return false;
         }
         const QString rgba = colorToRgbaString(color);
-        if (enabled)
+        if (enabled && (values.contains(colorKey) || configuration.value(colorKey) != rgba))
             values.insert(colorKey, rgba);
         const auto patch = [&](const char* tool, std::initializer_list<const char*> fields) {
             const QString key = QStringLiteral("drawing/%1_style").arg(QLatin1String(tool));
-            auto object = values.value(key, configuration.value(key)).toObject();
+            const auto original = values.value(key, configuration.value(key)).toObject();
+            auto object = original;
             for (const char* field : fields) {
                 if (enabled)
                     object.remove(QLatin1String(field));
                 else
                     object.insert(QLatin1String(field), rgba);
             }
-            values.insert(key, object);
+            if (object != original)
+                values.insert(key, object);
         };
         for (const char* tool : {"shape", "speech_bubble", "line", "free_draw",
                                  "rectangle_highlight", "pen_highlight"})
             patch(tool, {"stroke", "fill"});
-        for (const char* tool : {"arrow", "distance", "angle", "bracket", "magnifier"})
+        for (const char* tool :
+             {"arrow", "serial_number_arrow", "distance", "angle", "bracket", "magnifier"})
             patch(tool, {"stroke"});
-        patch("text", {"color", "stroke", "fill"});
+        for (const char* tool :
+             {"text", "serial_number_text", "speech_bubble_text", "shape_text", "arrow_text"})
+            patch(tool, {"color", "stroke", "fill"});
         patch("serial_number", {"color", "fill"});
     }
     return true;

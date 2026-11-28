@@ -1421,6 +1421,11 @@ bool ScreenshotToolPalette::submitStyleEdit(const SnowCanvasStyleEdit& edit) {
     return true;
 }
 
+void ScreenshotToolPalette::rememberTextAndArrowCreationStyles(
+    const SnowCanvasStyleDefaults& defaults) {
+    m_styleControls->rememberTextAndArrowCreationStyles(defaults);
+}
+
 void ScreenshotToolPalette::rememberStyleEdit(const SnowCanvasStyleEdit& edit) {
     if (const auto* watermark = std::get_if<SnowCanvasWatermarkEdit>(&edit);
         watermark != nullptr &&
@@ -5491,7 +5496,7 @@ bool ScreenshotToolPalette::activateToolFromToolbar(Tool tool, bool toggleVisibl
         toolbar_settings::DrawingSettings().alwaysShowFirstToolbarGroupButton();
     const bool alreadyActive =
         !toggleVisibleButton || fixedGroupButton ? m_activeTool.has_value() && *m_activeTool == tool
-        : requestedButton != nullptr             ? m_activeToolButton == requestedButton
+        : requestedButton != nullptr ? m_activeToolButton == requestedButton
                                      : m_activeTool.has_value() && *m_activeTool == tool;
     if (alreadyActive) {
         activateDefaultToolbarTool();

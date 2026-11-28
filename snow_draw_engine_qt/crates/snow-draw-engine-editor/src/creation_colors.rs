@@ -20,7 +20,7 @@ impl CreationColors {
 }
 
 impl Editor {
-    fn preserve_creation_colors(&mut self) {
+    pub(crate) fn preserve_creation_colors(&mut self) {
         if self.state.creation_colors.is_some() {
             return;
         }
@@ -45,9 +45,6 @@ impl Editor {
             (InteractionState::CreatingRectangle(_), ActiveTool::Magnifier) => {
                 CreationColors::new(state.default_magnifier_style.stroke, ColorRgba8::default())
             }
-            (InteractionState::CreatingArrow(_), ActiveTool::Arrow | ActiveTool::SerialNumber) => {
-                CreationColors::new(state.default_arrow_style.stroke, ColorRgba8::default())
-            }
             (InteractionState::CreatingArrow(_), ActiveTool::Line) => CreationColors::new(
                 state.default_line_style.stroke,
                 state.default_line_style.fill,
@@ -68,12 +65,15 @@ impl Editor {
             (InteractionState::CreatingSerialNumber(creation), _)
                 if creation.mode != SerialNumberDragMode::Text =>
             {
-                CreationColors::new(state.default_arrow_style.stroke, ColorRgba8::default())
+                CreationColors::new(
+                    state.bound_styles.serial_number_arrow.stroke,
+                    ColorRgba8::default(),
+                )
             }
             (InteractionState::CreatingSerialNumber(_), _) => CreationColors {
-                stroke: state.default_text.stroke,
-                fill: state.default_text.fill,
-                foreground: state.default_text.color,
+                stroke: state.bound_styles.serial_number_text.stroke,
+                fill: state.bound_styles.serial_number_text.fill,
+                foreground: state.bound_styles.serial_number_text.color,
             },
             // Freehand strokes and active text drafts already own their styles.
             _ => return,
@@ -131,6 +131,30 @@ impl Editor {
         ] {
             style.stroke = color;
             style.fill = color;
+        }
+        let bound = &self.state.bound_styles;
+        if bound.serial_number_arrow.stroke != color
+            || [
+                &bound.serial_number_text,
+                &bound.shape_text,
+                &bound.speech_bubble_text,
+                &bound.arrow_text,
+            ]
+            .iter()
+            .any(|s| s.color != color || s.fill != color || s.stroke != color)
+        {
+            let bound = std::sync::Arc::make_mut(&mut self.state.bound_styles);
+            bound.serial_number_arrow.stroke = color;
+            for text in [
+                &mut bound.serial_number_text,
+                &mut bound.speech_bubble_text,
+                &mut bound.shape_text,
+                &mut bound.arrow_text,
+            ] {
+                text.color = color;
+                text.stroke = color;
+                text.fill = color;
+            }
         }
         self.state.default_arrow_style.stroke = color;
         self.state.default_distance_style.stroke = color;

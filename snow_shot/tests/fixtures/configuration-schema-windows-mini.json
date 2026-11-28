@@ -214,10 +214,10 @@
       "allowedStringValues": [],
       "defaultJsonType": 2,
       "defaultStringIsNull": false,
-      "defaultValue": 12,
+      "defaultValue": 13,
       "integerRange": [
-        12,
-        12,
+        13,
+        13,
         1
       ],
       "key": "storage/schema_version",
@@ -2110,6 +2110,56 @@
       "defaultValue": {},
       "integerRange": null,
       "key": "drawing/text_style",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "drawing/serial_number_text_style",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "drawing/speech_bubble_text_style",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "drawing/shape_text_style",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "drawing/arrow_text_style",
+      "maximumListItems": -1,
+      "valueKind": "Structured"
+    },
+    {
+      "allowedStringValues": [],
+      "defaultJsonType": 5,
+      "defaultStringIsNull": false,
+      "defaultValue": {},
+      "integerRange": null,
+      "key": "drawing/serial_number_arrow_style",
       "maximumListItems": -1,
       "valueKind": "Structured"
     },

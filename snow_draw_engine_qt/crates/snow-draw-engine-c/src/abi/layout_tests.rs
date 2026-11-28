@@ -50,6 +50,12 @@ fn text_styles_and_elements_match_published_layout() {
     assert_eq!(offset_of!(SnowTextStyle, font_family_utf8), 100);
     assert_eq!(offset_of!(SnowTextStyle, bold), 97);
     assert_eq!(offset_of!(SnowTextStyle, italic), 98);
+    assert_eq!(size_of::<SnowTextAndArrowCreationStyles>(), 1400);
+    assert_eq!(offset_of!(SnowTextAndArrowCreationStyles, arrow), 1160);
+    assert_eq!(
+        offset_of!(SnowTextAndArrowCreationStyles, serial_number_arrow),
+        1280
+    );
     assert_eq!(size_of::<SnowTextElementInfo>(), 1352);
     assert_eq!(align_of::<SnowTextElementInfo>(), 8);
     assert_eq!(offset_of!(SnowTextElementInfo, text_utf8), 104);

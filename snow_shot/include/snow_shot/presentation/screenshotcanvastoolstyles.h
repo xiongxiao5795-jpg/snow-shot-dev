@@ -10,6 +10,7 @@ namespace snow_shot::presentation {
 [[nodiscard]] SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults();
 [[nodiscard]] bool persistScreenshotCanvasToolStyles(const SnowCanvasStyleDefaults& defaults);
 [[nodiscard]] bool persistScreenshotCanvasStyleEdit(const SnowCanvasStyleEdit& edit);
+[[nodiscard]] bool isScreenshotTextOrArrowStyleKey(const QString& key);
 void applyScreenshotCanvasToolStyles(SnowCanvasWidget& canvas,
                                      const SnowCanvasStyleDefaults& defaults);
 

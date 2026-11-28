@@ -6,8 +6,8 @@ mod persistence_tests;
 mod session;
 
 pub use engine::{
-    Engine, EngineConfig as RuntimeConfig, InputUpdate, MutationResult, StyleDefaults,
-    TextElementInfo, ViewportConfig, ViewportId,
+    CreationStyleQuery, Engine, EngineConfig as RuntimeConfig, InputUpdate, MutationResult,
+    StyleDefaults, TextElementInfo, ViewportConfig, ViewportId,
 };
 pub use snow_draw_engine_core::arrow::{
     ArrowPathCommand, ArrowType, Arrowhead, StrokeRenderingStyle, StrokeStyle,
@@ -46,6 +46,10 @@ pub use snow_draw_engine_editor::{
     validate_angle_style, validate_magnifier_style,
 };
 pub use snow_draw_engine_interaction::*;
+
+pub use snow_draw_engine_editor::{
+    ArrowCreationScenario, BoundCreationStyles, TextCreationScenario,
+};
 
 pub type Runtime = Engine;
 

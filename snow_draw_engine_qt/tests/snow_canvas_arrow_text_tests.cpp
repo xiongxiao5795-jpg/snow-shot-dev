@@ -1,3 +1,4 @@
+#include "snow_canvas_creation_style_test_support.h"
 #include "snow_draw_engine_qt/snow_canvas_runtime.h"
 #include "snow_draw_engine_qt/snow_canvas_widget.h"
 #include "snow_canvas_renderer.h"
@@ -348,6 +349,46 @@ void openLabel(SnowCanvasWidget& canvas) {
     require(canvas.hasActiveTextEditing(), "double-click opens an attached text editor");
     require(canvas.canvasStyleToolbarState().source == SnowCanvasStyleToolbarSource::SelectedText,
             "arrow draft exposes text style controls");
+}
+
+void arrowLabelPreferencesSurviveEmptyDraftAndUndo() {
+    SnowCanvasRuntime runtime;
+    SnowCanvasWidget canvas(runtime);
+    canvas.resize(600, 360);
+    canvas.show();
+    QApplication::processEvents();
+    auto styles = textAndArrowTestDefaults();
+    auto& label = styles.materializeBoundStyles().arrowText;
+    label.fontSize = 35;
+    require(canvas.setTextAndArrowCreationStyles(styles), "configure arrow label preferences");
+    createArrow(canvas, runtime);
+    openLabel(canvas);
+    require(canvas.canvasStyleToolbarState().textStyle == label &&
+                label.horizontalAlign == SnowCanvasTextHorizontalAlign::Center &&
+                label.verticalAlign == SnowCanvasTextVerticalAlign::Center,
+            "new arrow labels start with the centered arrow text profile");
+    auto patch = styles.text;
+    patch.italic = true;
+    require(canvas.applyStyleEdit(SnowCanvasTextEdit{patch, SnowCanvasTextStyleMixedItalic}),
+            "preview a style in the empty arrow label");
+    key(canvas, Qt::Key_Escape);
+    openLabel(canvas);
+    require(canvas.canvasStyleToolbarState().textStyle == label,
+            "a canceled programmatic preview preserves the saved label preference");
+    patch.horizontalAlign = SnowCanvasTextHorizontalAlign::Right;
+    patch.verticalAlign = SnowCanvasTextVerticalAlign::Top;
+    require(canvas.commitStyleEdit(
+                SnowCanvasTextEdit{patch, SnowCanvasTextStyleMixedHorizontalAlign |
+                                              SnowCanvasTextStyleMixedVerticalAlign}),
+            "edit both arrow label alignments in an empty draft");
+    key(canvas, Qt::Key_Escape);
+    require(records(runtime, QStringLiteral("Text")).isEmpty(), "empty draft creates no label");
+    require(canvas.undo() && canvas.redo(), "undo and restore the arrow");
+    openLabel(canvas);
+    label.horizontalAlign = patch.horizontalAlign;
+    label.verticalAlign = patch.verticalAlign;
+    require(canvas.canvasStyleToolbarState().textStyle == label,
+            "the next label retains explicit alignments and its independent font size");
 }
 
 void documentClearRebuildsArrowLabelLayouts() {
@@ -1660,6 +1701,7 @@ int main(int argc, char** argv) {
     documentClearRebuildsArrowLabelLayouts();
     if (app.arguments().contains(QStringLiteral("--layout-cache-only")))
         return 0;
+    arrowLabelPreferencesSurviveEmptyDraftAndUndo();
     arrowLabelRemeasuresAfterHostFontChange();
     arrowAndLineControlsShowHandCursorsAndHoverHalos();
     arrowRatioEditsRenderAndRoundTrip();

@@ -27,7 +27,7 @@ pub(crate) struct SerialNumberTextCreationPlan {
 /// geometry cannot drift apart. The placeholder never reuses the default
 /// text's stored wrap rectangle: that rectangle belongs to the last created
 /// text, not to this empty label.
-pub(crate) fn new_serial_bound_label(default_text: &TextData) -> Result<TextData, ErrorCode> {
+pub(crate) fn new_bound_label(default_text: &TextData) -> Result<TextData, ErrorCode> {
     let mut text = default_text.clone();
     text.layout = TextLayoutSize::new(1.0, text_line_height(text.font_size));
     validate_text(&text)?;
@@ -62,7 +62,7 @@ pub(crate) fn create_serial_number_text_creation_plan(
 
         let text_id = next_text_id;
         next_text_id.index = next_text_id.index.saturating_add(1);
-        let mut text = new_serial_bound_label(request.default_text)?;
+        let mut text = new_bound_label(request.default_text)?;
         let layout = serial_number_bound_text_rect(&serial, &text, measured_layout)?;
         text.center = layout.center;
         text.rotation = layout.rotation;
@@ -109,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn new_serial_bound_label_ignores_stale_default_wrap_rectangle() {
+    fn new_bound_label_ignores_stale_default_wrap_rectangle() {
         // The persisted default text carries the wrap rectangle of the last
         // created text at its own font size. A freshly attached label must not
         // inherit that rectangle: its placeholder follows the published
@@ -120,7 +120,7 @@ mod tests {
             layout: TextLayoutSize::new(300.0, 120.0),
             ..TextData::default()
         };
-        let label = new_serial_bound_label(&default_text).unwrap();
+        let label = new_bound_label(&default_text).unwrap();
 
         assert_eq!(label.font_size, default_text.font_size);
         assert_eq!(label.width(), 1.0);

@@ -27,9 +27,198 @@ pub unsafe extern "C" fn snow_runtime_set_creation_color_ex(
     })
 }
 
+/// # Safety
+/// The runtime must be live, styles readable, and output writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn snow_runtime_set_text_and_arrow_creation_styles_ex(
+    runtime: SnowRuntime,
+    styles: *const SnowTextAndArrowCreationStyles,
+    out_changed_viewports: *mut SnowChangedViewportList,
+) -> SnowError {
+    ffi_error(|| {
+        if styles.is_null() || out_changed_viewports.is_null() {
+            return SnowError::InvalidArgument;
+        }
+        let valid = unsafe {
+            [
+                std::ptr::addr_of!((*styles).text),
+                std::ptr::addr_of!((*styles).serial_number_text),
+                std::ptr::addr_of!((*styles).speech_bubble_text),
+                std::ptr::addr_of!((*styles).shape_text),
+                std::ptr::addr_of!((*styles).arrow_text),
+            ]
+            .into_iter()
+            .all(|s| text_style_enums_are_valid(s))
+                && shape_style_enums_are_valid(std::ptr::addr_of!((*styles).arrow))
+                && shape_style_enums_are_valid(std::ptr::addr_of!((*styles).serial_number_arrow))
+        };
+        if !valid {
+            return SnowError::InvalidArgument;
+        }
+        let styles = unsafe { &*styles };
+        ffi_status(with_runtime_impl_mut(runtime, |state| {
+            let arrow = |shape| snow_draw_engine::ShapeStyle::from(shape).arrow_style();
+            let result = state
+                .runtime
+                .set_text_and_arrow_creation_styles(
+                    styles.text.into(),
+                    arrow(styles.arrow),
+                    snow_draw_engine::BoundCreationStyles {
+                        serial_number_text: styles.serial_number_text.into(),
+                        speech_bubble_text: styles.speech_bubble_text.into(),
+                        shape_text: styles.shape_text.into(),
+                        arrow_text: styles.arrow_text.into(),
+                        serial_number_arrow: arrow(styles.serial_number_arrow),
+                    },
+                )
+                .map_err(SnowError::from)?;
+            write_changed_viewports(out_changed_viewports, result.changed_viewports);
+            Ok(())
+        }))
+    })
+}
+
+/// # Safety
+/// Runtime must be live and output writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn snow_runtime_get_text_creation_style(
+    runtime: SnowRuntime,
+    scenario: u32,
+    out_style: *mut SnowTextStyle,
+) -> SnowError {
+    ffi_error(|| {
+        if out_style.is_null() {
+            return SnowError::InvalidArgument;
+        }
+        let Some(scenario) = snow_draw_engine::TextCreationScenario::ALL
+            .into_iter()
+            .find(|s| *s as u32 == scenario)
+        else {
+            return SnowError::InvalidArgument;
+        };
+        ffi_status(with_runtime_impl_mut(runtime, |state| {
+            unsafe {
+                *out_style = state.runtime.text_creation_style(scenario).into();
+            }
+            Ok(())
+        }))
+    })
+}
+
+/// # Safety
+/// Handles must be live and the output must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn snow_viewport_get_creation_style_targets(
+    runtime: SnowRuntime,
+    viewport: SnowViewport,
+    query: i32,
+    out_targets: *mut u32,
+) -> SnowError {
+    ffi_error(|| {
+        if out_targets.is_null() {
+            return SnowError::InvalidArgument;
+        }
+        let query = match query {
+            0 => snow_draw_engine::CreationStyleQuery::TextSelection,
+            1 => snow_draw_engine::CreationStyleQuery::TextDraft,
+            2 => snow_draw_engine::CreationStyleQuery::Arrow,
+            _ => return SnowError::InvalidArgument,
+        };
+        ffi_status(with_runtime_impl_mut(runtime, |state| {
+            let targets = state
+                .runtime
+                .creation_style_targets(viewport_id(viewport)?, query)
+                .map_err(SnowError::from)?;
+            unsafe {
+                *out_targets = targets;
+            }
+            Ok(())
+        }))
+    })
+}
+
+/// # Safety
+/// Handles must be live, style readable, and output writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn snow_viewport_remember_draft_text_style_ex(
+    runtime: SnowRuntime,
+    viewport: SnowViewport,
+    style: *const SnowTextStyle,
+    properties: u32,
+    out_changed_viewports: *mut SnowChangedViewportList,
+) -> SnowError {
+    ffi_error(|| {
+        if style.is_null()
+            || out_changed_viewports.is_null()
+            || !unsafe { text_style_enums_are_valid(style) }
+        {
+            return SnowError::InvalidArgument;
+        }
+        ffi_status(with_runtime_impl_mut(runtime, |state| {
+            let result = state
+                .runtime
+                .remember_draft_text_style(
+                    viewport_id(viewport)?,
+                    &unsafe { (*style).into() },
+                    properties,
+                )
+                .map_err(SnowError::from)?;
+            write_changed_viewports(out_changed_viewports, result.changed_viewports);
+            Ok(())
+        }))
+    })
+}
+
 #[cfg(test)]
 mod shared_creation_color_tests {
     use super::*;
+
+    #[test]
+    fn bound_creation_styles_validate_all_profiles_before_applying_any() {
+        let mut state = SnowRuntimeImpl {
+            runtime: snow_draw_engine::Runtime::default(),
+        };
+        let defaults: SnowStyleDefaults = snow_draw_engine::StyleDefaults::default().into();
+        let mut styles = SnowTextAndArrowCreationStyles {
+            text: defaults.text,
+            serial_number_text: defaults.text,
+            speech_bubble_text: defaults.text,
+            shape_text: defaults.text,
+            arrow_text: defaults.text,
+            arrow: defaults.arrow,
+            serial_number_arrow: defaults.arrow,
+        };
+        styles.serial_number_text.font_size = 33.0;
+        styles.serial_number_arrow.stroke_width = f64::NAN;
+        let before = state.runtime.serialize_document_session().unwrap();
+        let mut changes = std::ptr::null_mut();
+        unsafe {
+            assert_eq!(
+                snow_runtime_set_text_and_arrow_creation_styles_ex(
+                    &mut state,
+                    &styles,
+                    &mut changes
+                ),
+                SnowError::InvalidArgument
+            );
+            assert!(changes.is_null());
+            assert_eq!(state.runtime.serialize_document_session().unwrap(), before);
+            styles.serial_number_arrow = defaults.arrow;
+            let mut raw = std::mem::MaybeUninit::new(styles);
+            std::ptr::addr_of_mut!((*raw.as_mut_ptr()).arrow_text.horizontal_align)
+                .cast::<i32>()
+                .write(-1);
+            assert_eq!(
+                snow_runtime_set_text_and_arrow_creation_styles_ex(
+                    &mut state,
+                    raw.as_ptr(),
+                    &mut changes
+                ),
+                SnowError::InvalidArgument
+            );
+            assert_eq!(state.runtime.serialize_document_session().unwrap(), before);
+        }
+    }
 
     #[test]
     fn shared_creation_color_export_validates_output_before_mutation() {

@@ -34,6 +34,7 @@ struct SnowCanvasRuntime::Impl {
     bool setAutomaticallySelectNewlyCreatedElements(bool enabled);
     bool setAutomaticSelectionExcludedTools(const QSet<SnowCanvasTool>& tools);
     bool setQuickSelectionDisabledTools(const QSet<SnowCanvasTool>& tools);
+    bool setTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults);
     bool setSharedCreationColor(const std::optional<QColor>& color);
     void destroyAsync();
     QImage renderToImage(const QRectF& virtualSelectionRect, const QSize& outputSize,
@@ -180,6 +181,12 @@ bool SnowCanvasRuntime::Impl::setAutomaticSelectionExcludedTools(
 bool SnowCanvasRuntime::Impl::setQuickSelectionDisabledTools(const QSet<SnowCanvasTool>& tools) {
     return hasThreadAccess("setQuickSelectionDisabledTools") &&
            session.setQuickSelectionDisabledTools(tools);
+}
+
+bool SnowCanvasRuntime::Impl::setTextAndArrowCreationStyles(
+    const SnowCanvasStyleDefaults& defaults) {
+    return hasThreadAccess("setTextAndArrowCreationStyles") &&
+           session.setTextAndArrowCreationStyles(defaults);
 }
 
 bool SnowCanvasRuntime::Impl::setSharedCreationColor(const std::optional<QColor>& color) {
@@ -366,6 +373,10 @@ bool SnowCanvasRuntime::setAutomaticSelectionExcludedTools(const QSet<SnowCanvas
 
 bool SnowCanvasRuntime::setQuickSelectionDisabledTools(const QSet<SnowCanvasTool>& tools) {
     return m_impl->setQuickSelectionDisabledTools(tools);
+}
+
+bool SnowCanvasRuntime::setTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults) {
+    return m_impl->setTextAndArrowCreationStyles(defaults);
 }
 
 bool SnowCanvasRuntime::setSharedCreationColor(const std::optional<QColor>& color) {

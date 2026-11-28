@@ -2061,19 +2061,22 @@ fn serial_number_drag_ignores_other_pointer_and_secondary_release() {
     assert!(engine.take_text_edit_request(viewport).unwrap().is_some());
 }
 
+fn set_serial_label_font_size(engine: &mut Engine, font_size: f64) {
+    let text = engine.text_creation_style(crate::TextCreationScenario::Standalone);
+    let arrow = engine.editor.arrow_style(&engine.model);
+    let mut bound = crate::BoundCreationStyles::from_standalone(&text, arrow);
+    bound.serial_number_text.font_size = font_size;
+    engine
+        .set_text_and_arrow_creation_styles(text, arrow, bound)
+        .unwrap();
+}
+
 #[test]
 fn drag_label_placeholder_follows_line_height_contract_not_stale_default() {
-    // The persisted default text style keeps the wrap rectangle it was
-    // initialized with (1x36 at font 30) even after the user changes the
-    // default font size. The drag-attached label must size itself from the
-    // published line-height contract at the default text's font size, never
-    // from that stale rectangle or the serial number's font size.
+    // The drag-attached placeholder uses the label profile's font size even
+    // when the standalone wrap rectangle and the badge use smaller sizes.
     let (mut engine, viewport) = setup(1.0);
-    let mut style = engine.editor.text_style(&engine.model);
-    style.font_size = 50.0;
-    engine
-        .set_viewport_text_style(viewport, style, &[])
-        .unwrap();
+    set_serial_label_font_size(&mut engine, 50.0);
 
     pointer(
         &mut engine,
@@ -2115,11 +2118,7 @@ fn drag_and_toolbar_bound_labels_share_styling_and_layout() {
     // host measurement, both must produce the same label styling and layout;
     // only the center differs (pointer placement vs. beside the badge).
     let (mut engine, viewport) = setup(1.0);
-    let mut style = engine.editor.text_style(&engine.model);
-    style.font_size = 50.0;
-    engine
-        .set_viewport_text_style(viewport, style, &[])
-        .unwrap();
+    set_serial_label_font_size(&mut engine, 50.0);
 
     // Toolbar path: click creates the badge, then Create Text measures first.
     pointer(

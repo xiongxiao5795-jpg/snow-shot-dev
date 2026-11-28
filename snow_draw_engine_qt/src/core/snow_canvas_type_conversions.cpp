@@ -913,6 +913,39 @@ SnowWatermarkConfig toEngineWatermarkConfig(const SnowCanvasWatermarkConfig& con
     return engineConfig;
 }
 
+static_assert(SnowCanvasStandaloneText == SNOW_TEXT_SCENARIO_STANDALONE &&
+              SnowCanvasSerialNumberText == SNOW_TEXT_SCENARIO_SERIAL_NUMBER &&
+              SnowCanvasSpeechBubbleText == SNOW_TEXT_SCENARIO_SPEECH_BUBBLE &&
+              SnowCanvasShapeText == SNOW_TEXT_SCENARIO_SHAPE &&
+              SnowCanvasArrowText == SNOW_TEXT_SCENARIO_ARROW);
+static_assert(SnowCanvasStandaloneArrow == SNOW_ARROW_SCENARIO_STANDALONE &&
+              SnowCanvasSerialNumberArrow == SNOW_ARROW_SCENARIO_SERIAL_NUMBER);
+
+bool toEngineTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults,
+                                        SnowTextAndArrowCreationStyles& styles) {
+    const auto bound = defaults.resolvedBoundStyles();
+    for (const auto* text : {&defaults.text, &bound.serialNumberText, &bound.shapeText,
+                             &bound.speechBubbleText, &bound.arrowText}) {
+        if (!text->color.isValid() || !text->stroke.isValid() || !text->fill.isValid() ||
+            !validFillStyle(text->fillStyle) ||
+            !enumInRange(text->horizontalAlign, SnowCanvasTextHorizontalAlign::Left,
+                         SnowCanvasTextHorizontalAlign::Right) ||
+            !enumInRange(text->verticalAlign, SnowCanvasTextVerticalAlign::Top,
+                         SnowCanvasTextVerticalAlign::Bottom))
+            return false;
+    }
+    for (const auto* arrow : {&defaults.arrow, &bound.serialNumberArrow}) {
+        if (!validShapeStyleEnums(*arrow) || !arrow->stroke.isValid() ||
+            !arrow->arrowOutlineColor.isValid())
+            return false;
+    }
+    styles = {toEngineTextStyle(defaults.text),           toEngineTextStyle(bound.serialNumberText),
+              toEngineTextStyle(bound.speechBubbleText),  toEngineTextStyle(bound.shapeText),
+              toEngineTextStyle(bound.arrowText),         toEngineShapeStyle(defaults.arrow),
+              toEngineShapeStyle(bound.serialNumberArrow)};
+    return true;
+}
+
 bool toEngineStyleDefaults(const SnowCanvasStyleDefaults& defaults,
                            SnowStyleDefaults& engineDefaults) {
     const SnowCanvasShapeStyle* shapes[] = {

@@ -334,12 +334,10 @@ fn speech_bubble_new_text_centers_without_changing_other_text_defaults() {
                 defaults.vertical_align = vertical_align;
                 defaults.font_size = 23.0;
                 defaults.bold = true;
+                let arrow = engine.style_defaults().editor.arrow;
+                let bound = crate::BoundCreationStyles::from_standalone(&defaults, arrow);
                 engine
-                    .set_viewport_text_creation_style(
-                        viewport,
-                        defaults.clone(),
-                        snow_draw_engine_editor::TEXT_STYLE_ALL_PROPERTIES,
-                    )
+                    .set_text_and_arrow_creation_styles(defaults.clone(), arrow, bound)
                     .unwrap();
                 let mut expected = defaults.clone();
                 expected.horizontal_align = TextHorizontalAlign::Center;

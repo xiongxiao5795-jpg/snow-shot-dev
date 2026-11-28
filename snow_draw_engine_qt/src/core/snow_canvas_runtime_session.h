@@ -41,6 +41,8 @@ class RuntimeSession final {
     bool setAutomaticallySelectNewlyCreatedElements(bool enabled);
     bool setAutomaticSelectionExcludedTools(const QSet<SnowCanvasTool>& tools);
     bool setQuickSelectionDisabledTools(const QSet<SnowCanvasTool>& tools);
+    // Applies preferences to future creations and reapplies them on document replacement.
+    bool setTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults);
     bool setSharedCreationColor(const std::optional<QColor>& color);
     void destroyAsync(SnowCanvasRuntime& owner);
     void destroyForOwnerDestruction(SnowCanvasRuntime& owner, OwnerDestructionPolicy policy);
@@ -62,6 +64,7 @@ class RuntimeSession final {
     void destroyRuntimeAsync();
 
     SnowCanvasRuntimeConfig m_config;
+    std::optional<SnowTextAndArrowCreationStyles> m_creationPreferences;
     RuntimeLease m_runtime;
     std::uint64_t m_replacementGeneration = 0;
     mutable std::optional<std::uint64_t> m_checkpointRevision;

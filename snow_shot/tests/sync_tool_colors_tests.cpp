@@ -53,6 +53,12 @@ void assertColors(const SnowCanvasStyleDefaults& styles, const QColor& color) {
                               &styles.freeDraw, &styles.rectangleHighlight, &styles.penHighlight})
         require(shape->stroke == color && shape->fill == color,
                 "every shape creation stroke and fill must use the shared RGBA");
+    const auto bound = styles.resolvedBoundStyles();
+    for (const auto* text :
+         {&bound.serialNumberText, &bound.speechBubbleText, &bound.shapeText, &bound.arrowText})
+        require(text->color == color && text->fill == color && text->stroke == color,
+                "each bound label follows the shared text colors");
+    require(bound.serialNumberArrow.stroke == color, "sequence arrows follow the shared stroke");
     for (const QColor& actual :
          {styles.arrow.stroke, styles.distance.stroke, styles.angle.stroke, styles.bracket.stroke,
           styles.magnifier.stroke, styles.text.color, styles.text.stroke, styles.text.fill,
@@ -134,6 +140,11 @@ void committedColorsReachEveryEditor() {
     auto shape = original.rectangle;
     shape.stroke = QColor(23, 76, 129, 117);
     commit(SnowCanvasShapeEdit{shape, SnowCanvasShapeStylePropertyStrokeColor}, shape.stroke);
+    require(first.runtime.reset(), "reset a runtime after a color-only preference change");
+    assertRuntimeColors(peer, shape.stroke);
+    require(first.runtime.restoreDocumentSession(olderSession),
+            "restore a runtime after a color-only preference change");
+    assertRuntimeColors(peer, shape.stroke);
     shape.fill = QColor(65, 43, 21, 0);
     commit(SnowCanvasShapeEdit{shape, SnowCanvasShapeStylePropertyFillColor}, shape.fill);
     shape.fill = QColor(9, 71, 37, 200);
@@ -151,6 +162,21 @@ void committedColorsReachEveryEditor() {
     commit(SnowCanvasTextEdit{text, SnowCanvasTextStyleMixedStroke}, text.stroke);
     text.fill = QColor(21, 43, 65, 87);
     commit(SnowCanvasTextEdit{text, SnowCanvasTextStyleMixedFill}, text.fill);
+    {
+        Editor boundEditor;
+        require(boundEditor.canvas.setCanvasTool(SnowCanvasTool::SerialNumber),
+                "start a sequence label with synchronized colors");
+        mouse(boundEditor.canvas, QEvent::MouseButtonPress, {50, 60});
+        mouse(boundEditor.canvas, QEvent::MouseMove, {175, 100});
+        mouse(boundEditor.canvas, QEvent::MouseButtonRelease, {175, 100});
+        text.fill = QColor(155, 77, 39, 180);
+        require(boundEditor.canvas.hasActiveTextEditing() &&
+                    boundEditor.canvas.commitStyleEdit(
+                        SnowCanvasTextEdit{text, SnowCanvasTextStyleMixedFill}) &&
+                    settings.sharedToolColor() == text.fill,
+                "editing a bound label updates the shared color");
+        assertColors(second.palette.creationStyleDefaults(), text.fill);
+    }
     auto number = original.serialNumber;
     number.color = QColor(13, 26, 39, 0);
     commit(SnowCanvasSerialNumberEdit{number, SnowCanvasSerialNumberStyleMixedColor}, number.color);
@@ -195,6 +221,27 @@ void committedColorsReachEveryEditor() {
                 cloneCanvas.canvasStyleToolbarState().shapeStyle.stroke == cloneStyle.stroke,
             "a cloned runtime must honor its destination color policy");
     require(settings.setSyncToolColors(false), "disable synchronization");
+    assertColors(screenshotCanvasToolStyleDefaults(), shared);
+    text.fill = QColor(34, 69, 104, 139);
+    require(persistScreenshotCanvasStyleEdit(
+                SnowCanvasTextEdit{text, SnowCanvasTextStyleMixedFill, SnowCanvasArrowText}),
+            "change the arrow label fill independently");
+    auto boundArrow = original.arrow;
+    boundArrow.stroke = QColor(67, 23, 12);
+    require(persistScreenshotCanvasStyleEdit(
+                SnowCanvasShapeEdit{boundArrow, SnowCanvasShapeStylePropertyStrokeColor,
+                                    SnowCanvasShapeKind::Arrow, SnowCanvasSerialNumberArrow}),
+            "change the sequence arrow stroke independently");
+    const auto after = screenshotCanvasToolStyleDefaults();
+    const auto bound = after.resolvedBoundStyles();
+    require(bound.arrowText.fill == text.fill && bound.arrowText.color == shared &&
+                bound.speechBubbleText.fill == shared && bound.shapeText.fill == shared &&
+                bound.serialNumberText.fill == shared && after.text.fill == shared &&
+                bound.serialNumberArrow.stroke == boundArrow.stroke &&
+                after.arrow.stroke == shared &&
+                bound.serialNumberArrow.arrowOutlineColor ==
+                    original.resolvedBoundStyles().serialNumberArrow.arrowOutlineColor,
+            "turning sync off restores independent fields and preserves decorative outlines");
     shape.stroke = QColor(200, 40, 20);
     require(first.canvas.commitStyleEdit(
                 SnowCanvasShapeEdit{shape, SnowCanvasShapeStylePropertyStrokeColor}),

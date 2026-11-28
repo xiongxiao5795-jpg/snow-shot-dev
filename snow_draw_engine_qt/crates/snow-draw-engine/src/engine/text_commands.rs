@@ -227,9 +227,9 @@ impl Engine {
                 text_style_from_text(self.model.text(text_id)?),
             )));
         }
-        let mut style = self.editor.text_style(&self.model);
-        style.horizontal_align = snow_draw_engine_document::TextHorizontalAlign::Center;
-        style.vertical_align = snow_draw_engine_document::TextVerticalAlign::Center;
+        let style = self
+            .editor
+            .text_creation_style(crate::TextCreationScenario::Arrow);
         Ok(Some((
             TextElementInfo {
                 id: ElementId::default(),
@@ -912,9 +912,9 @@ impl Engine {
                 text_style_from_text(self.model.text(text)?),
             )));
         }
-        let mut style = self.editor.text_style(&self.model);
-        style.horizontal_align = TextHorizontalAlign::Center;
-        style.vertical_align = TextVerticalAlign::Center;
+        let style = self
+            .editor
+            .text_creation_style(crate::TextCreationScenario::SpeechBubble);
         let text = TextData {
             center: bubble.body.center,
             rotation: bubble.body.rotation,

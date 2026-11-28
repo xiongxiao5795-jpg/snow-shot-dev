@@ -54,6 +54,8 @@ class SnowCanvasRuntime {
     bool setAutomaticallySelectNewlyCreatedElements(bool enabled);
     bool setAutomaticSelectionExcludedTools(const QSet<SnowCanvasTool>& tools);
     bool setQuickSelectionDisabledTools(const QSet<SnowCanvasTool>& tools);
+    // Applies preferences to future creations and reapplies them on document replacement.
+    bool setTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults);
     // Applies only to creation defaults. Clearing the policy retains their current colors.
     bool setSharedCreationColor(const std::optional<QColor>& color);
     QByteArray applyAnnotationTransaction(const QByteArray& payload);

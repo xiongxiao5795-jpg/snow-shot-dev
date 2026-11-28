@@ -144,6 +144,7 @@ struct ScreenshotToolPaletteStyleState {
     bool showingSelectedMagnifier = false;
     bool angleControlsActive = false;
     bool bracketControlsActive = false;
+    SnowCanvasBoundStyles boundCreationStyles;
     ScreenshotToolPaletteTextStyleModel m_creationTextStyle;
     ScreenshotToolPaletteTextStyleModel m_textStyle;
     SnowCanvasSerialNumberStyle m_creationSequenceNumberStyle;

@@ -885,24 +885,24 @@ SnowCanvasWidgetTextInteraction::commit(SnowRuntime runtime, SnowViewport viewpo
         updateRegion = committedTextRegion(updateRegion, displayCache, m_widget.rect());
     } else if (edit.shouldCommit(hasViewport)) {
         const QByteArray utf8 = edit.text.toUtf8();
-        snow_canvas_commands::MutationResult result =
-            snow_canvas_commands::commitText(runtime, viewport,
-                                             snow_canvas_commands::CommitTextRequest{
-                                                 edit.elementId,
-                                                 edit.hasExistingElement,
-                                                 edit.canvasCenter.x(),
-                                                 edit.canvasCenter.y(),
-                                                 utf8.constData(),
-                                                 static_cast<std::uint32_t>(utf8.size()),
-                                                 edit.measuredLayout,
-                                                 edit.style,
-                                                 edit.autoResize,
-                                                 edit.styleChanged,
-                                                 edit.arrowId,
-                                                 edit.bubbleId,
-                                                 edit.minimumGraphemeWidth,
-                                                 edit.textInkReserve,
-                                             });
+        snow_canvas_commands::MutationResult result = snow_canvas_commands::commitText(
+            runtime, viewport,
+            snow_canvas_commands::CommitTextRequest{
+                edit.elementId,
+                edit.hasExistingElement,
+                edit.canvasCenter.x(),
+                edit.canvasCenter.y(),
+                utf8.constData(),
+                static_cast<std::uint32_t>(utf8.size()),
+                edit.measuredLayout,
+                edit.style,
+                edit.autoResize,
+                false, // Explicit style edits already updated creation preferences.
+                edit.arrowId,
+                edit.bubbleId,
+                edit.minimumGraphemeWidth,
+                edit.textInkReserve,
+            });
         if (result.success) {
             commitResult.changedViewports = std::move(result.changedViewports);
         } else {

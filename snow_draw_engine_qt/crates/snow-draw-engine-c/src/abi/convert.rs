@@ -1149,6 +1149,29 @@ pub(crate) unsafe fn raw_c_enum_is_valid<E: crate::abi::raw_enum::SnowRawEnum>(
     E::from_raw(raw).is_some()
 }
 
+pub(crate) unsafe fn shape_style_enums_are_valid(shape: *const SnowShapeStyle) -> bool {
+    unsafe {
+        raw_c_enum_is_valid(std::ptr::addr_of!((*shape).fill_style))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).start_arrowhead))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).end_arrowhead))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).stroke_style))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).stroke_rendering_style))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).arrow_type))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).arrow_shaft_type))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).highlight_shape))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).shape))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).brush_mode))
+    }
+}
+
+pub(crate) unsafe fn text_style_enums_are_valid(style: *const SnowTextStyle) -> bool {
+    unsafe {
+        raw_c_enum_is_valid(std::ptr::addr_of!((*style).fill_style))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*style).horizontal_align))
+            && raw_c_enum_is_valid(std::ptr::addr_of!((*style).vertical_align))
+    }
+}
+
 unsafe fn runtime_style_default_enums_are_valid(defaults: *const SnowStyleDefaults) -> bool {
     let shapes = [
         unsafe { std::ptr::addr_of!((*defaults).rectangle) },
@@ -1159,21 +1182,11 @@ unsafe fn runtime_style_default_enums_are_valid(defaults: *const SnowStyleDefaul
         unsafe { std::ptr::addr_of!((*defaults).rectangle_highlight) },
         unsafe { std::ptr::addr_of!((*defaults).pen_highlight) },
     ];
-    for shape in shapes {
-        if !unsafe {
-            raw_c_enum_is_valid(std::ptr::addr_of!((*shape).fill_style))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).start_arrowhead))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).end_arrowhead))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).stroke_style))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).stroke_rendering_style))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).arrow_type))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).arrow_shaft_type))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).highlight_shape))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).shape))
-                && raw_c_enum_is_valid(std::ptr::addr_of!((*shape).brush_mode))
-        } {
-            return false;
-        }
+    if shapes
+        .into_iter()
+        .any(|shape| !unsafe { shape_style_enums_are_valid(shape) })
+    {
+        return false;
     }
 
     unsafe {
@@ -1189,9 +1202,7 @@ unsafe fn runtime_style_default_enums_are_valid(defaults: *const SnowStyleDefaul
             && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).spotlight_shape))
             && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).rectangle_filter.filter_type))
             && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).pen_filter.filter_type))
-            && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).text.fill_style))
-            && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).text.horizontal_align))
-            && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).text.vertical_align))
+            && text_style_enums_are_valid(std::ptr::addr_of!((*defaults).text))
             && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).serial_number.numeric_type))
             && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).serial_number.fill_style))
             && raw_c_enum_is_valid(std::ptr::addr_of!((*defaults).serial_number.stroke_style))

@@ -68,6 +68,8 @@ class SnowCanvasWidget : public QWidget {
     bool applyStyleEdit(const SnowCanvasStyleEdit& edit);
     // Apply explicit user intent and publish it only on success.
     bool commitStyleEdit(const SnowCanvasStyleEdit& edit);
+    // Applies preferences to future creations and reapplies them on document replacement.
+    bool setTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults);
     bool setSharedCreationColor(const std::optional<QColor>& color);
     bool stepFontSize(int direction);
     SnowCanvasStyleToolbarState canvasStyleToolbarState() const;

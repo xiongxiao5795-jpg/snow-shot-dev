@@ -1,3 +1,4 @@
+#include "snow_canvas_creation_style_test_support.h"
 #include "snow_draw_engine_qt/snow_canvas_runtime.h"
 #include "snow_draw_engine_qt/snow_canvas_widget.h"
 
@@ -266,9 +267,10 @@ void clickAndDragLifecycle() {
     canvas.resize(600, 360);
     canvas.show();
     QApplication::processEvents();
-    SnowCanvasTextStyle textStyle;
+    auto defaults = textAndArrowTestDefaults();
+    auto& textStyle = defaults.materializeBoundStyles().serialNumberText;
     textStyle.fontSize = 12.0;
-    require(canvas.setCanvasTextStyle(textStyle), "apply default text font size");
+    require(canvas.setTextAndArrowCreationStyles(defaults), "set sequence label font size");
     require(canvas.setCanvasTool(SnowCanvasTool::SerialNumber), "activate serial number tool");
     mouse(canvas, QEvent::MouseButtonPress, {100.0, 100.0}, Qt::LeftButton, Qt::LeftButton);
     require(records(runtime, QStringLiteral("SerialNumber")).size() == 1,
@@ -394,8 +396,15 @@ void wheelResizesSelectedSerialBoundText() {
     const double badgeFontSize =
         serialRecordByNumber(runtime, 2).value(QStringLiteral("font_size")).toDouble();
     key(canvas, Qt::Key_Return, Qt::ControlModifier);
-    require(!canvas.hasActiveTextEditing(),
-            "commit closes the editor and keeps the label selected");
+    require(!canvas.hasActiveTextEditing(), "commit closes the editor");
+    const auto id = records(runtime, QStringLiteral("Text"))[0]
+                        .toObject()
+                        .value(QStringLiteral("id"))
+                        .toObject();
+    require(SnowCanvasRuntimeEditor(runtime).select(
+                static_cast<quint32>(id.value(QStringLiteral("index")).toInt()),
+                static_cast<quint32>(id.value(QStringLiteral("generation")).toInt())),
+            "select the committed sequence label");
     require(canvas.canvasStyleToolbarState().source == SnowCanvasStyleToolbarSource::SelectedText,
             "committed bound label is the style toolbar source");
     const double initialFontSize = boundTextFontSize(runtime);
@@ -533,11 +542,12 @@ void toolbarCreatedTextKeepsDefaultStyling() {
     canvas.show();
     QApplication::processEvents();
 
-    SnowCanvasTextStyle style;
+    auto defaults = textAndArrowTestDefaults();
+    auto& style = defaults.materializeBoundStyles().serialNumberText;
     style.fontSize = 50.0;
     style.color = QColor(0xff, 0xff, 0xff, 0xff);
     style.fill = QColor(0x21, 0x6b, 0xa5, 0xff);
-    require(canvas.setCanvasTextStyle(style), "apply default text style");
+    require(canvas.setTextAndArrowCreationStyles(defaults), "set sequence label appearance");
 
     require(canvas.setCanvasTool(SnowCanvasTool::SerialNumber), "activate serial number tool");
     mouse(canvas, QEvent::MouseButtonPress, {100.0, 100.0}, Qt::LeftButton, Qt::LeftButton);

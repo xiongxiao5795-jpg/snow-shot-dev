@@ -475,14 +475,14 @@ MutationResult setTextStyle(SnowRuntime runtime, SnowViewport viewport, const Sn
     return result;
 }
 
-MutationResult setTextCreationStyle(SnowRuntime runtime, SnowViewport viewport,
-                                    const SnowTextStyle& style, std::uint32_t properties) {
+MutationResult rememberDraftTextStyle(SnowRuntime runtime, SnowViewport viewport,
+                                      const SnowTextStyle& style, std::uint32_t properties) {
     MutationResult result;
     if (!hasViewport(runtime, viewport))
         return result;
     result.success =
-        snow_viewport_set_text_creation_style_ex(runtime, viewport, &style, properties,
-                                                 result.changedViewports.outParam()) == SNOW_OK;
+        snow_viewport_remember_draft_text_style_ex(runtime, viewport, &style, properties,
+                                                   result.changedViewports.outParam()) == SNOW_OK;
     return result;
 }
 

@@ -311,6 +311,7 @@ class ScreenshotToolPaletteStyleControls final {
     [[nodiscard]] bool stepWatermarkFontSize(int direction);
     [[nodiscard]] SnowCanvasShapeStyle rectangleStyle() const;
     [[nodiscard]] SnowCanvasStyleDefaults creationStyleDefaults() const;
+    void rememberTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults);
     void rememberStyleEdit(const SnowCanvasStyleEdit& edit);
     void setCreationStyleDefaults(const SnowCanvasStyleDefaults& defaults);
     void setSharedCreationColor(const std::optional<QColor>& color);

@@ -32,10 +32,12 @@ struct SnowCanvasShapeEdit {
     SnowCanvasShapeStyle style;
     quint32 properties = 0;
     SnowCanvasShapeKind kind = SnowCanvasShapeKind::Rectangle;
+    quint32 scenarios = SnowCanvasStandaloneArrow;
 };
 struct SnowCanvasTextEdit {
     SnowCanvasTextStyle style;
     quint32 properties = 0;
+    quint32 scenarios = SnowCanvasStandaloneText;
 };
 struct SnowCanvasSerialNumberEdit {
     SnowCanvasSerialNumberStyle style;
@@ -93,6 +95,12 @@ inline quint32 snowCanvasCreationStyleProperties(const SnowCanvasStyleEdit& edit
             using T = std::decay_t<decltype(patch)>;
             if constexpr (std::is_same_v<T, SnowCanvasSerialNumberEdit>)
                 return patch.properties & ~SnowCanvasSerialNumberStyleMixedNumber;
+            else if constexpr (std::is_same_v<T, SnowCanvasTextEdit>)
+                return patch.scenarios ? patch.properties : 0;
+            else if constexpr (std::is_same_v<T, SnowCanvasShapeEdit>)
+                return patch.kind == SnowCanvasShapeKind::Arrow && !patch.scenarios
+                           ? 0
+                           : patch.properties;
             else
                 return patch.properties;
         },
@@ -106,14 +114,16 @@ inline void snowCanvasSetCreationColor(SnowCanvasStyleDefaults& defaults, const 
         style->stroke = color;
         style->fill = color;
     }
-    defaults.arrow.stroke = color;
+    auto& bound = defaults.materializeBoundStyles();
+    defaults.arrow.stroke = bound.serialNumberArrow.stroke = color;
+    for (auto* text : {&defaults.text, &bound.serialNumberText, &bound.speechBubbleText,
+                       &bound.shapeText, &bound.arrowText}) {
+        text->color = text->stroke = text->fill = color;
+    }
     defaults.distance.stroke = color;
     defaults.angle.stroke = color;
     defaults.bracket.stroke = color;
     defaults.magnifier.stroke = color;
-    defaults.text.color = color;
-    defaults.text.stroke = color;
-    defaults.text.fill = color;
     defaults.serialNumber.color = color;
     defaults.serialNumber.fill = color;
 }
@@ -381,9 +391,15 @@ inline void snowCanvasMergeStyleEdit(SnowCanvasStyleDefaults& defaults,
                 case SnowCanvasShapeKind::SpeechBubble:
                     target = &defaults.speechBubble;
                     break;
-                case SnowCanvasShapeKind::Arrow:
-                    target = &defaults.arrow;
+                case SnowCanvasShapeKind::Arrow: {
+                    auto& bound = defaults.materializeBoundStyles();
+                    if (patch.scenarios & SnowCanvasSerialNumberArrow)
+                        snowCanvasMergeStyle(bound.serialNumberArrow, patch.style,
+                                             patch.properties);
+                    if (patch.scenarios & SnowCanvasStandaloneArrow)
+                        target = &defaults.arrow;
                     break;
+                }
                 case SnowCanvasShapeKind::Line:
                     target = &defaults.line;
                     break;
@@ -414,7 +430,16 @@ inline void snowCanvasMergeStyleEdit(SnowCanvasStyleDefaults& defaults,
             } else if constexpr (std::is_same_v<T, SnowCanvasMagnifierEdit>) {
                 snowCanvasMergeStyle(defaults.magnifier, patch.style, patch.properties);
             } else if constexpr (std::is_same_v<T, SnowCanvasTextEdit>) {
-                snowCanvasMergeStyle(defaults.text, patch.style, patch.properties);
+                auto& bound = defaults.materializeBoundStyles();
+                const auto merge = [&](quint32 scenario, SnowCanvasTextStyle& style) {
+                    if (patch.scenarios & scenario)
+                        snowCanvasMergeStyle(style, patch.style, patch.properties);
+                };
+                merge(SnowCanvasStandaloneText, defaults.text);
+                merge(SnowCanvasSerialNumberText, bound.serialNumberText);
+                merge(SnowCanvasSpeechBubbleText, bound.speechBubbleText);
+                merge(SnowCanvasShapeText, bound.shapeText);
+                merge(SnowCanvasArrowText, bound.arrowText);
             } else if constexpr (std::is_same_v<T, SnowCanvasSerialNumberEdit>) {
                 // The next number is owned by the document session, not a style preference.
                 snowCanvasMergeStyle(defaults.serialNumber, patch.style,

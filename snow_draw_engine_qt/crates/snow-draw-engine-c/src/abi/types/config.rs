@@ -550,6 +550,18 @@ pub struct SnowStyleToolbarState {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SnowTextAndArrowCreationStyles {
+    pub text: SnowTextStyle,
+    pub serial_number_text: SnowTextStyle,
+    pub speech_bubble_text: SnowTextStyle,
+    pub shape_text: SnowTextStyle,
+    pub arrow_text: SnowTextStyle,
+    pub arrow: SnowShapeStyle,
+    pub serial_number_arrow: SnowShapeStyle,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SnowStyleDefaults {
     pub rectangle: SnowShapeStyle,
     pub arrow: SnowShapeStyle,

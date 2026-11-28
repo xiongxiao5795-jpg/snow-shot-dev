@@ -469,7 +469,7 @@ constexpr SchemaString kFloatingToolbarDropBehaviors[] = {u"pin_to_screen", u"im
                                                           u"image_splitting", u"image_editing"};
 constexpr SchemaAllowedValues kFloatingToolbarDropBehaviorValues = {
     kFloatingToolbarDropBehaviors, std::size(kFloatingToolbarDropBehaviors)};
-constexpr int kConfigurationSchemaVersion = 12;
+constexpr int kConfigurationSchemaVersion = 13;
 constexpr ConfigurationIntegerRange kSchemaRange1{kConfigurationSchemaVersion,
                                                   kConfigurationSchemaVersion, 1};
 constexpr SchemaString kSchemaStrings4[] = {u"system", u"light", u"dark"};
@@ -1286,6 +1286,12 @@ constexpr SchemaEntryDescriptor kEntryDescriptors[] = {
     {u"drawing/pen_filter_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
     {u"drawing/brush_eraser_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
     {u"drawing/text_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
+    {u"drawing/serial_number_text_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
+    {u"drawing/speech_bubble_text_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
+    {u"drawing/shape_text_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
+    {u"drawing/arrow_text_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
+    {u"drawing/serial_number_arrow_style", emptyObjectDefault(),
+     ConfigurationValueKind::Structured},
     {u"drawing/serial_number_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
     {u"drawing/watermark_style", emptyObjectDefault(), ConfigurationValueKind::Structured},
     {u"drawing/watermark_content", objectDefault(kSchemaProperties3),
@@ -3175,6 +3181,26 @@ void repairOcrCopyShortcut(QMap<QString, QJsonValue>& values) {
 QMap<QString, QJsonValue> ConfigurationSchema::migrateLegacyValues(QMap<QString, QJsonValue> values,
                                                                    int version,
                                                                    const QString& defaultScope) {
+    if (version > 0 && version < 13) {
+        const auto text = values.value(QStringLiteral("drawing/text_style")).toObject();
+        auto centered = text;
+        // Missing alignments take the scenario's factory alignment.
+        centered.remove(QStringLiteral("horizontal_align"));
+        centered.remove(QStringLiteral("vertical_align"));
+        const auto seed = [&](const QString& key, const QJsonObject& style) {
+            if (!values.contains(key))
+                values.insert(key, style);
+        };
+        if (values.value(QStringLiteral("drawing/text_style")).isObject()) {
+            seed(QStringLiteral("drawing/serial_number_text_style"), text);
+            seed(QStringLiteral("drawing/shape_text_style"), text);
+            seed(QStringLiteral("drawing/speech_bubble_text_style"), centered);
+            seed(QStringLiteral("drawing/arrow_text_style"), centered);
+        }
+        if (values.value(QStringLiteral("drawing/arrow_style")).isObject())
+            seed(QStringLiteral("drawing/serial_number_arrow_style"),
+                 values.value(QStringLiteral("drawing/arrow_style")).toObject());
+    }
     if (version > 0 && version < 12) {
         const QString modeKey = QStringLiteral("system/context_menu_mode");
         const auto mode = normalize(modeKey, values.value(modeKey));

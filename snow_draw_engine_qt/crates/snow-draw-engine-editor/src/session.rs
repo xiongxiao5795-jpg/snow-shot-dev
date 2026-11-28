@@ -40,6 +40,8 @@ pub struct PersistedEditorSession {
     spotlight_corner_radii: snow_draw_engine_core::CornerRadii,
     rectangle: RectangleShapeStyle,
     speech_bubble: RectangleShapeStyle,
+    #[serde(default)]
+    bound_styles: Option<crate::BoundCreationStyles>,
     arrow: ArrowStyle,
     #[serde(default)]
     distance: crate::DistanceStyle,
@@ -361,6 +363,7 @@ impl EditorSession {
             spotlight_corner_radii: state.default_spotlight_corner_radii,
             rectangle: state.default_rectangle_shape_style,
             speech_bubble: state.default_speech_bubble_style,
+            bound_styles: Some((*state.bound_styles).clone()),
             arrow: state.default_arrow_style,
             distance: state.default_distance_style,
             angle: state.default_angle_style,
@@ -433,6 +436,14 @@ impl EditorSession {
         {
             state.default_pen_filter.strength = 0.5;
         }
+        let bound = persisted.bound_styles.unwrap_or_else(|| {
+            crate::BoundCreationStyles::from_standalone(
+                &TextStyle::from_text(&persisted.text),
+                persisted.arrow,
+            )
+        });
+        bound.validate()?;
+        state.bound_styles = std::sync::Arc::new(bound);
         state.default_text = persisted.text;
         state.default_serial_number = persisted.serial_number;
         state.serial_number_values_by_numeric_type =
@@ -814,6 +825,57 @@ impl EditorSession {
         properties: u32,
     ) -> Result<(), ErrorCode> {
         self.editor.set_text_creation_style(style, properties)
+    }
+
+    pub fn text_creation_style(&self, scenario: crate::TextCreationScenario) -> TextStyle {
+        self.editor.text_creation_style(scenario)
+    }
+
+    pub fn text_style_targets(&self, document: &DocumentModel, draft: bool) -> u32 {
+        self.editor.text_style_targets(document, draft)
+    }
+
+    pub fn arrow_style_targets(&self, document: &DocumentModel) -> u32 {
+        self.editor.arrow_style_targets(document)
+    }
+
+    pub fn set_text_and_arrow_creation_styles(
+        &mut self,
+        text: TextStyle,
+        arrow: ArrowStyle,
+        bound: crate::BoundCreationStyles,
+    ) -> Result<(), ErrorCode> {
+        super::style::validate_text_style(&text)?;
+        super::style::validate_arrow_style(arrow)?;
+        bound.validate()?;
+        if matches!(
+            self.editor.state.interaction,
+            crate::InteractionState::CreatingSerialNumber(_)
+        ) {
+            self.editor.preserve_creation_colors();
+        }
+        let state = &mut self.editor.state;
+        state.default_text = super::text::text_with_style_attributes(&state.default_text, &text);
+        state.default_arrow_style = arrow;
+        if *state.bound_styles != bound {
+            state.bound_styles = std::sync::Arc::new(bound);
+        }
+        Ok(())
+    }
+
+    pub fn remember_draft_text_style(
+        &mut self,
+        document: &DocumentModel,
+        style: &TextStyle,
+        properties: u32,
+    ) -> Result<(), ErrorCode> {
+        super::style::validate_text_style(style)?;
+        if properties & !crate::TEXT_STYLE_ALL_PROPERTIES != 0 {
+            return Err(ErrorCode::InvalidArgument);
+        }
+        let targets = self.editor.text_style_targets(document, true);
+        self.editor.patch_text_defaults(targets, style, properties);
+        Ok(())
     }
 
     pub fn set_creation_color(&mut self, color: snow_draw_engine_core::ColorRgba8) {

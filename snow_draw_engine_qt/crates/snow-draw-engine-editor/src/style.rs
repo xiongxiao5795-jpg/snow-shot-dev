@@ -676,8 +676,10 @@ fn text_with_style(
     properties: u32,
     layouts: &[TextLayoutOverride],
 ) -> Result<TextData, ErrorCode> {
-    let mut updated =
-        text_with_style_attributes(text, &patched_text_style(text, style, properties));
+    let mut updated = text_with_style_attributes(
+        text,
+        &patched_text_style(TextStyle::from_text(text), style, properties),
+    );
     // Hosts may reflow an automatic-width label against canvas bounds when its
     // alignment changes, even though its typography is unchanged.
     let alignment_layout_changed = updated.horizontal_align != text.horizontal_align
@@ -705,8 +707,55 @@ fn text_with_style(
     Ok(updated)
 }
 
-fn patched_text_style(text: &TextData, style: &TextStyle, properties: u32) -> TextStyle {
-    let mut patched = TextStyle::from_text(text);
+pub(crate) fn changed_text_properties(first: &TextStyle, style: &TextStyle) -> u32 {
+    let mut mixed = 0;
+    if style.color != first.color {
+        mixed |= TEXT_STYLE_MIXED_COLOR;
+    }
+    if style.bold != first.bold {
+        mixed |= TEXT_STYLE_MIXED_BOLD;
+    }
+    if style.italic != first.italic {
+        mixed |= TEXT_STYLE_MIXED_ITALIC;
+    }
+    if style.font_size != first.font_size {
+        mixed |= TEXT_STYLE_MIXED_FONT_SIZE;
+    }
+    if style.font_family != first.font_family {
+        mixed |= TEXT_STYLE_MIXED_FONT_FAMILY;
+    }
+    if style.fill != first.fill {
+        mixed |= TEXT_STYLE_MIXED_FILL;
+    }
+    if style.fill_style != first.fill_style {
+        mixed |= TEXT_STYLE_MIXED_FILL_STYLE;
+    }
+    if style.stroke != first.stroke {
+        mixed |= TEXT_STYLE_MIXED_STROKE;
+    }
+    if style.stroke_width != first.stroke_width {
+        mixed |= TEXT_STYLE_MIXED_STROKE_WIDTH;
+    }
+    if style.corner_radii != first.corner_radii {
+        mixed |= TEXT_STYLE_MIXED_CORNER_RADII;
+    }
+    if style.horizontal_align != first.horizontal_align {
+        mixed |= TEXT_STYLE_MIXED_HORIZONTAL_ALIGN;
+    }
+    if style.vertical_align != first.vertical_align {
+        mixed |= TEXT_STYLE_MIXED_VERTICAL_ALIGN;
+    }
+    if style.opacity != first.opacity {
+        mixed |= TEXT_STYLE_MIXED_OPACITY;
+    }
+    mixed
+}
+
+pub(crate) fn patched_text_style(
+    mut patched: TextStyle,
+    style: &TextStyle,
+    properties: u32,
+) -> TextStyle {
     if properties & TEXT_STYLE_MIXED_COLOR != 0 {
         patched.color = style.color;
     }
@@ -1474,7 +1523,9 @@ impl Editor {
             .or_else(|| {
                 (self.state.active_tool == ActiveTool::Arrow).then(|| {
                     ShapeStyle::from_rectangle_shape_style(self.state.default_rectangle_shape_style)
-                        .with_arrow_style(self.state.default_arrow_style)
+                        .with_arrow_style(
+                            self.gesture_arrow_style(self.gesture_arrow_scenario(document)),
+                        )
                 })
             })
             .unwrap_or_else(|| {
@@ -1493,7 +1544,7 @@ impl Editor {
 
     pub fn arrow_style(&self, document: &DocumentModel) -> ArrowStyle {
         self.selected_arrow_style(document)
-            .unwrap_or(self.state.default_arrow_style)
+            .unwrap_or_else(|| self.gesture_arrow_style(self.gesture_arrow_scenario(document)))
     }
 
     pub fn shape_style_mixed(&self, document: &DocumentModel) -> u32 {
@@ -1791,48 +1842,8 @@ impl Editor {
             return 0;
         };
         let first = TextStyle::from_text(first);
-        selected_texts.fold(0, |mut mixed, text| {
-            let style = TextStyle::from_text(text);
-            if style.color != first.color {
-                mixed |= TEXT_STYLE_MIXED_COLOR;
-            }
-            if style.bold != first.bold {
-                mixed |= TEXT_STYLE_MIXED_BOLD;
-            }
-            if style.italic != first.italic {
-                mixed |= TEXT_STYLE_MIXED_ITALIC;
-            }
-            if style.font_size != first.font_size {
-                mixed |= TEXT_STYLE_MIXED_FONT_SIZE;
-            }
-            if style.font_family != first.font_family {
-                mixed |= TEXT_STYLE_MIXED_FONT_FAMILY;
-            }
-            if style.fill != first.fill {
-                mixed |= TEXT_STYLE_MIXED_FILL;
-            }
-            if style.fill_style != first.fill_style {
-                mixed |= TEXT_STYLE_MIXED_FILL_STYLE;
-            }
-            if style.stroke != first.stroke {
-                mixed |= TEXT_STYLE_MIXED_STROKE;
-            }
-            if style.stroke_width != first.stroke_width {
-                mixed |= TEXT_STYLE_MIXED_STROKE_WIDTH;
-            }
-            if style.corner_radii != first.corner_radii {
-                mixed |= TEXT_STYLE_MIXED_CORNER_RADII;
-            }
-            if style.horizontal_align != first.horizontal_align {
-                mixed |= TEXT_STYLE_MIXED_HORIZONTAL_ALIGN;
-            }
-            if style.vertical_align != first.vertical_align {
-                mixed |= TEXT_STYLE_MIXED_VERTICAL_ALIGN;
-            }
-            if style.opacity != first.opacity {
-                mixed |= TEXT_STYLE_MIXED_OPACITY;
-            }
-            mixed
+        selected_texts.fold(0, |mixed, text| {
+            mixed | changed_text_properties(&first, &TextStyle::from_text(text))
         })
     }
 
@@ -1907,63 +1918,59 @@ impl Editor {
         })
     }
 
-    fn update_default_shape_styles(
-        &mut self,
-        document: &DocumentModel,
-        rectangle_style: RectangleShapeStyle,
-        mut arrow_style: ArrowStyle,
-    ) {
-        arrow_style.arrow_outline_width =
-            snow_draw_engine_core::arrow::normalize_arrow_outline_width(
-                arrow_style.arrow_outline_width,
-            );
-        arrow_style.arrow_ratio =
-            snow_draw_engine_core::arrow::normalize_arrow_ratio(arrow_style.arrow_ratio);
-        if self.state.default_rectangle_shape_style == rectangle_style
-            && self.state.default_arrow_style == arrow_style
-            && self.state.creation_preview.is_none()
+    fn update_default_rectangle_style(&mut self, mut style: RectangleShapeStyle) {
+        self.state.default_rectangle_shape_style = style;
+        style.stroke = self.creation_stroke(style.stroke);
+        style.fill = self.creation_fill(style.fill);
+        if let Some(ElementCreationPreview::Rectangle(preview)) = &mut self.state.creation_preview
+            && !preview.is_spotlight()
         {
-            return;
+            let next = rectangle_with_style(preview, style);
+            if *preview != next {
+                *preview = next;
+                self.bump_scene_state_revision();
+            }
         }
+    }
 
-        self.state.default_rectangle_shape_style = rectangle_style;
-        self.state.default_arrow_style = arrow_style;
-        let mut preview_rectangle_style = rectangle_style;
-        preview_rectangle_style.stroke = self.creation_stroke(preview_rectangle_style.stroke);
-        preview_rectangle_style.fill = self.creation_fill(preview_rectangle_style.fill);
-        let mut preview_arrow_style = arrow_style;
-        preview_arrow_style.stroke = self.creation_stroke(preview_arrow_style.stroke);
-        let bindables = self.bindable_elements(document, &[]);
-        let arrow_context = self.arrow_engine_context(Modifiers::default());
-        let preview_changed = match self.state.creation_preview.as_mut() {
-            Some(ElementCreationPreview::Rectangle(preview)) if !preview.is_spotlight() => {
-                let next = rectangle_with_style(preview, preview_rectangle_style);
-                if *preview != next {
-                    *preview = next;
-                    true
-                } else {
-                    false
-                }
+    fn update_arrow_creation_style(&mut self, document: &DocumentModel, patch: ShapeStylePatch) {
+        use crate::ArrowCreationScenario;
+        let targets = self.arrow_style_targets(document);
+        let standalone = targets & ArrowCreationScenario::Standalone as u32 != 0;
+        let serial = targets & ArrowCreationScenario::SerialNumber as u32 != 0;
+        if standalone {
+            self.state.default_arrow_style = patch.apply_to_arrow(self.state.default_arrow_style);
+        }
+        if serial {
+            let bound = std::sync::Arc::make_mut(&mut self.state.bound_styles);
+            bound.serial_number_arrow = patch.apply_to_arrow(bound.serial_number_arrow);
+        }
+        if let crate::InteractionState::CreatingArrow(state) = &mut self.state.interaction
+            && let Some(styles) = &mut state.arrow_styles
+        {
+            if standalone {
+                styles.standalone = patch.apply_to_arrow(styles.standalone);
             }
-            Some(ElementCreationPreview::Arrow(preview)) => {
-                let next = arrow_with_style(
-                    document.peek_next_element_id(),
-                    preview,
-                    preview_arrow_style,
-                    &bindables,
-                    arrow_context,
-                );
-                if *preview != next {
-                    *preview = next;
-                    true
-                } else {
-                    false
-                }
+            if serial {
+                styles.serial_number = patch.apply_to_arrow(styles.serial_number);
             }
-            _ => false,
-        };
-        if preview_changed {
-            self.bump_scene_state_revision();
+        }
+        if let Some(ElementCreationPreview::Arrow(preview)) = &self.state.creation_preview
+            && preview.is_regular_arrow()
+        {
+            let style =
+                self.gesture_arrow_style(crate::creation_styles::arrow_scenario(document, preview));
+            let next = arrow_with_style(
+                document.peek_next_element_id(),
+                preview,
+                style,
+                &self.bindable_elements(document, &[]),
+                self.arrow_engine_context(Modifiers::default()),
+            );
+            if *preview != next {
+                self.state.creation_preview = Some(ElementCreationPreview::Arrow(next));
+                self.bump_scene_state_revision();
+            }
         }
     }
 
@@ -2050,16 +2057,10 @@ impl Editor {
                     self.bump_scene_state_revision();
                 }
             }
-            ShapeKind::Rectangle => self.update_default_shape_styles(
-                document,
+            ShapeKind::Rectangle => self.update_default_rectangle_style(
                 patch.apply_to_rectangle_shape(self.state.default_rectangle_shape_style),
-                self.state.default_arrow_style,
             ),
-            ShapeKind::Arrow => self.update_default_shape_styles(
-                document,
-                self.state.default_rectangle_shape_style,
-                patch.apply_to_arrow(self.state.default_arrow_style),
-            ),
+            ShapeKind::Arrow => self.update_arrow_creation_style(document, patch),
             ShapeKind::Line => {
                 self.state.default_line_style = patch.apply_to_line(self.state.default_line_style);
                 if let Some(ElementCreationPreview::Arrow(preview)) =
@@ -2284,7 +2285,7 @@ impl Editor {
     ) -> Result<Option<EditorCommand>, ErrorCode> {
         validate_rectangle_shape_style(style)?;
         self.edit_creation_colors(ActiveTool::Shape, Some(style.stroke), Some(style.fill));
-        self.update_default_shape_styles(document, style, self.state.default_arrow_style);
+        self.update_default_rectangle_style(style);
 
         if !self.state.selection.is_empty() {
             let history_undo_snapshot = self.capture_document_sync_snapshot(document);
@@ -2365,9 +2366,10 @@ impl Editor {
         if properties & !TEXT_STYLE_ALL_PROPERTIES != 0 {
             return Err(ErrorCode::InvalidArgument);
         }
-        self.state.default_text = text_with_style_attributes(
-            &self.state.default_text,
-            &patched_text_style(&self.state.default_text, &style, properties),
+        self.patch_text_defaults(
+            crate::TextCreationScenario::Standalone as u32,
+            &style,
+            properties,
         );
         Ok(())
     }
@@ -2383,10 +2385,7 @@ impl Editor {
         if properties & !TEXT_STYLE_ALL_PROPERTIES != 0 {
             return Err(ErrorCode::InvalidArgument);
         }
-        let next_default = text_with_style_attributes(
-            &self.state.default_text,
-            &patched_text_style(&self.state.default_text, &style, properties),
-        );
+        let targets = self.text_style_targets(document, false);
 
         let selected_text_ids = self
             .state
@@ -2448,7 +2447,7 @@ impl Editor {
                 }
             }
 
-            self.state.default_text = next_default;
+            self.patch_text_defaults(targets, &style, properties);
             if transaction.is_empty() {
                 return Ok(None);
             }
@@ -2466,7 +2465,7 @@ impl Editor {
             )));
         }
 
-        self.state.default_text = next_default;
+        self.patch_text_defaults(targets, &style, properties);
         Ok(None)
     }
 

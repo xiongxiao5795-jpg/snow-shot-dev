@@ -4,6 +4,8 @@ mod arrow_ops;
 mod arrow_text;
 mod auto_filter_workflow;
 pub use arrow_text::ArrowTextLayoutRequest;
+mod creation_styles;
+pub use creation_styles::{ArrowCreationScenario, BoundCreationStyles, TextCreationScenario};
 mod creation_colors;
 mod creation_workflow;
 pub use creation_workflow::SerialNumberLabelLayoutRequest;

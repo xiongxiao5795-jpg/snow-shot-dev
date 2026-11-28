@@ -9,7 +9,7 @@ use snow_draw_engine_document::{ElementId, SpotlightConfig, WatermarkConfig};
 use snow_draw_engine_editor::{
     ActiveTool, ApplyTransactionCommand, DocumentSyncSnapshot, EditorCommand, EditorSession,
     EditorSessionSnapshot, EditorStyleDefaults, EditorViewportState, FilterStyle, HistoryState,
-    RectangleShapeStyle, SerialNumberToolbarState, ShapeStylePatch, StyleToolbarState,
+    RectangleShapeStyle, SerialNumberToolbarState, ShapeStylePatch, StyleToolbarState, TextStyle,
 };
 use snow_draw_engine_interaction::{InputEvent, InteractionOutput};
 use snow_draw_engine_model::DocumentModel;
@@ -134,6 +134,13 @@ impl Default for Engine {
     fn default() -> Self {
         Self::new(EngineConfig::default())
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CreationStyleQuery {
+    TextSelection,
+    TextDraft,
+    Arrow,
 }
 
 impl Engine {
@@ -581,6 +588,48 @@ impl Engine {
 
     pub fn watermark_config(&self) -> &WatermarkConfig {
         self.model.watermark_config()
+    }
+
+    pub fn text_creation_style(&self, scenario: crate::TextCreationScenario) -> TextStyle {
+        self.editor.text_creation_style(scenario)
+    }
+
+    pub fn creation_style_targets(
+        &self,
+        viewport: ViewportId,
+        query: CreationStyleQuery,
+    ) -> Result<u32, ErrorCode> {
+        self.ensure_viewport(viewport)?;
+        Ok(match query {
+            CreationStyleQuery::Arrow => self.editor.arrow_style_targets(&self.model),
+            CreationStyleQuery::TextSelection => self.editor.text_style_targets(&self.model, false),
+            CreationStyleQuery::TextDraft => self.editor.text_style_targets(&self.model, true),
+        })
+    }
+
+    pub fn set_text_and_arrow_creation_styles(
+        &mut self,
+        text: TextStyle,
+        arrow: crate::ArrowStyle,
+        bound: crate::BoundCreationStyles,
+    ) -> Result<MutationResult, ErrorCode> {
+        let before = self.editor.snapshot();
+        self.editor
+            .set_text_and_arrow_creation_styles(text, arrow, bound)?;
+        self.refresh_after_session_mutation(before)
+    }
+
+    pub fn remember_draft_text_style(
+        &mut self,
+        viewport: ViewportId,
+        style: &TextStyle,
+        properties: u32,
+    ) -> Result<MutationResult, ErrorCode> {
+        self.ensure_viewport(viewport)?;
+        let before = self.editor.snapshot();
+        self.editor
+            .remember_draft_text_style(&self.model, style, properties)?;
+        self.refresh_after_session_mutation(before)
     }
 
     /// Applies a shared creation color without creating a document command or history entry.

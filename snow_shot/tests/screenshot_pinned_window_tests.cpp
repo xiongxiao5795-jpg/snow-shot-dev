@@ -3838,11 +3838,14 @@ void pinnedArrowLabelWheelReachesTextEditor() {
     QApplication::sendEvent(&canvas, &wheel);
     require(canvas.canvasStyleToolbarState().textStyle.fontSize == initialFontSize + 1.0,
             "pinned editor passes arrow label wheel input to font-size stepping");
-    require(snow_shot::presentation::screenshotCanvasToolStyleDefaults().text.fontSize ==
-                initialFontSize + 1.0,
-            "canvas font-size wheel must persist the explicit style choice");
-    require(palette->creationStyleDefaults().text.fontSize == initialFontSize + 1.0,
-            "canvas font-size wheel must update the palette creation default");
+    const auto saved = snow_shot::presentation::screenshotCanvasToolStyleDefaults();
+    const auto remembered = palette->creationStyleDefaults();
+    require(saved.resolvedBoundStyles().arrowText.fontSize == initialFontSize + 1.0 &&
+                remembered.resolvedBoundStyles().arrowText.fontSize == initialFontSize + 1.0,
+            "canvas font-size wheel persists the arrow label size and updates the palette");
+    require(saved.text.fontSize == originalStyles.text.fontSize &&
+                remembered.text.fontSize == originalStyles.text.fontSize,
+            "canvas font-size wheel preserves the standalone text size");
 }
 
 void pinnedEditingRemembersLastFilterToolAcrossSessions() {

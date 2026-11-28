@@ -791,6 +791,31 @@ typedef struct SnowStyleToolbarState {
     uint32_t magnifier_style_mixed;
 } SnowStyleToolbarState;
 
+typedef enum SnowCreationStyleQuery {
+    SNOW_CREATION_STYLE_TEXT_SELECTION = 0,
+    SNOW_CREATION_STYLE_TEXT_DRAFT = 1,
+    SNOW_CREATION_STYLE_ARROW = 2
+} SnowCreationStyleQuery;
+
+/* Scenario masks describe the creation preferences targeted by one edit. */
+#define SNOW_TEXT_SCENARIO_STANDALONE 1u
+#define SNOW_TEXT_SCENARIO_SERIAL_NUMBER 2u
+#define SNOW_TEXT_SCENARIO_SPEECH_BUBBLE 4u
+#define SNOW_TEXT_SCENARIO_SHAPE 8u
+#define SNOW_TEXT_SCENARIO_ARROW 16u
+#define SNOW_ARROW_SCENARIO_STANDALONE 1u
+#define SNOW_ARROW_SCENARIO_SERIAL_NUMBER 2u
+
+typedef struct SnowTextAndArrowCreationStyles {
+    SnowTextStyle text;
+    SnowTextStyle serial_number_text;
+    SnowTextStyle speech_bubble_text;
+    SnowTextStyle shape_text;
+    SnowTextStyle arrow_text;
+    SnowShapeStyle arrow;
+    SnowShapeStyle serial_number_arrow;
+} SnowTextAndArrowCreationStyles;
+
 typedef struct SnowStyleDefaults {
     SnowShapeStyle rectangle;
     SnowShapeStyle arrow;
@@ -1743,6 +1768,21 @@ SnowError snow_viewport_patch_text_style_ex(SnowRuntime runtime, SnowViewport vi
                                             uint32_t layout_count,
                                             SnowChangedViewportList* out_changed_viewports);
 
+/* Atomically replace creation preferences without editing the document or its history. */
+SnowError
+snow_runtime_set_text_and_arrow_creation_styles_ex(SnowRuntime runtime,
+                                                   const SnowTextAndArrowCreationStyles* styles,
+                                                   SnowChangedViewportList* out_changed_viewports);
+SnowError snow_runtime_get_text_creation_style(SnowRuntime runtime, uint32_t scenario,
+                                               SnowTextStyle* out_style);
+/* Returns an OR of the matching scenario bits. Arrow queries include the active arrow gesture. */
+SnowError snow_viewport_get_creation_style_targets(SnowRuntime runtime, SnowViewport viewport,
+                                                   SnowCreationStyleQuery query,
+                                                   uint32_t* out_targets);
+SnowError
+snow_viewport_remember_draft_text_style_ex(SnowRuntime runtime, SnowViewport viewport,
+                                           const SnowTextStyle* style, uint32_t properties,
+                                           SnowChangedViewportList* out_changed_viewports);
 SnowError snow_viewport_set_text_creation_style_ex(SnowRuntime runtime, SnowViewport viewport,
                                                    const SnowTextStyle* style, uint32_t properties,
                                                    SnowChangedViewportList* out_changed_viewports);

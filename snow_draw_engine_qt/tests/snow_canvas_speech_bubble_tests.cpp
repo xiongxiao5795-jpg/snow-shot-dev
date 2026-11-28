@@ -1,3 +1,4 @@
+#include "snow_canvas_creation_style_test_support.h"
 #include "snow_draw_engine_qt/snow_canvas_runtime.h"
 #include "snow_draw_engine_qt/snow_canvas_widget.h"
 #include "snow_canvas_ffi_handles.h"
@@ -179,17 +180,16 @@ void textAlignmentDefaultsToCenter() {
         SnowCanvasRuntime runtime;
         SnowCanvasWidget canvas(runtime);
         prepare(canvas);
-        SnowCanvasTextStyle defaults;
+        auto profiles = textAndArrowTestDefaults();
+        auto& defaults = profiles.text;
         defaults.horizontalAlign = SnowCanvasTextHorizontalAlign::Right;
         defaults.verticalAlign = SnowCanvasTextVerticalAlign::Bottom;
         defaults.fontSize = 23;
         defaults.bold = true;
-        require(canvas.setCanvasTextStyle(defaults), "set general text defaults");
-        defaults = canvas.canvasStyleToolbarState().textStyle;
+        const auto expected = profiles.materializeBoundStyles().speechBubbleText;
+        defaults.fontSize = 31;
+        require(canvas.setTextAndArrowCreationStyles(profiles), "install independent text styles");
         create(canvas, runtime, shape);
-        auto expected = defaults;
-        expected.horizontalAlign = SnowCanvasTextHorizontalAlign::Center;
-        expected.verticalAlign = SnowCanvasTextVerticalAlign::Center;
         require(canvas.canvasStyleToolbarState().textStyle == expected,
                 "new bubble draft centers text while inheriting other text defaults");
         key(canvas, Qt::Key_A, Qt::NoModifier, QStringLiteral("centered bubble"));
@@ -204,14 +204,22 @@ void textAlignmentDefaultsToCenter() {
         open(canvas, runtime);
         require(canvas.canvasStyleToolbarState().textStyle == expected,
                 "reopened bubble text keeps centered alignment");
-        require(canvas.setCanvasTextStyle(defaults, SnowCanvasTextStyleMixedHorizontalAlign |
-                                                        SnowCanvasTextStyleMixedVerticalAlign),
-                "change bubble text alignment explicitly");
+        const auto alignment =
+            SnowCanvasTextStyleMixedHorizontalAlign | SnowCanvasTextStyleMixedVerticalAlign;
+        require(canvas.commitStyleEdit(SnowCanvasTextEdit{defaults, alignment}),
+                "change only the bubble text alignment");
+        auto aligned = expected;
+        aligned.horizontalAlign = defaults.horizontalAlign;
+        aligned.verticalAlign = defaults.verticalAlign;
         commit(canvas);
         open(canvas, runtime);
-        require(canvas.canvasStyleToolbarState().textStyle == defaults,
+        require(canvas.canvasStyleToolbarState().textStyle == aligned,
                 "reopening bubble text preserves its explicit alignment");
         key(canvas, Qt::Key_Escape);
+        require(runtime.clearDocumentPreservingViewports(), "start a fresh document");
+        create(canvas, runtime, shape);
+        require(canvas.canvasStyleToolbarState().textStyle == aligned,
+                "new bubble labels use the edited alignment and the bubble font size");
     }
 }
 

@@ -24,7 +24,7 @@ use crate::{
     text::{
         MeasuredTextResize, SerialNumberTextCreationRequest, TextSelectionResizeHandle,
         create_serial_number_text_creation_plan, text_layout_override_size,
-        text_with_committed_draft, text_with_selection_rect, text_with_style_attributes,
+        text_with_committed_draft, text_with_selection_rect,
     },
 };
 
@@ -943,8 +943,28 @@ impl Editor {
         }
         self.clear_active_text_draft_presentation();
         if draft.update_default_style && !text_is_empty {
-            self.state.default_text =
-                text_with_style_attributes(&self.state.default_text, &draft.style);
+            let scenario = match draft.target {
+                crate::TextCommitTarget::New => Some(crate::TextCreationScenario::Standalone),
+                crate::TextCommitTarget::NewArrow(_) => Some(crate::TextCreationScenario::Arrow),
+                crate::TextCommitTarget::NewSpeechBubble(_) => {
+                    Some(crate::TextCreationScenario::SpeechBubble)
+                }
+                crate::TextCommitTarget::Existing(id) => {
+                    crate::creation_styles::text_scenario(document, id)
+                }
+            };
+            if let Some(scenario) = scenario {
+                let properties = existing_id.and_then(|id| document.text(id).ok()).map_or(
+                    crate::TEXT_STYLE_ALL_PROPERTIES,
+                    |old| {
+                        crate::style::changed_text_properties(
+                            &crate::TextStyle::from_text(old),
+                            &draft.style,
+                        )
+                    },
+                );
+                self.patch_text_defaults(scenario as u32, &draft.style, properties);
+            }
         }
         // Bound text edits preserve their owner's selection. Creating a label is
         // not a new drawing gesture and must not override the creation policy.
@@ -1391,7 +1411,8 @@ impl Editor {
             document,
             SerialNumberTextCreationRequest {
                 selected_ids: &self.state.selection.ids,
-                default_text: &self.state.default_text,
+                default_text: &self
+                    .text_creation_template(crate::TextCreationScenario::SerialNumber),
                 measured_layout: layout,
                 next_text_id: document.peek_next_element_id(),
             },
@@ -1436,8 +1457,13 @@ impl Editor {
 
         let history_undo_snapshot = self.capture_document_sync_snapshot(document);
         let mut transaction = Transaction::new("adjust font size");
+        let mut text_targets = 0;
+        let mut update_serial = false;
         for id in self.state.selection.ids.iter().copied() {
             if let Ok(current) = document.text(id) {
+                if let Some(scenario) = crate::creation_styles::text_scenario(document, id) {
+                    text_targets |= scenario as u32;
+                }
                 let mut updated = current.clone();
                 updated.font_size = next;
                 if updated.auto_resize {
@@ -1451,6 +1477,7 @@ impl Editor {
                 continue;
             }
             if let Ok(current) = document.serial_number(id) {
+                update_serial = true;
                 let updated = serial_number_with_label_style(current, current.number, next);
                 validate_serial_number(&updated)?;
                 if updated != *current {
@@ -1459,15 +1486,19 @@ impl Editor {
             }
         }
 
-        self.state.default_text.font_size = next;
-        if self.state.active_tool == ActiveTool::SerialNumber
-            || self
-                .state
-                .selection
-                .ids
-                .iter()
-                .any(|id| document.serial_number(*id).is_ok())
-        {
+        if self.state.selection.is_empty() {
+            if self.state.active_tool == ActiveTool::SerialNumber {
+                update_serial = true;
+            } else {
+                text_targets = crate::TextCreationScenario::Standalone as u32;
+            }
+        }
+        if text_targets != 0 {
+            let mut style = self.text_creation_style(crate::TextCreationScenario::Standalone);
+            style.font_size = next;
+            self.patch_text_defaults(text_targets, &style, crate::TEXT_STYLE_MIXED_FONT_SIZE);
+        }
+        if update_serial {
             self.state.default_serial_number = serial_number_with_label_style(
                 &self.state.default_serial_number,
                 self.state.default_serial_number.number,
@@ -2247,6 +2278,9 @@ mod tests {
         assert_eq!(*updated_id, serial_id);
         assert_eq!(updated_serial.text_element_id, None);
         assert_eq!(*removed_id, text_id);
+        let selection = editor.capture_document_sync_snapshot(&document);
+        document.apply_transaction(command.transaction).unwrap();
+        editor.sync_after_document_change(&document, &selection);
         assert!(editor.state.selection.is_empty());
     }
 

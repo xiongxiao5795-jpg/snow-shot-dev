@@ -34,7 +34,6 @@ class SnowCanvasTextEditorSession final {
         SnowTextLayoutSize measuredLayout{1.0, 1.0, 0.0, 0.0};
         SnowTextStyle style{};
         bool autoResize = false;
-        bool styleChanged = false;
         bool distanceValue = false;
         bool distanceValueChanged = false;
         std::optional<double> parsedDistanceValue;
@@ -139,7 +138,6 @@ class SnowCanvasTextEditorSession final {
     SnowCanvasSceneItem m_previewItem;
     bool m_hasPreview = false;
     bool m_previewAutoResize = false;
-    bool m_styleChanged = false;
     SnowCanvasTextDraft m_draft;
     QString m_distanceSuffix;
     QString m_initialDistanceValue;

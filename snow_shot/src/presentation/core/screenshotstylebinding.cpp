@@ -33,6 +33,33 @@ ScreenshotStyleBinding::ScreenshotStyleBinding(ScreenshotToolPalette& palette,
             if (color)
                 source->setStyleToolbarState(target->canvasStyleToolbarState());
         };
+        const auto refreshStyles = [source = QPointer<ScreenshotToolPalette>(&palette),
+                                    target = QPointer<SnowCanvasWidget>(&canvas)] {
+            if (!source || !target)
+                return;
+            const auto defaults = screenshotCanvasToolStyleDefaults();
+            if (!target->setTextAndArrowCreationStyles(defaults)) {
+                qWarning("Unable to apply text and arrow creation preferences");
+                return;
+            }
+            if (source && target) {
+                source->rememberTextAndArrowCreationStyles(defaults);
+                source->setStyleToolbarState(target->canvasStyleToolbarState());
+            }
+        };
+        refreshStyles();
+        connect(&storage.configuration(), &storage::ConfigurationStore::valuesCommitted, this,
+                [refreshStyles](storage::ConfigurationWriteOrigin,
+                                const QMap<QString, QJsonValue>& previous,
+                                const QMap<QString, QJsonValue>& values) {
+                    for (auto it = values.cbegin(); it != values.cend(); ++it) {
+                        if (isScreenshotTextOrArrowStyleKey(it.key()) &&
+                            previous.value(it.key()) != it.value()) {
+                            refreshStyles();
+                            break;
+                        }
+                    }
+                });
         refreshColor();
         connect(&storage.configuration(), &storage::ConfigurationStore::valueChanged, this,
                 [refreshColor](const QString& key, const QJsonValue&) {

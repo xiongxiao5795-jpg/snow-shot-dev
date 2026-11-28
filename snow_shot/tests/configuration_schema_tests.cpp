@@ -354,6 +354,66 @@ void cloudSyncConfiguration() {
                 disable.value(shapeKey).toObject().value(stroke) == localColor,
             "turning off shared color on another device preserves local tool appearance");
 }
+void boundStylesMigrateOnceAndSurviveRestart() {
+    using namespace snow_shot::storage;
+    QTemporaryDir directory;
+    require(directory.isValid(), "create temporary style settings");
+    const auto path = directory.filePath(QStringLiteral("snow-shot.json"));
+    const auto textKey = QStringLiteral("drawing/text_style");
+    const auto arrowKey = QStringLiteral("drawing/arrow_style");
+    const auto serial = QStringLiteral("drawing/serial_number_text_style");
+    const auto bubble = QStringLiteral("drawing/speech_bubble_text_style");
+    const auto shape = QStringLiteral("drawing/shape_text_style");
+    const auto label = QStringLiteral("drawing/arrow_text_style");
+    const auto boundArrow = QStringLiteral("drawing/serial_number_arrow_style");
+    const QJsonObject text{{QStringLiteral("font_size"), 29},
+                           {QStringLiteral("horizontal_align"), 2},
+                           {QStringLiteral("vertical_align"), 2},
+                           {QStringLiteral("bold"), true}};
+    const QJsonObject arrow{{QStringLiteral("stroke_width"), 7}, {QStringLiteral("arrow_type"), 1}};
+    const QJsonObject priorShape{{QStringLiteral("font_size"), 17}};
+    auto centered = text;
+    centered.remove(QStringLiteral("horizontal_align"));
+    centered.remove(QStringLiteral("vertical_align"));
+    // Exercise opening an actual previous-version preferences file as well as importing it.
+    const auto legacyPath = directory.filePath(QStringLiteral("legacy.json"));
+    {
+        QFile file(legacyPath);
+        const QJsonObject document{
+            {QStringLiteral("storage"), QJsonObject{{QStringLiteral("schema_version"), 12}}},
+            {QStringLiteral("drawing"), QJsonObject{{QStringLiteral("text_style"), text},
+                                                    {QStringLiteral("arrow_style"), arrow}}}};
+        require(file.open(QIODevice::WriteOnly) && file.write(QJsonDocument(document).toJson()) > 0,
+                "write previous-version preferences");
+    }
+    {
+        ConfigurationStore legacy(legacyPath, true, true);
+        require(legacy.value(shape) == text && legacy.value(serial) == text &&
+                    legacy.value(boundArrow) == arrow && legacy.value(bubble) == centered &&
+                    legacy.value(label) == centered && legacy.flushNow().success,
+                "opening existing settings seeds all five profiles from saved standalone styles");
+    }
+    require(ConfigurationStore(legacyPath, true, false).value(shape) == text,
+            "the migrated preferences remain after a second launch");
+    ConfigurationStore store(path, true, true);
+    require(store.applySnapshot({{textKey, text}, {arrowKey, arrow}, {shape, priorShape}}, 12),
+            "import the previous schema with custom standalone styles");
+    require(store.value(serial) == text && store.value(shape) == priorShape &&
+                store.value(label) == centered && store.value(bubble) == centered &&
+                store.value(boundArrow) == arrow,
+            "migration seeds missing styles, centers the two inside labels and retains existing "
+            "settings");
+    require(store.setValue(textKey, QJsonObject{}) && store.setValue(arrowKey, QJsonObject{}) &&
+                store.setValue(label, priorShape) && store.flushNow().success,
+            "persist independent edits before reopening");
+    const ConfigurationStore reopened(path, true, false);
+    require(reopened.value(textKey).toObject().isEmpty() &&
+                reopened.value(arrowKey).toObject().isEmpty() &&
+                reopened.value(label) == priorShape && reopened.value(serial) == text &&
+                reopened.value(bubble) == centered && reopened.value(boundArrow) == arrow,
+            "a restart preserves the migrated profiles independently of later edits");
+}
+
 void journalSnapshotsCoalesce() {
     using namespace snow_shot::storage;
     QTemporaryDir directory;
@@ -401,6 +461,7 @@ int main(int argc, char** argv) {
     entryReferencesAndCopiesRemainIndependent();
     cloudSyncConfiguration();
     journalSnapshotsCoalesce();
+    boundStylesMigrateOnceAndSurviveRestart();
     require(metadata() == before, "copy mutation must not change any public schema field");
     return 0;
 }

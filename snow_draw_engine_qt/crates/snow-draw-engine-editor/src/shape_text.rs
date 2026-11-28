@@ -206,7 +206,9 @@ impl Editor {
         let original_text = existing_id.and_then(|id| document.text(id).ok().cloned());
         let mut text = match &original_text {
             Some(text) => text.clone(),
-            None => crate::text::new_serial_bound_label(&self.state.default_text)?,
+            None => crate::text::new_bound_label(
+                &self.text_creation_template(TextCreationScenario::Shape),
+            )?,
         };
         text.center = center;
         self.state.shape_text_generation = self.state.shape_text_generation.wrapping_add(1);

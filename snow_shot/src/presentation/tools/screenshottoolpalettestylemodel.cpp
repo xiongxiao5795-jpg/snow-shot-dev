@@ -61,6 +61,7 @@ void ScreenshotToolPaletteStyleState::reset(const SnowCanvasStyleDefaults& defau
     showingSelectedMagnifier = false;
     angleControlsActive = false;
     bracketControlsActive = false;
+    boundCreationStyles = defaults.resolvedBoundStyles();
     m_creationTextStyle.setTextStyle(defaults.text);
     m_textStyle.setTextStyle(defaults.text);
     m_creationSequenceNumberStyle = defaults.serialNumber;

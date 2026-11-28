@@ -5879,6 +5879,7 @@ SnowCanvasStyleDefaults ScreenshotToolPaletteStyleControls::creationStyleDefault
     defaults.angle = m_state.creationAngleStyle;
     defaults.bracket = m_state.creationBracketStyle;
     defaults.magnifier = m_state.creationMagnifierStyle;
+    defaults.bound = m_state.boundCreationStyles;
     defaults.text = m_state.m_creationTextStyle.textStyle();
     defaults.serialNumber = m_state.m_creationSequenceNumberStyle;
     defaults.rectangleFilter = m_state.creationRectangleFilterStyle;
@@ -5910,6 +5911,14 @@ void ScreenshotToolPaletteStyleControls::rememberStyleEdit(const SnowCanvasStyle
     }
 }
 
+void ScreenshotToolPaletteStyleControls::rememberTextAndArrowCreationStyles(
+    const SnowCanvasStyleDefaults& defaults) {
+    const ScreenshotToolPaletteStyleState remembered(defaults);
+    m_state.boundCreationStyles = remembered.boundCreationStyles;
+    m_state.m_creationTextStyle = remembered.m_creationTextStyle;
+    m_state.m_creationArrowStyle = remembered.m_creationArrowStyle;
+}
+
 void ScreenshotToolPaletteStyleControls::rememberCreationStyleDefaults(
     const SnowCanvasStyleDefaults& defaults) {
     const ScreenshotToolPaletteStyleState remembered(defaults);
@@ -5924,6 +5933,7 @@ void ScreenshotToolPaletteStyleControls::rememberCreationStyleDefaults(
     m_state.creationAngleStyle = remembered.creationAngleStyle;
     m_state.creationBracketStyle = remembered.creationBracketStyle;
     m_state.creationMagnifierStyle = remembered.creationMagnifierStyle;
+    m_state.boundCreationStyles = remembered.boundCreationStyles;
     m_state.m_creationTextStyle = remembered.m_creationTextStyle;
     m_state.m_creationSequenceNumberStyle = remembered.m_creationSequenceNumberStyle;
     m_state.creationRectangleFilterStyle = remembered.creationRectangleFilterStyle;
@@ -7527,9 +7537,6 @@ void ScreenshotToolPaletteStyleControls::setStyleToolbarState(
         m_state.m_styleSource = state.source;
         m_state.m_showingSelectedTextStyle = selectedText;
         m_state.m_textStyleMixed = mixed;
-        if (!selectedText) {
-            m_state.m_creationTextStyle.setTextStyle(normalized);
-        }
         updateTextStyleControls(groups);
         return;
     }
@@ -7593,9 +7600,6 @@ void ScreenshotToolPaletteStyleControls::setStyleToolbarState(
         m_state.m_showingSelectedStyle = selectedArrow;
         m_state.m_selectedStyleMixed = mixed;
         m_state.m_arrowStyle = displayedStyle;
-        if (!selectedArrow) {
-            m_state.m_creationArrowStyle = displayedStyle;
-        }
         updateArrowStyleControls(groups);
         return;
     }

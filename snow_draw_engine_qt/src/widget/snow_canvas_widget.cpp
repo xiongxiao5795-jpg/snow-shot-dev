@@ -387,9 +387,10 @@ struct SnowCanvasWidget::Impl : public snow_canvas_runtime::Client {
           inputHandler(widget, cursorController), textInteraction(widget, cursorController) {}
 
     bool stepFontSize(int direction);
-    bool applyStyleEdit(const SnowCanvasStyleEdit& edit);
+    bool applyStyleEdit(const SnowCanvasStyleEdit& edit, bool rememberDraftEdit);
     bool setSharedCreationColor(const std::optional<QColor>& color);
-    bool rememberDraftStyle(const SnowCanvasStyleEdit& edit);
+    bool resolveCreationTargets(SnowCanvasStyleEdit& edit) const;
+    bool setTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults);
     void initializeWidget();
     void initializeViewport();
     std::uint64_t runtimeViewportId() const override;
@@ -471,7 +472,8 @@ struct SnowCanvasWidget::Impl : public snow_canvas_runtime::Client {
     std::optional<SnowCanvasAutoFilterRecord> autoFilterRegions() const;
     bool setAutoFilterRegions(const std::optional<SnowCanvasAutoFilterRecord>& record);
     bool fillAutoFilterCategory(const QString& category);
-    bool setCanvasTextStyle(const SnowCanvasTextStyle& style, quint32 properties);
+    bool setCanvasTextStyle(const SnowCanvasTextStyle& style, quint32 properties,
+                            bool rememberDraftEdit);
     bool setCanvasSerialNumberStyle(const SnowCanvasSerialNumberStyle& style);
     SnowCanvasHistoryState canvasHistoryState() const;
     SnowCanvasSnapConfig canvasSnapConfig() const;
@@ -1128,7 +1130,8 @@ SnowCanvasStyleToolbarState SnowCanvasWidget::Impl::canvasStyleToolbarState() co
                              foundArrow != 0;
     if (textInteraction.isActive()) {
         if (!textInteraction.session().isDistanceValue() &&
-            (textInteraction.session().arrowId().generation != 0 ||
+            (textInteraction.session().activeDraftHasExistingElement() ||
+             textInteraction.session().arrowId().generation != 0 ||
              textInteraction.session().bubbleId().generation != 0)) {
             state.source = SnowCanvasStyleToolbarSource::SelectedText;
         }
@@ -1594,7 +1597,7 @@ bool SnowCanvasWidget::setCanvasBrushEraserCreationStyle(const SnowCanvasBrushEr
 }
 
 bool SnowCanvasWidget::Impl::setCanvasTextStyle(const SnowCanvasTextStyle& style,
-                                                quint32 properties) {
+                                                quint32 properties, bool rememberDraftEdit) {
     bool toolbarStateChanged = false;
     const bool applied = withPresentationUpdate([&]() {
         const SnowTextStyle engineStyle = snow_canvas_types::toEngineTextStyle(style);
@@ -1605,6 +1608,13 @@ bool SnowCanvasWidget::Impl::setCanvasTextStyle(const SnowCanvasTextStyle& style
             return false;
         }
 
+        if (rememberDraftEdit && textInteraction.isActive()) {
+            auto remembered = snow_canvas_commands::rememberDraftTextStyle(
+                runtimeBinding.engine(), runtimeBinding.viewportHandle(),
+                textInteraction.currentTextStyle(), properties);
+            if (!remembered.success || !syncChangedViewports(remembered.changedViewports.get()))
+                return false;
+        }
         if (!syncChangedViewports(result.changedViewports.get())) {
             return false;
         }
@@ -1620,7 +1630,7 @@ bool SnowCanvasWidget::Impl::setCanvasTextStyle(const SnowCanvasTextStyle& style
 }
 
 bool SnowCanvasWidget::setCanvasTextStyle(const SnowCanvasTextStyle& style, quint32 properties) {
-    return m_impl->setCanvasTextStyle(style, properties);
+    return m_impl->setCanvasTextStyle(style, properties, true);
 }
 
 bool SnowCanvasWidget::Impl::setCanvasSerialNumberStyle(const SnowCanvasSerialNumberStyle& style) {
@@ -2370,10 +2380,13 @@ bool SnowCanvasWidget::adjustSelectedSerialNumbers(qint64 delta) {
 
 bool SnowCanvasWidget::Impl::createSerialNumberText() {
     const QPointer<SnowCanvasWidget> lifetime(&widget);
-    const SnowStyleToolbarState& styleState = displayState.snapshot().styleToolbarState;
+    SnowTextStyle style{};
+    if (snow_runtime_get_text_creation_style(runtimeBinding.engine(),
+                                             SNOW_TEXT_SCENARIO_SERIAL_NUMBER, &style) != SNOW_OK)
+        return false;
     snow_canvas_commands::CreateSerialNumberTextResult createResult =
-        textInteraction.createSerialNumberText(
-            runtimeBinding.engine(), runtimeBinding.viewportHandle(), styleState.text_style);
+        textInteraction.createSerialNumberText(runtimeBinding.engine(),
+                                               runtimeBinding.viewportHandle(), style);
     if (!createResult.success) {
         return false;
     }
@@ -2709,7 +2722,10 @@ bool SnowCanvasWidget::Impl::beginText(const QPointF& viewPosition, bool allowCr
         return false;
     }
 
-    const SnowTextStyle textStyle = displayState.snapshot().styleToolbarState.text_style;
+    SnowTextStyle textStyle{};
+    if (snow_runtime_get_text_creation_style(runtimeBinding.engine(), SNOW_TEXT_SCENARIO_STANDALONE,
+                                             &textStyle) != SNOW_OK)
+        return false;
     SnowCanvasWidgetTextInteraction::BeginResult result =
         textInteraction.beginAt(runtimeBinding.engine(), runtimeBinding.viewportHandle(),
                                 displayState.displayCache(), viewPosition, textStyle, allowCreate);
@@ -3575,7 +3591,10 @@ bool SnowCanvasWidget::Impl::handleMousePress(QMouseEvent* event,
         }
     }
     if (handled && plan.shouldBeginText && plan.allowCreateText) {
-        const SnowTextStyle textStyle = displayState.snapshot().styleToolbarState.text_style;
+        SnowTextStyle textStyle{};
+        if (snow_runtime_get_text_creation_style(
+                runtimeBinding.engine(), SNOW_TEXT_SCENARIO_STANDALONE, &textStyle) != SNOW_OK)
+            return false;
         SnowCanvasWidgetTextInteraction::BeginResult draft =
             textInteraction.beginRequestedNewTextDraft(
                 runtimeBinding.engine(), runtimeBinding.viewportHandle(),
@@ -4181,7 +4200,17 @@ bool SnowCanvasWidget::stepFontSize(int direction) {
 }
 
 bool SnowCanvasWidget::applyStyleEdit(const SnowCanvasStyleEdit& edit) {
-    return m_impl->applyStyleEdit(edit);
+    return m_impl->applyStyleEdit(edit, false);
+}
+
+bool SnowCanvasWidget::setTextAndArrowCreationStyles(const SnowCanvasStyleDefaults& defaults) {
+    return m_impl->setTextAndArrowCreationStyles(defaults);
+}
+
+bool SnowCanvasWidget::Impl::setTextAndArrowCreationStyles(
+    const SnowCanvasStyleDefaults& defaults) {
+    auto* runtime = runtimeBinding.runtimeOwner();
+    return runtime && runtime->setTextAndArrowCreationStyles(defaults);
 }
 
 bool SnowCanvasWidget::setSharedCreationColor(const std::optional<QColor>& color) {
@@ -4201,9 +4230,10 @@ bool SnowCanvasWidget::Impl::stepFontSize(int direction) {
                : stepTextFontSize(direction > 0);
 }
 
-bool SnowCanvasWidget::Impl::applyStyleEdit(const SnowCanvasStyleEdit& edit) {
+bool SnowCanvasWidget::Impl::applyStyleEdit(const SnowCanvasStyleEdit& edit,
+                                            bool rememberDraftEdit) {
     return std::visit(
-        [this](const auto& patch) -> bool {
+        [this, rememberDraftEdit](const auto& patch) -> bool {
             if (patch.properties == 0)
                 return false;
             using T = std::decay_t<decltype(patch)>;
@@ -4233,7 +4263,7 @@ bool SnowCanvasWidget::Impl::applyStyleEdit(const SnowCanvasStyleEdit& edit) {
                 return setCanvasMagnifierStyle(patch.style, patch.properties,
                                                patch.target == SnowCanvasStyleEditTarget::Creation);
             } else if constexpr (std::is_same_v<T, SnowCanvasTextEdit>) {
-                return setCanvasTextStyle(patch.style, patch.properties);
+                return setCanvasTextStyle(patch.style, patch.properties, rememberDraftEdit);
             } else if constexpr (std::is_same_v<T, SnowCanvasSerialNumberEdit>) {
                 auto style = widget.canvasStyleToolbarState().serialNumberStyle;
                 snowCanvasMergeStyle(style, patch.style, patch.properties);
@@ -4259,19 +4289,25 @@ bool SnowCanvasWidget::Impl::applyStyleEdit(const SnowCanvasStyleEdit& edit) {
         edit);
 }
 
-bool SnowCanvasWidget::Impl::rememberDraftStyle(const SnowCanvasStyleEdit& edit) {
-    const auto* text = std::get_if<SnowCanvasTextEdit>(&edit);
-    if (text == nullptr || !textInteraction.isActive())
-        return true;
-    return applyMutation([&]() {
-        return snow_canvas_commands::setTextCreationStyle(
-            runtimeBinding.engine(), runtimeBinding.viewportHandle(),
-            snow_canvas_types::toEngineTextStyle(text->style), text->properties);
-    });
+bool SnowCanvasWidget::Impl::resolveCreationTargets(SnowCanvasStyleEdit& edit) const {
+    auto* text = std::get_if<SnowCanvasTextEdit>(&edit);
+    auto* shape = std::get_if<SnowCanvasShapeEdit>(&edit);
+    if (text || (shape && shape->kind == SnowCanvasShapeKind::Arrow)) {
+        const auto query = shape                        ? SNOW_CREATION_STYLE_ARROW
+                           : textInteraction.isActive() ? SNOW_CREATION_STYLE_TEXT_DRAFT
+                                                        : SNOW_CREATION_STYLE_TEXT_SELECTION;
+        auto& targets = text ? text->scenarios : shape->scenarios;
+        return snow_viewport_get_creation_style_targets(runtimeBinding.engine(),
+                                                        runtimeBinding.viewportHandle(), query,
+                                                        &targets) == SNOW_OK;
+    }
+    return true;
 }
 
 bool SnowCanvasWidget::commitStyleEdit(const SnowCanvasStyleEdit& edit) {
     auto committedEdit = edit;
+    if (!m_impl->resolveCreationTargets(committedEdit))
+        return false;
     if (auto* filter = std::get_if<SnowCanvasFilterEdit>(&committedEdit)) {
         const auto state = canvasStyleToolbarState();
         if (state.source == SnowCanvasStyleToolbarSource::SelectedPenFilter ||
@@ -4286,8 +4322,7 @@ bool SnowCanvasWidget::commitStyleEdit(const SnowCanvasStyleEdit& edit) {
             filter->bothFamilies = false;
         }
     }
-    if (!interactionEnabled() || !applyStyleEdit(committedEdit) ||
-        !m_impl->rememberDraftStyle(committedEdit))
+    if (!interactionEnabled() || !m_impl->applyStyleEdit(committedEdit, true))
         return false;
     emit styleEditCommitted(committedEdit);
     return true;

@@ -701,6 +701,39 @@ inline bool operator!=(const SnowCanvasSerialNumberStyle& lhs,
     return !(lhs == rhs);
 }
 
+enum SnowCanvasTextCreationScenario : quint32 {
+    SnowCanvasStandaloneText = 1u,
+    SnowCanvasSerialNumberText = 2u,
+    SnowCanvasSpeechBubbleText = 4u,
+    SnowCanvasShapeText = 8u,
+    SnowCanvasArrowText = 16u,
+};
+enum SnowCanvasArrowCreationScenario : quint32 {
+    SnowCanvasStandaloneArrow = 1u,
+    SnowCanvasSerialNumberArrow = 2u,
+};
+
+struct SnowCanvasBoundStyles {
+    SnowCanvasTextStyle serialNumberText;
+    SnowCanvasTextStyle speechBubbleText;
+    SnowCanvasTextStyle shapeText;
+    SnowCanvasTextStyle arrowText;
+    SnowCanvasShapeStyle serialNumberArrow;
+    bool operator==(const SnowCanvasBoundStyles& rhs) const {
+        return serialNumberText == rhs.serialNumberText &&
+               speechBubbleText == rhs.speechBubbleText && shapeText == rhs.shapeText &&
+               arrowText == rhs.arrowText && serialNumberArrow == rhs.serialNumberArrow;
+    }
+
+    static SnowCanvasBoundStyles fromStandalone(const SnowCanvasTextStyle& text,
+                                                const SnowCanvasShapeStyle& arrow) {
+        auto centered = text;
+        centered.horizontalAlign = SnowCanvasTextHorizontalAlign::Center;
+        centered.verticalAlign = SnowCanvasTextVerticalAlign::Center;
+        return {text, centered, text, centered, arrow};
+    }
+};
+
 struct SnowCanvasStyleDefaults {
     SnowCanvasShapeStyle rectangle;
     SnowCanvasShapeStyle arrow;
@@ -729,6 +762,15 @@ struct SnowCanvasStyleDefaults {
         style.cornerRadii = {6.0, 6.0, 6.0, 6.0};
         return style;
     }();
+    std::optional<SnowCanvasBoundStyles> bound{};
+    SnowCanvasBoundStyles resolvedBoundStyles() const {
+        return bound ? *bound : SnowCanvasBoundStyles::fromStandalone(text, arrow);
+    }
+    SnowCanvasBoundStyles& materializeBoundStyles() {
+        if (!bound)
+            bound = SnowCanvasBoundStyles::fromStandalone(text, arrow);
+        return *bound;
+    }
 };
 
 inline bool operator==(const SnowCanvasStyleDefaults& lhs, const SnowCanvasStyleDefaults& rhs) {
@@ -741,7 +783,9 @@ inline bool operator==(const SnowCanvasStyleDefaults& lhs, const SnowCanvasStyle
            lhs.spotlightShape == rhs.spotlightShape &&
            lhs.spotlightCornerRadii == rhs.spotlightCornerRadii && lhs.distance == rhs.distance &&
            lhs.angle == rhs.angle && lhs.bracket == rhs.bracket && lhs.magnifier == rhs.magnifier &&
-           lhs.speechBubble == rhs.speechBubble;
+           lhs.speechBubble == rhs.speechBubble &&
+           (lhs.bound && rhs.bound ? *lhs.bound == *rhs.bound
+                                   : lhs.resolvedBoundStyles() == rhs.resolvedBoundStyles());
 }
 
 inline bool operator!=(const SnowCanvasStyleDefaults& lhs, const SnowCanvasStyleDefaults& rhs) {

@@ -20,13 +20,6 @@ constexpr quint32 kRectangleShapeProperties =
     SnowCanvasShapeStylePropertyStrokeColor | SnowCanvasShapeStylePropertyStrokeWidth |
     SnowCanvasShapeStylePropertyCornerRadius | SnowCanvasShapeStylePropertyStrokeStyle |
     SnowCanvasShapeStylePropertyStrokeRenderingStyle | SnowCanvasShapeStylePropertyShape;
-constexpr quint32 kArrowShapeProperties =
-    SnowCanvasShapeStylePropertyStrokeColor | SnowCanvasShapeStylePropertyStrokeWidth |
-    SnowCanvasShapeStylePropertyStartArrowhead | SnowCanvasShapeStylePropertyEndArrowhead |
-    SnowCanvasShapeStylePropertyStrokeStyle | SnowCanvasShapeStylePropertyArrowType |
-    SnowCanvasShapeStylePropertyStrokeRenderingStyle | SnowCanvasShapeStylePropertyArrowShaftType |
-    SnowCanvasShapeStylePropertyArrowRatio | SnowCanvasShapeStylePropertyArrowOutlineColor |
-    SnowCanvasShapeStylePropertyArrowOutlineWidth;
 constexpr quint32 kLineShapeProperties =
     SnowCanvasShapeStylePropertyFillColor | SnowCanvasShapeStylePropertyFillStyle |
     SnowCanvasShapeStylePropertyStrokeColor | SnowCanvasShapeStylePropertyStrokeWidth |
@@ -68,6 +61,22 @@ const QString kRectangleFilterKey = QStringLiteral("drawing/rectangle_filter_sty
 const QString kBrushFilterKey = QStringLiteral("drawing/pen_filter_style");
 const QString kBrushEraserKey = QStringLiteral("drawing/brush_eraser_style");
 const QString kTextKey = QStringLiteral("drawing/text_style");
+const QString kSerialArrowKey = QStringLiteral("drawing/serial_number_arrow_style");
+struct BoundTextPreference {
+    QString key;
+    quint32 scenario;
+    SnowCanvasTextStyle SnowCanvasBoundStyles::* style;
+};
+const BoundTextPreference kBoundTextPreferences[] = {
+    {QStringLiteral("drawing/serial_number_text_style"), SnowCanvasSerialNumberText,
+     &SnowCanvasBoundStyles::serialNumberText},
+    {QStringLiteral("drawing/speech_bubble_text_style"), SnowCanvasSpeechBubbleText,
+     &SnowCanvasBoundStyles::speechBubbleText},
+    {QStringLiteral("drawing/shape_text_style"), SnowCanvasShapeText,
+     &SnowCanvasBoundStyles::shapeText},
+    {QStringLiteral("drawing/arrow_text_style"), SnowCanvasArrowText,
+     &SnowCanvasBoundStyles::arrowText},
+};
 const QString kSequenceNumberKey = QStringLiteral("drawing/serial_number_style");
 const QString kWatermarkKey = QStringLiteral("drawing/watermark_style");
 const QString kSpotlightKey = QStringLiteral("drawing/spotlight_style");
@@ -547,10 +556,12 @@ SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults() {
     auto& storage = storage::ApplicationStorage::instance();
     if (!storage.isInitialized())
         return defaults;
+    auto& bound = defaults.materializeBoundStyles();
     const auto& configuration = storage.configuration();
     readShapeValue(configuration.value(kShapeKey).toObject(), &defaults.rectangle);
     readShapeValue(configuration.value(kSpeechBubbleKey).toObject(), &defaults.speechBubble, true);
     readShapeValue(configuration.value(kArrowKey).toObject(), &defaults.arrow);
+    readShapeValue(configuration.value(kSerialArrowKey).toObject(), &bound.serialNumberArrow);
     readDistanceValue(configuration.value(kDistanceKey).toObject(), &defaults.distance);
     readAngleValue(configuration.value(kAngleKey).toObject(), &defaults.angle);
     readBracketValue(configuration.value(kBracketKey).toObject(), &defaults.bracket);
@@ -570,6 +581,8 @@ SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults() {
     readDouble(configuration.value(kBrushEraserKey).toObject(), QStringLiteral("stroke_width"),
                &defaults.brushEraser.strokeWidth);
     readTextValue(configuration.value(kTextKey).toObject(), &defaults.text);
+    for (const auto& preference : kBoundTextPreferences)
+        readTextValue(configuration.value(preference.key).toObject(), &(bound.*preference.style));
     readSequenceNumberValue(configuration.value(kSequenceNumberKey).toObject(),
                             &defaults.serialNumber);
     readWatermarkValue(configuration.value(kWatermarkKey).toObject(), &defaults.watermark);
@@ -607,6 +620,7 @@ SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults() {
     normalizeShape(defaults.rectangle, true);
     normalizeShape(defaults.speechBubble, true);
     normalizeShape(defaults.arrow, false);
+    normalizeShape(bound.serialNumberArrow, false);
     normalizeShape(defaults.line, false);
     normalizeShape(defaults.freeDraw, false);
     normalizeShape(defaults.rectangleHighlight, false);
@@ -618,16 +632,19 @@ SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults() {
     defaults.penFilter.opacity = bounded(defaults.penFilter.opacity, 0.0, 1.0);
     defaults.penFilter.strokeWidth = bounded(defaults.penFilter.strokeWidth, 1.0, 72.0);
     defaults.brushEraser.strokeWidth = bounded(defaults.brushEraser.strokeWidth, 1.0, 72.0);
-    defaults.text.fontSize =
-        bounded(defaults.text.fontSize, snow_canvas_style_limits::minimumFontSize,
-                snow_canvas_style_limits::maximumTextFontSize);
-    defaults.text.strokeWidth = bounded(defaults.text.strokeWidth, 0.0, 72.0);
-    defaults.text.cornerRadii.topLeft = bounded(defaults.text.cornerRadii.topLeft, 0.0, 83.0);
-    defaults.text.cornerRadii.topRight = bounded(defaults.text.cornerRadii.topRight, 0.0, 83.0);
-    defaults.text.cornerRadii.bottomRight =
-        bounded(defaults.text.cornerRadii.bottomRight, 0.0, 83.0);
-    defaults.text.cornerRadii.bottomLeft = bounded(defaults.text.cornerRadii.bottomLeft, 0.0, 83.0);
-    defaults.text.opacity = bounded(defaults.text.opacity, 0.0, 1.0);
+    const auto normalizeText = [](SnowCanvasTextStyle& style) {
+        style.fontSize = bounded(style.fontSize, snow_canvas_style_limits::minimumFontSize,
+                                 snow_canvas_style_limits::maximumTextFontSize);
+        style.strokeWidth = bounded(style.strokeWidth, 0.0, 72.0);
+        style.cornerRadii.topLeft = bounded(style.cornerRadii.topLeft, 0.0, 83.0);
+        style.cornerRadii.topRight = bounded(style.cornerRadii.topRight, 0.0, 83.0);
+        style.cornerRadii.bottomRight = bounded(style.cornerRadii.bottomRight, 0.0, 83.0);
+        style.cornerRadii.bottomLeft = bounded(style.cornerRadii.bottomLeft, 0.0, 83.0);
+        style.opacity = bounded(style.opacity, 0.0, 1.0);
+    };
+    normalizeText(defaults.text);
+    for (const auto& preference : kBoundTextPreferences)
+        normalizeText(bound.*preference.style);
     defaults.serialNumber.fontSize =
         bounded(defaults.serialNumber.fontSize, snow_canvas_style_limits::minimumFontSize,
                 snow_canvas_style_limits::maximumBadgeFontSize);
@@ -654,8 +671,55 @@ SnowCanvasStyleDefaults screenshotCanvasToolStyleDefaults() {
 }
 
 namespace {
+// Merge into the stored JSON so another editor's fields and sparse defaults survive.
+struct StyleField {
+    quint32 property;
+    const char* key;
+};
+constexpr StyleField kTextFields[] = {
+    {SnowCanvasTextStyleMixedColor, "color"},
+    {SnowCanvasTextStyleMixedStroke, "stroke"},
+    {SnowCanvasTextStyleMixedFill, "fill"},
+    {SnowCanvasTextStyleMixedBold, "bold"},
+    {SnowCanvasTextStyleMixedItalic, "italic"},
+    {SnowCanvasTextStyleMixedFontSize, "font_size"},
+    {SnowCanvasTextStyleMixedFontFamily, "font_family"},
+    {SnowCanvasTextStyleMixedFillStyle, "fill_style"},
+    {SnowCanvasTextStyleMixedStrokeWidth, "stroke_width"},
+    {SnowCanvasTextStyleMixedCornerRadii, "corner_radii"},
+    {SnowCanvasTextStyleMixedHorizontalAlign, "horizontal_align"},
+    {SnowCanvasTextStyleMixedVerticalAlign, "vertical_align"},
+    {SnowCanvasTextStyleMixedOpacity, "opacity"},
+};
+constexpr StyleField kArrowFields[] = {
+    {SnowCanvasShapeStylePropertyStrokeColor, "stroke"},
+    {SnowCanvasShapeStylePropertyStrokeWidth, "stroke_width"},
+    {SnowCanvasShapeStylePropertyStrokeStyle, "stroke_style"},
+    {SnowCanvasShapeStylePropertyStrokeRenderingStyle, "stroke_rendering_style"},
+    {SnowCanvasShapeStylePropertyStartArrowhead, "start_arrowhead"},
+    {SnowCanvasShapeStylePropertyEndArrowhead, "end_arrowhead"},
+    {SnowCanvasShapeStylePropertyArrowType, "arrow_type"},
+    {SnowCanvasShapeStylePropertyArrowShaftType, "arrow_shaft_type"},
+    {SnowCanvasShapeStylePropertyArrowRatio, "arrow_ratio"},
+    {SnowCanvasShapeStylePropertyArrowOutlineColor, "arrow_outline_color"},
+    {SnowCanvasShapeStylePropertyArrowOutlineWidth, "arrow_outline_width"},
+};
+
+template <size_t N>
+void patchStoredFields(QMap<QString, QJsonValue>& values, const QString& key,
+                       const QJsonObject& patch, quint32 properties,
+                       const StyleField (&fields)[N]) {
+    auto object = storage::ApplicationStorage::instance().configuration().value(key).toObject();
+    for (const auto& field : fields) {
+        if (properties & field.property)
+            object.insert(QLatin1String(field.key), patch.value(QLatin1String(field.key)));
+    }
+    values.insert(key, object);
+}
+
 bool persistToolStyles(const SnowCanvasStyleDefaults& defaults,
-                       const QMap<QString, QJsonValue>& additionalValues = {}) {
+                       const QMap<QString, QJsonValue>& additionalValues = {},
+                       bool includeTextAndArrows = true) {
     auto& storage = storage::ApplicationStorage::instance();
     if (!storage.isInitialized())
         return false;
@@ -664,7 +728,6 @@ bool persistToolStyles(const SnowCanvasStyleDefaults& defaults,
     QMap<QString, QJsonValue> values{
         {kShapeKey, shapeValue(defaults.rectangle)},
         {kSpeechBubbleKey, shapeValue(defaults.speechBubble)},
-        {kArrowKey, shapeValue(defaults.arrow)},
         {kDistanceKey, distanceValue(defaults.distance)},
         {kAngleKey, angleValue(defaults.angle)},
         {kBracketKey, bracketValue(defaults.bracket)},
@@ -677,12 +740,19 @@ bool persistToolStyles(const SnowCanvasStyleDefaults& defaults,
         {kBrushFilterKey, filterValue(brushFilter)},
         {kBrushEraserKey,
          QJsonObject{{QStringLiteral("stroke_width"), defaults.brushEraser.strokeWidth}}},
-        {kTextKey, textValue(defaults.text)},
         {kSequenceNumberKey, sequenceNumberValue(defaults.serialNumber)},
         {kWatermarkKey, watermarkValue(defaults.watermark)},
         {kSpotlightKey, spotlightValue(defaults.spotlight, defaults.spotlightShape,
                                        defaults.spotlightCornerRadii)},
     };
+    if (includeTextAndArrows) {
+        const auto bound = defaults.resolvedBoundStyles();
+        values.insert(kTextKey, textValue(defaults.text));
+        values.insert(kArrowKey, shapeValue(defaults.arrow));
+        values.insert(kSerialArrowKey, shapeValue(bound.serialNumberArrow));
+        for (const auto& preference : kBoundTextPreferences)
+            values.insert(preference.key, textValue(bound.*preference.style));
+    }
     storage::ConfigurationStore& configuration = storage.configuration();
     if (QThread::currentThread() != configuration.thread()) {
         return false;
@@ -701,9 +771,9 @@ bool persistScreenshotCanvasStyleEdit(const SnowCanvasStyleEdit& edit) {
         return true;
     if (!storage::ApplicationStorage::instance().isInitialized())
         return false;
-    // Always merge against storage, never an editor's potentially stale snapshot.
-    auto defaults = screenshotCanvasToolStyleDefaults();
-    snowCanvasMergeStyleEdit(defaults, edit);
+    auto& configuration = storage::ApplicationStorage::instance().configuration();
+    if (QThread::currentThread() != configuration.thread())
+        return false;
     QMap<QString, QJsonValue> additionalValues;
     if (storage::DrawingSettings().syncToolColors()) {
         if (const auto color = snowCanvasCreationColorEdit(edit)) {
@@ -712,6 +782,27 @@ bool persistScreenshotCanvasStyleEdit(const SnowCanvasStyleEdit& edit) {
             additionalValues.insert(QStringLiteral("drawing/shared_tool_color"),
                                     colorValue(*color));
         }
+    }
+    if (const auto* text = std::get_if<SnowCanvasTextEdit>(&edit)) {
+        const auto patch = textValue(text->style);
+        if (text->scenarios & SnowCanvasStandaloneText)
+            patchStoredFields(additionalValues, kTextKey, patch, text->properties, kTextFields);
+        for (const auto& preference : kBoundTextPreferences) {
+            if (text->scenarios & preference.scenario)
+                patchStoredFields(additionalValues, preference.key, patch, text->properties,
+                                  kTextFields);
+        }
+        return storage::setDrawingStyleValues(std::move(additionalValues));
+    }
+    if (const auto* arrow = std::get_if<SnowCanvasShapeEdit>(&edit);
+        arrow && arrow->kind == SnowCanvasShapeKind::Arrow) {
+        const auto patch = shapeValue(arrow->style);
+        if (arrow->scenarios & SnowCanvasStandaloneArrow)
+            patchStoredFields(additionalValues, kArrowKey, patch, arrow->properties, kArrowFields);
+        if (arrow->scenarios & SnowCanvasSerialNumberArrow)
+            patchStoredFields(additionalValues, kSerialArrowKey, patch, arrow->properties,
+                              kArrowFields);
+        return storage::setDrawingStyleValues(std::move(additionalValues));
     }
     if (const auto* watermark = std::get_if<SnowCanvasWatermarkEdit>(&edit);
         watermark != nullptr &&
@@ -726,7 +817,16 @@ bool persistScreenshotCanvasStyleEdit(const SnowCanvasStyleEdit& edit) {
             QJsonObject{{QStringLiteral("text"), content.text},
                         {QStringLiteral("template_value"), content.templateValue}});
     }
-    return persistToolStyles(defaults, additionalValues);
+    auto defaults = screenshotCanvasToolStyleDefaults();
+    snowCanvasMergeStyleEdit(defaults, edit);
+    return persistToolStyles(defaults, additionalValues, false);
+}
+
+bool isScreenshotTextOrArrowStyleKey(const QString& key) {
+    if (key == kTextKey || key == kArrowKey || key == kSerialArrowKey)
+        return true;
+    return std::any_of(std::begin(kBoundTextPreferences), std::end(kBoundTextPreferences),
+                       [&](const auto& preference) { return preference.key == key; });
 }
 
 void applyScreenshotCanvasToolStyles(SnowCanvasWidget& canvas,
@@ -743,7 +843,7 @@ void applyScreenshotCanvasToolStyles(SnowCanvasWidget& canvas,
     };
     applyShape(defaults.rectangle, kRectangleShapeProperties, SnowCanvasShapeKind::Rectangle);
     applyShape(defaults.speechBubble, kRectangleShapeProperties, SnowCanvasShapeKind::SpeechBubble);
-    applyShape(defaults.arrow, kArrowShapeProperties, SnowCanvasShapeKind::Arrow);
+    static_cast<void>(canvas.setTextAndArrowCreationStyles(defaults));
     static_cast<void>(canvas.setCanvasDistanceStyle(defaults.distance));
     static_cast<void>(canvas.setCanvasAngleStyle(defaults.angle));
     static_cast<void>(canvas.setCanvasBracketStyle(defaults.bracket));
@@ -761,7 +861,6 @@ void applyScreenshotCanvasToolStyles(SnowCanvasWidget& canvas,
     applyShape(spotlightStyle,
                SnowCanvasShapeStylePropertyShape | SnowCanvasShapeStylePropertyCornerRadius,
                SnowCanvasShapeKind::Spotlight);
-    static_cast<void>(canvas.setCanvasTextStyle(defaults.text));
     // Saved appearance must preserve every numeric type's session sequence.
     static_cast<void>(canvas.applyStyleEdit(
         SnowCanvasSerialNumberEdit{defaults.serialNumber, kSequenceNumberAppearanceProperties}));

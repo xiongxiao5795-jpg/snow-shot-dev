@@ -10,7 +10,7 @@ use crate::{Engine, history::HistoryStore};
 
 // Persisted counters became authoritative for badge creation in version 9.
 const SERIAL_NUMBER_COUNTERS_SESSION_SCHEMA_VERSION: u32 = 9;
-pub const DOCUMENT_SESSION_SCHEMA_VERSION: u32 = 16;
+pub const DOCUMENT_SESSION_SCHEMA_VERSION: u32 = 17;
 pub const DOCUMENT_HISTORY_SCHEMA_VERSION: u32 = 12;
 pub const MAX_DOCUMENT_SESSION_BYTES: usize = 16 * 1024 * 1024;
 
@@ -233,6 +233,71 @@ mod tests {
         WatermarkConfig, WatermarkTemplateApplicationTime,
     };
     use snow_draw_engine_editor::ActiveTool;
+
+    #[test]
+    fn bound_creation_styles_round_trip_and_legacy_sessions_seed_from_standalone() {
+        use crate::{BoundCreationStyles, TextCreationScenario};
+        use snow_draw_engine_document::{TextHorizontalAlign, TextVerticalAlign};
+        let mut engine = Engine::default();
+        let mut text = engine.text_creation_style(TextCreationScenario::Standalone);
+        text.font_size = 33.0;
+        text.horizontal_align = TextHorizontalAlign::Right;
+        text.vertical_align = TextVerticalAlign::Bottom;
+        let mut arrow = engine.editor.arrow_style(&engine.model);
+        arrow.stroke_width = 9.0;
+        let seed = BoundCreationStyles::from_standalone(&text, arrow);
+        let mut custom = seed.clone();
+        custom.serial_number_text.italic = true;
+        custom.shape_text.bold = true;
+        custom.speech_bubble_text.vertical_align = TextVerticalAlign::Top;
+        custom.arrow_text.font_size = 43.0;
+        custom.serial_number_arrow.stroke_width = 11.0;
+        engine
+            .set_text_and_arrow_creation_styles(text, arrow, custom.clone())
+            .unwrap();
+        let bytes = engine.serialize_document_session().unwrap();
+        let mut legacy: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        legacy["schemaVersion"] = 16.into();
+        legacy["editor"]
+            .as_object_mut()
+            .unwrap()
+            .remove("boundStyles")
+            .unwrap();
+        for (payload, profiles) in [
+            (bytes, custom),
+            (serde_json::to_vec(&legacy).unwrap(), seed),
+        ] {
+            let restored = Engine::from_serialized_document_session(&payload).unwrap();
+            assert_eq!(
+                restored
+                    .text_creation_style(TextCreationScenario::Standalone)
+                    .font_size,
+                33.0
+            );
+            assert_eq!(
+                restored.text_creation_style(TextCreationScenario::Shape),
+                profiles.shape_text
+            );
+            assert_eq!(
+                restored.text_creation_style(TextCreationScenario::SerialNumber),
+                profiles.serial_number_text
+            );
+            assert_eq!(
+                restored.text_creation_style(TextCreationScenario::Arrow),
+                profiles.arrow_text
+            );
+            assert_eq!(
+                restored.text_creation_style(TextCreationScenario::SpeechBubble),
+                profiles.speech_bubble_text
+            );
+            let saved: serde_json::Value =
+                serde_json::from_slice(&restored.serialize_document_session().unwrap()).unwrap();
+            assert_eq!(
+                saved["editor"]["boundStyles"],
+                serde_json::to_value(profiles).unwrap()
+            );
+        }
+    }
 
     #[test]
     fn current_snapshot_and_checkpoint_ignore_oversized_history() {
