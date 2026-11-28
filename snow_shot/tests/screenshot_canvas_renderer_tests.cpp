@@ -2636,18 +2636,30 @@ void incrementalGuideMovementMatchesFreshCompositedFrames() {
 
 void selectionGridGuideDrawsClippedPhysicalPixels() {
     const QRectF viewport(4.0, 8.0, 88.0, 60.0);
+    const QRegion exposedRegion = QRegion(viewport.toRect()).subtracted(QRect(32, 11, 12, 19));
     const QColor color(255, 0, 255, 127);
     for (qreal dpr : {1.0, 1.25, 1.5, 1.75, 2.0}) {
         for (const QRectF& selection :
              {QRectF(18.25, 24.5, 28.5, 21.25), QRectF(-9.0, 24.5, 101.0, 21.25)}) {
-            QImage image(QSize(qCeil(100 * dpr), qCeil(76 * dpr)),
-                         QImage::Format_ARGB32_Premultiplied);
-            image.setDevicePixelRatio(dpr);
-            image.fill(Qt::transparent);
-            {
-                QPainter painter(&image);
-                paintScreenshotSelectionGridGuide(painter, viewport, selection, color);
-            }
+            const auto render = [&](const QRegion* exposure, bool viewportAlreadyClipped) {
+                QImage image(QSize(qCeil(100 * dpr), qCeil(76 * dpr)),
+                             QImage::Format_ARGB32_Premultiplied);
+                image.setDevicePixelRatio(dpr);
+                image.fill(Qt::transparent);
+                {
+                    QPainter painter(&image);
+                    if (exposure != nullptr) {
+                        painter.setClipRegion(*exposure);
+                    }
+                    paintScreenshotSelectionGridGuide(painter, viewport, selection, color, exposure,
+                                                      viewportAlreadyClipped);
+                }
+                return image;
+            };
+            require(render(&exposedRegion, true) == render(&exposedRegion, false),
+                    "an existing viewport clip must render the same grid pixels");
+
+            const QImage image = render(nullptr, false);
             for (int y = 0; y < image.height(); ++y) {
                 for (int x = 0; x < image.width(); ++x) {
                     const bool inside = x >= viewport.left() * dpr && x < viewport.right() * dpr &&

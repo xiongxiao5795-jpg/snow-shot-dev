@@ -4262,10 +4262,13 @@ void ScreenshotCanvasRenderer::renderAfterCanvas(QPainter& painter,
         }
     }
     if (m_renderMode == RenderMode::Standard && !m_selectionGridGuideBounds.isEmpty()) {
+        // The canvas widget already clips its viewport to the paint event's region.
+        const bool viewportAlreadyClipped =
+            painter.device() == &m_canvas && context.viewportRect == m_canvas.rect();
         paintScreenshotSelectionGridGuide(
             painter, QRectF(context.viewportRect),
             context.canvasToViewTransform.mapRect(m_selectionGridGuideBounds),
-            m_selectionGridGuideColor, &context.exposedRegion);
+            m_selectionGridGuideColor, &context.exposedRegion, viewportAlreadyClipped);
     }
     if (drawSelection) {
         const double minSide = std::min(selectionView.width(), selectionView.height());

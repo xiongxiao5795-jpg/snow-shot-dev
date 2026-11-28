@@ -201,7 +201,8 @@ inline void paintScreenshotGuideLines(QPainter& painter, const QRectF& bounds,
 
 inline void paintScreenshotSelectionGridGuide(QPainter& painter, const QRectF& viewport,
                                               const QRectF& selection, const QColor& color,
-                                              const QRegion* exposedRegion = nullptr) {
+                                              const QRegion* exposedRegion = nullptr,
+                                              bool viewportAlreadyClipped = false) {
     if (!color.isValid() || color.alpha() == 0 || viewport.isEmpty() || selection.isEmpty()) {
         return;
     }
@@ -226,7 +227,9 @@ inline void paintScreenshotSelectionGridGuide(QPainter& painter, const QRectF& v
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, false);
-    painter.setClipRect(viewport, Qt::IntersectClip);
+    if (!viewportAlreadyClipped) {
+        painter.setClipRect(viewport, Qt::IntersectClip);
+    }
     painter.setBrush(Qt::NoBrush);
     const std::array lines{vertical(selection.left()), vertical(selection.right()),
                            horizontal(selection.top()), horizontal(selection.bottom())};
